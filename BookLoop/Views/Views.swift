@@ -80,7 +80,7 @@ struct ContentView: View {
         .onAppear {
             refreshProjectState()
         }
-        .onChange(of: library.selectedBookID) { _ in
+        .onChange(of: library.selectedBookID) {
             refreshProjectState()
         }
         .onReceive(NotificationCenter.default.publisher(for: .bookLoopReloadPreview)) { _ in
@@ -548,7 +548,7 @@ struct FeedbackPanelView: View {
                 chapter = webModel.detectedChapterID ?? ""
             }
         }
-        .onChange(of: webModel.detectedChapterID) { newValue in
+        .onChange(of: webModel.detectedChapterID) { _, newValue in
             if chapter.isEmpty, let newValue {
                 chapter = newValue
             }
@@ -839,14 +839,6 @@ struct SupplementalMarkdownView: View {
                 }
                 .padding()
             }
-            .alert("Regenerate figure?", isPresented: $confirmingRegeneration) {
-                Button("Cancel", role: .cancel) {}
-                if let figure {
-                    Button("Run") { runRegeneration(for: figure) }
-                }
-            } message: {
-                Text("BookLoop will run the configured figure command in the book root. No command runs unless shell commands and figure regeneration are enabled for this book.")
-            }
         } else {
             EmptyStateView(title: title, message: emptyMessage, systemImage: "doc.text")
         }
@@ -924,6 +916,24 @@ struct ReviewDetailView: View {
     }
 }
 
+private struct FigureRow: View {
+    let item: FigureItem
+    let isSelected: Bool
+
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text(item.id)
+                .fontWeight(.medium)
+            Text("\(item.status.rawValue) • \(item.type.rawValue)")
+                .font(.caption)
+                .foregroundStyle(item.status == .ok ? Color.secondary : Color.orange)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(8)
+        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear)
+    }
+}
+
 struct FigureBrowserView: View {
     @EnvironmentObject private var figureStore: FigureStore
     @EnvironmentObject private var taskStore: TaskStore
@@ -932,29 +942,8 @@ struct FigureBrowserView: View {
 
     var body: some View {
         HSplitView {
-            VStack {
-                HStack {
-                    Button("Refresh Figures") {
-                        figureStore.refresh(book: book)
-                    }
-                    Button("Generate Figure Task") {
-                        taskStore.generate(book: book, mode: .proposeFigure, chapterID: selectedFigure?.chapterID, reviewItems: [], selectedText: nil)
-                    }
-                    .disabled(selectedFigure == nil)
-                }
-                .padding(8)
-                List(figureStore.figures, selection: $selectedID) { figure in
-                    VStack(alignment: .leading) {
-                        Text(figure.id)
-                            .fontWeight(.medium)
-                        Text("\(figure.status.rawValue) • \(figure.type.rawValue)")
-                            .font(.caption)
-                            .foregroundStyle(figure.status == .ok ? .secondary : .orange)
-                    }
-                    .tag(figure.id)
-                }
-            }
-            .frame(minWidth: 300)
+            figureListPane
+                .frame(minWidth: 300)
 
             FigureDetailView(book: book, figure: selectedFigure)
                 .frame(minWidth: 440)
@@ -962,6 +951,39 @@ struct FigureBrowserView: View {
         .onAppear {
             if selectedID == nil {
                 selectedID = figureStore.figures.first?.id
+            }
+        }
+        .onChange(of: figureStore.figures) {
+            if selectedID == nil || !figureStore.figures.contains(where: { $0.id == selectedID }) {
+                selectedID = figureStore.figures.first?.id
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var figureListPane: some View {
+        VStack {
+            HStack {
+                Button("Refresh Figures") {
+                    figureStore.refresh(book: book)
+                }
+                Button("Generate Figure Task") {
+                    taskStore.generate(book: book, mode: .proposeFigure, chapterID: selectedFigure?.chapterID, reviewItems: [], selectedText: nil)
+                }
+                .disabled(selectedFigure == nil)
+            }
+            .padding(8)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(figureStore.figures, id: \.id) { item in
+                        Button {
+                            selectedID = item.id
+                        } label: {
+                            FigureRow(item: item, isSelected: selectedID == item.id)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
             }
         }
     }
@@ -1243,7 +1265,7 @@ struct PatchReviewView: View {
             )
             .frame(minWidth: 280)
         }
-        .onChange(of: patchStore.selectedProposalID) { _ in
+        .onChange(of: patchStore.selectedProposalID) {
             blockDecisions.removeAll()
             applyOutput = nil
             saveOutput = nil
@@ -1499,8 +1521,6 @@ struct HTMLStringView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero)
         webView.setValue(false, forKey: "drawsBackground")
-        webView.scrollView.hasVerticalScroller = true
-        webView.scrollView.hasHorizontalScroller = true
         context.coordinator.lastHTML = html
         webView.loadHTMLString(html, baseURL: nil)
         return webView
@@ -1676,7 +1696,7 @@ struct BookSettingsTab: View {
                 .padding()
                 .background(.bar)
             }
-            .onChange(of: book.id) { _ in
+            .onChange(of: book.id) {
                 draft = book
             }
     }
