@@ -22,7 +22,8 @@ enum FileHelpers {
     static func ensureDirectory(_ path: String) throws {
         try FileManager.default.createDirectory(
             at: URL(fileURLWithPath: path, isDirectory: true),
-            withIntermediateDirectories: true
+            withIntermediateDirectories: true,
+            attributes: nil
         )
     }
 
@@ -37,6 +38,10 @@ enum FileHelpers {
 
     static func openExternal(url: URL) {
         NSWorkspace.shared.open(url)
+    }
+
+    static func openFile(path: String) {
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
 
     static func copyToPasteboard(_ value: String) {

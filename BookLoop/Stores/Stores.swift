@@ -45,7 +45,7 @@ final class BookLibraryStore: ObservableObject {
     func save() {
         do {
             let url = try Self.libraryFileURL()
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: nil)
             let data = try JSONEncoder.pretty.encode(PersistedLibrary(books: books, selectedBookID: selectedBookID))
             try data.write(to: url, options: [.atomic])
         } catch {

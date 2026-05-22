@@ -82,6 +82,21 @@ struct BookConfig: Identifiable, Codable, Equatable {
         figuresRegistryPath = existing("bookloop/figures.json", directory: false) ?? figuresRegistryPath
     }
 
+
+    mutating func fillSuggestedPaths() {
+        guard !projectRootPath.isEmpty else { return }
+        mkdocsConfigPath = mkdocsConfigPath ?? suggestedPath("mkdocs.yml")
+        docsPath = docsPath ?? suggestedPath("docs")
+        reviewsPath = reviewsPath ?? suggestedPath("reviews")
+        reviewItemsPath = reviewItemsPath ?? suggestedPath("reviews/review_items")
+        cumulativeReviewPath = cumulativeReviewPath ?? suggestedPath("reviews/cumulative_review.md")
+        figuresSourcePath = figuresSourcePath ?? suggestedPath("figures")
+        figuresOutputPath = figuresOutputPath ?? suggestedPath("docs/assets/figures")
+        bookloopPath = bookloopPath ?? suggestedPath("bookloop")
+        styleGuidePath = styleGuidePath ?? suggestedPath("bookloop/style_guide.md")
+        figuresRegistryPath = figuresRegistryPath ?? suggestedPath("bookloop/figures.json")
+    }
+
     func suggestedPath(_ relativePath: String) -> String {
         URL(fileURLWithPath: projectRootPath, isDirectory: true).appendingPathComponent(relativePath).path
     }

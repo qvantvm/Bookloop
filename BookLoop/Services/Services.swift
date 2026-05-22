@@ -20,6 +20,34 @@ final class AgentHarnessClient {
     }
 }
 
+final class PreviewHealthChecker {
+    func check(previewURL: String) async -> LocalAPIStatus {
+        let value = previewURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: value), url.scheme == "http" || url.scheme == "https" else {
+            if FileManager.default.fileExists(atPath: value) {
+                return .online
+            }
+            return .offline("Preview URL is not a valid HTTP(S) URL or existing file path.")
+        }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 5
+        let session = URLSession(configuration: configuration)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+
+        do {
+            let (_, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                return .offline("Preview returned a non-HTTP response.")
+            }
+            return (200..<500).contains(http.statusCode) ? .online : .offline("Preview returned HTTP \(http.statusCode).")
+        } catch {
+            return .offline("MkDocs preview appears offline. Start it from the book root with `mkdocs serve`.")
+        }
+    }
+}
+
 private final class LocalHTTPClient {
     private let session: URLSession
 
@@ -367,6 +395,10 @@ final class TaskGenerator {
             lines.append(contentsOf: figureRequirements(chapterID: chapterID, reviewItems: reviewItems))
         }
 
+        if mode == .validateBook {
+            lines.append(contentsOf: validationRequirements())
+        }
+
         lines.append(contentsOf: [
             "",
             "## Constraints",
@@ -420,6 +452,19 @@ final class TaskGenerator {
             "- Validate through `mkdocs build` if possible."
         ]
     }
+
+    private func validationRequirements() -> [String] {
+        [
+            "",
+            "## Validation Checklist",
+            "- Run `mkdocs build` if possible.",
+            "- Check image references.",
+            "- Check broken internal links.",
+            "- Check stale figures.",
+            "- Check missing captions or alt text.",
+            "- Summarize open review items by severity."
+        ]
+    }
 }
 
 final class FigureScanner {
@@ -469,6 +514,24 @@ final class FigureScanner {
             )
         }
 
+        for registryFigure in scanRegistry(book: book) {
+            if var existing = figuresByOutput[registryFigure.outputPath] {
+                existing.title = existing.title ?? registryFigure.title
+                existing.sourcePath = existing.sourcePath ?? registryFigure.sourcePath
+                existing.caption = existing.caption ?? registryFigure.caption
+                existing.generationCommand = existing.generationCommand ?? registryFigure.generationCommand
+                existing.chapterID = existing.chapterID ?? registryFigure.chapterID
+                existing.section = existing.section ?? registryFigure.section
+                existing.isStale = existing.isStale || registryFigure.isStale
+                if existing.status == .unreferenced && !existing.referencedFrom.isEmpty {
+                    existing.status = registryFigure.status
+                }
+                figuresByOutput[registryFigure.outputPath] = existing
+            } else {
+                figuresByOutput[registryFigure.outputPath] = registryFigure
+            }
+        }
+
         return figuresByOutput.values.sorted {
             let leftChapter = $0.chapterID ?? ""
             let rightChapter = $1.chapterID ?? ""
@@ -484,6 +547,70 @@ final class FigureScanner {
         var path: String
         var altText: String
         var chapterID: String?
+    }
+
+
+    private func scanRegistry(book: BookConfig) -> [FigureItem] {
+        guard let path = book.figuresRegistryPath,
+              let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let json = try? JSONSerialization.jsonObject(with: data) else { return [] }
+
+        let dictionaries = flattenFigureDictionaries(json)
+        return dictionaries.compactMap { dictionary in
+            guard let output = stringValue(dictionary, keys: ["outputPath", "output_path", "output", "assetPath", "asset_path"]) else { return nil }
+            let outputPath = resolveRegistryPath(output, book: book)
+            let source = stringValue(dictionary, keys: ["sourcePath", "source_path", "source", "scriptPath", "script_path"]).map { resolveRegistryPath($0, book: book) } ?? findSource(for: outputPath, book: book)
+            let exists = FileManager.default.fileExists(atPath: outputPath)
+            let stale = isStale(sourcePath: source, outputPath: outputPath)
+            return FigureItem(
+                id: stringValue(dictionary, keys: ["id", "figureID", "figure_id"]) ?? URL(fileURLWithPath: outputPath).deletingPathExtension().lastPathComponent,
+                title: stringValue(dictionary, keys: ["title", "name"]),
+                chapterID: stringValue(dictionary, keys: ["chapterID", "chapter_id", "chapter"]),
+                section: stringValue(dictionary, keys: ["section"]),
+                sourcePath: source,
+                outputPath: outputPath,
+                referencedFrom: [],
+                type: FigureScanner.type(for: outputPath),
+                status: exists ? (stale ? .stale : .ok) : .missingOutput,
+                caption: stringValue(dictionary, keys: ["caption", "alt", "altText", "alt_text"]),
+                generationCommand: stringValue(dictionary, keys: ["generationCommand", "generation_command", "command"]),
+                lastGeneratedAt: FileHelpers.modificationDate(path: outputPath),
+                isStale: stale
+            )
+        }
+    }
+
+    private func flattenFigureDictionaries(_ value: Any) -> [[String: Any]] {
+        if let array = value as? [Any] {
+            return array.flatMap(flattenFigureDictionaries)
+        }
+        if let dictionary = value as? [String: Any] {
+            var results: [[String: Any]] = []
+            if stringValue(dictionary, keys: ["outputPath", "output_path", "output", "assetPath", "asset_path"]) != nil {
+                results.append(dictionary)
+            }
+            for nested in dictionary.values {
+                results.append(contentsOf: flattenFigureDictionaries(nested))
+            }
+            return results
+        }
+        return []
+    }
+
+    private func stringValue(_ dictionary: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let value = dictionary[key] as? String, let trimmed = value.nilIfBlank {
+                return trimmed
+            }
+        }
+        return nil
+    }
+
+    private func resolveRegistryPath(_ value: String, book: BookConfig) -> String {
+        if value.hasPrefix("/") {
+            return value
+        }
+        return URL(fileURLWithPath: book.projectRootPath, isDirectory: true).appendingPathComponent(value).standardizedFileURL.path
     }
 
     private func scanMarkdownReferences(book: BookConfig) -> [MarkdownReference] {

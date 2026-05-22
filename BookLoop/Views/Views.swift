@@ -11,15 +11,16 @@ struct ContentView: View {
     @StateObject private var webModel = WebViewModel()
 
     @State private var selectedTab: WorkspaceTab = .preview
+    @State private var previewStatus: LocalAPIStatus = .unknown
     @State private var feedbackStatus: LocalAPIStatus = .unknown
     @State private var agentStatus: LocalAPIStatus = .unknown
-    @State private var showingSettingsSheet = false
     @State private var editingBook: BookConfig?
 
     var body: some View {
         NavigationSplitView {
             SidebarView(
                 selectedTab: $selectedTab,
+                previewStatus: previewStatus,
                 feedbackStatus: feedbackStatus,
                 agentStatus: agentStatus,
                 addBook: addBookFromPanel,
@@ -50,8 +51,10 @@ struct ContentView: View {
         } detail: {
             InspectorView(
                 selectedTab: $selectedTab,
+                previewStatus: $previewStatus,
                 feedbackStatus: $feedbackStatus,
                 agentStatus: $agentStatus,
+                checkPreview: checkPreview,
                 checkFeedbackAPI: checkFeedbackAPI,
                 checkAgentHarness: checkAgentHarness
             )
@@ -91,6 +94,7 @@ struct ContentView: View {
                 }
                 Button {
                     Task {
+                        await checkPreview()
                         await checkFeedbackAPI()
                         await checkAgentHarness()
                     }
@@ -108,6 +112,7 @@ struct ContentView: View {
         figureStore.refresh(book: book)
         taskStore.refresh(book: book)
         patchStore.refresh(book: book)
+        previewStatus = .unknown
         feedbackStatus = .unknown
         agentStatus = book?.agentHarnessBaseURL?.nilIfBlank == nil ? .notConfigured : .unknown
     }
@@ -128,6 +133,15 @@ struct ContentView: View {
         guard let book = library.selectedBook else { return }
         library.deleteBook(book)
         refreshProjectState()
+    }
+
+    private func checkPreview() async {
+        guard let book = library.selectedBook else {
+            previewStatus = .notConfigured
+            return
+        }
+        previewStatus = .checking
+        previewStatus = await PreviewHealthChecker().check(previewURL: book.previewURL)
     }
 
     private func checkFeedbackAPI() async {
@@ -168,6 +182,7 @@ struct SidebarView: View {
     @EnvironmentObject private var taskStore: TaskStore
 
     @Binding var selectedTab: WorkspaceTab
+    let previewStatus: LocalAPIStatus
     let feedbackStatus: LocalAPIStatus
     let agentStatus: LocalAPIStatus
     let addBook: () -> Void
@@ -202,6 +217,7 @@ struct SidebarView: View {
                 }
 
                 Section("Status") {
+                    StatusBadge(title: "MkDocs Preview", status: previewStatus)
                     StatusBadge(title: "Feedback API", status: feedbackStatus)
                     StatusBadge(title: "Agent", status: agentStatus)
                     Label("\(reviewStore.openCount) open reviews", systemImage: "text.badge.checkmark")
@@ -320,8 +336,10 @@ struct InspectorView: View {
     @EnvironmentObject private var webModel: WebViewModel
 
     @Binding var selectedTab: WorkspaceTab
+    @Binding var previewStatus: LocalAPIStatus
     @Binding var feedbackStatus: LocalAPIStatus
     @Binding var agentStatus: LocalAPIStatus
+    let checkPreview: () async -> Void
     let checkFeedbackAPI: () async -> Void
     let checkAgentHarness: () async -> Void
 
@@ -329,11 +347,15 @@ struct InspectorView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if let book = library.selectedBook {
-                    DashboardView(book: book, feedbackStatus: feedbackStatus, agentStatus: agentStatus)
+                    DashboardView(book: book, previewStatus: previewStatus, feedbackStatus: feedbackStatus, agentStatus: agentStatus)
                         .environmentObject(reviewStore)
                         .environmentObject(figureStore)
                         .environmentObject(taskStore)
                         .environmentObject(patchStore)
+
+                    Button("Check MkDocs Preview") {
+                        Task { await checkPreview() }
+                    }
 
                     Divider()
 
@@ -365,6 +387,7 @@ struct DashboardView: View {
     @EnvironmentObject private var patchStore: PatchStore
 
     let book: BookConfig
+    let previewStatus: LocalAPIStatus
     let feedbackStatus: LocalAPIStatus
     let agentStatus: LocalAPIStatus
 
@@ -372,7 +395,7 @@ struct DashboardView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Dashboard")
                 .font(.headline)
-            StatusBadge(title: "MkDocs Preview", status: .unknown)
+            StatusBadge(title: "MkDocs Preview", status: previewStatus)
             StatusBadge(title: "Feedback API", status: feedbackStatus)
             StatusBadge(title: "Agent Harness", status: agentStatus)
             LabeledContent("Review Items", value: "\(reviewStore.openCount) open")
@@ -386,6 +409,7 @@ struct DashboardView: View {
 
 struct PreviewView: View {
     @EnvironmentObject private var webModel: WebViewModel
+    @EnvironmentObject private var projectStore: ProjectContentStore
     let book: BookConfig
 
     private var previewURL: URL? {
@@ -394,6 +418,13 @@ struct PreviewView: View {
             return url
         }
         return URL(fileURLWithPath: value).validFileURL
+    }
+
+    private var currentChapter: Chapter? {
+        guard let detected = webModel.detectedChapterID?.nilIfBlank else { return nil }
+        return projectStore.chapters.first { chapter in
+            chapter.id == detected || chapter.urlSlug == detected || chapter.relativePath.replacingOccurrences(of: ".md", with: "") == detected
+        }
     }
 
     var body: some View {
@@ -409,6 +440,14 @@ struct PreviewView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 Spacer()
+                if let chapter = currentChapter {
+                    Button("Open Chapter") {
+                        FileHelpers.openFile(path: chapter.markdownPath)
+                    }
+                    Button("Show Chapter") {
+                        FileHelpers.openInFinder(path: chapter.markdownPath)
+                    }
+                }
                 if let url = webModel.currentURL ?? URL(string: book.previewURL) {
                     Button("Open in Browser") {
                         FileHelpers.openExternal(url: url)
@@ -628,6 +667,20 @@ struct AgentHarnessPanel: View {
     }
 }
 
+enum ReviewGrouping: String, CaseIterable, Identifiable {
+    case none = "None"
+    case chapter = "Chapter"
+    case severity = "Severity"
+    case type = "Type"
+
+    var id: String { rawValue }
+}
+
+private struct ReviewItemSection: Identifiable {
+    var id: String
+    var items: [ReviewItem]
+}
+
 struct ReviewBrowserView: View {
     @EnvironmentObject private var reviewStore: ReviewStore
     @EnvironmentObject private var taskStore: TaskStore
@@ -635,6 +688,7 @@ struct ReviewBrowserView: View {
 
     let book: BookConfig
     @State private var selectedDetailID: String?
+    @State private var grouping: ReviewGrouping = .chapter
 
     var body: some View {
         VStack(spacing: 0) {
@@ -653,6 +707,9 @@ struct ReviewBrowserView: View {
                     Text("All").tag("All")
                     ForEach(reviewStore.types, id: \.self) { Text($0).tag($0) }
                 }
+                Picker("Group", selection: $grouping) {
+                    ForEach(ReviewGrouping.allCases) { Text($0.rawValue).tag($0) }
+                }
                 Picker("Sort", selection: $reviewStore.sortMode) {
                     ForEach(ReviewStore.SortMode.allCases) { Text($0.rawValue).tag($0) }
                 }
@@ -661,22 +718,13 @@ struct ReviewBrowserView: View {
 
             Divider()
 
-            if reviewStore.items.isEmpty {
-                EmptyStateView(title: "No Review Items", message: "BookLoop could not find Markdown reviews in reviews/review_items.", systemImage: "quote.bubble")
-            } else {
-                HSplitView {
-                    List(reviewStore.filteredItems, selection: $reviewStore.selectedIDs) { item in
-                        ReviewRow(item: item)
-                            .tag(item.id)
-                            .onTapGesture {
-                                selectedDetailID = item.id
-                            }
-                    }
-                    .frame(minWidth: 320)
-
-                    ReviewDetailView(item: selectedReview)
-                        .frame(minWidth: 320)
-                }
+            TabView {
+                reviewItemsPane
+                    .tabItem { Text("Review Items") }
+                SupplementalMarkdownView(title: "Cumulative Review", content: reviewStore.cumulativeReview, emptyMessage: "reviews/cumulative_review.md was not found.")
+                    .tabItem { Text("Cumulative") }
+                SupplementalMarkdownView(title: "Review Index", content: reviewStore.reviewIndex, emptyMessage: "reviews/review_index.json was not found.")
+                    .tabItem { Text("Index") }
             }
 
             Divider()
@@ -690,16 +738,73 @@ struct ReviewBrowserView: View {
                     taskStore.generate(book: book, mode: .fixReviews, chapterID: selected.compactMap(\.chapter).first, reviewItems: selected, selectedText: webModel.selectedText)
                 }
                 .disabled(reviewStore.selectedIDs.isEmpty)
+                Button("Generate Task for Current Chapter") {
+                    taskStore.generate(book: book, mode: .proposePatchOnly, chapterID: webModel.detectedChapterID, reviewItems: [], selectedText: webModel.selectedText)
+                }
                 Button("Generate Figure Task") {
                     let selected = reviewStore.items.filter { reviewStore.selectedIDs.contains($0.id) }
-                    taskStore.generate(book: book, mode: .proposeFigure, chapterID: selected.compactMap(\.chapter).first, reviewItems: selected, selectedText: webModel.selectedText)
+                    taskStore.generate(book: book, mode: .proposeFigure, chapterID: selected.compactMap(\.chapter).first ?? webModel.detectedChapterID, reviewItems: selected, selectedText: webModel.selectedText)
                 }
-                .disabled(reviewStore.selectedIDs.isEmpty)
+                .disabled(reviewStore.selectedIDs.isEmpty && webModel.detectedChapterID == nil)
                 Spacer()
                 Text("\(reviewStore.filteredItems.count) shown")
                     .foregroundStyle(.secondary)
             }
             .padding(8)
+        }
+    }
+
+    private var reviewItemsPane: some View {
+        Group {
+            if reviewStore.items.isEmpty {
+                EmptyStateView(title: "No Review Items", message: "BookLoop could not find Markdown reviews in reviews/review_items.", systemImage: "quote.bubble")
+            } else {
+                HSplitView {
+                    List(selection: $reviewStore.selectedIDs) {
+                        ForEach(groupedSections) { section in
+                            if grouping == .none {
+                                ForEach(section.items) { item in
+                                    ReviewRow(item: item)
+                                        .tag(item.id)
+                                        .onTapGesture { selectedDetailID = item.id }
+                                }
+                            } else {
+                                Section(section.id) {
+                                    ForEach(section.items) { item in
+                                        ReviewRow(item: item)
+                                            .tag(item.id)
+                                            .onTapGesture { selectedDetailID = item.id }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .frame(minWidth: 320)
+
+                    ReviewDetailView(item: selectedReview)
+                        .frame(minWidth: 320)
+                }
+            }
+        }
+    }
+
+    private var groupedSections: [ReviewItemSection] {
+        let items = reviewStore.filteredItems
+        guard grouping != .none else {
+            return [ReviewItemSection(id: "All Reviews", items: items)]
+        }
+
+        let grouped = Dictionary(grouping: items) { item -> String in
+            switch grouping {
+            case .none: return "All Reviews"
+            case .chapter: return item.chapter ?? "Unknown Chapter"
+            case .severity: return item.severity ?? "Unknown Severity"
+            case .type: return item.type ?? "Unknown Type"
+            }
+        }
+
+        return grouped.keys.sorted().map { key in
+            ReviewItemSection(id: key, items: grouped[key] ?? [])
         }
     }
 
@@ -711,6 +816,39 @@ struct ReviewBrowserView: View {
             return reviewStore.items.first { $0.id == first }
         }
         return reviewStore.filteredItems.first
+    }
+}
+
+struct SupplementalMarkdownView: View {
+    let title: String
+    let content: String?
+    let emptyMessage: String
+
+    var body: some View {
+        if let content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(title)
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                    Text(content)
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding()
+            }
+            .alert("Regenerate figure?", isPresented: $confirmingRegeneration) {
+                Button("Cancel", role: .cancel) {}
+                if let figure {
+                    Button("Run") { runRegeneration(for: figure) }
+                }
+            } message: {
+                Text("BookLoop will run the configured figure command in the book root. No command runs unless shell commands and figure regeneration are enabled for this book.")
+            }
+        } else {
+            EmptyStateView(title: title, message: emptyMessage, systemImage: "doc.text")
+        }
     }
 }
 
@@ -817,7 +955,7 @@ struct FigureBrowserView: View {
             }
             .frame(minWidth: 300)
 
-            FigureDetailView(figure: selectedFigure)
+            FigureDetailView(book: book, figure: selectedFigure)
                 .frame(minWidth: 440)
         }
         .onAppear {
@@ -833,7 +971,10 @@ struct FigureBrowserView: View {
 }
 
 struct FigureDetailView: View {
+    let book: BookConfig
     let figure: FigureItem?
+    @State private var confirmingRegeneration = false
+    @State private var regenerationOutput: String?
 
     var body: some View {
         if let figure {
@@ -862,12 +1003,52 @@ struct FigureDetailView: View {
                         Button("Copy Markdown Reference") {
                             FileHelpers.copyToPasteboard("![\(figure.caption ?? figure.id)](\(figure.outputPath))")
                         }
+                        Button("Regenerate") {
+                            confirmingRegeneration = true
+                        }
+                        .disabled(!book.allowShellCommands || !book.allowFigureRegeneration || regenerationCommand(for: figure) == nil)
+                    }
+                    if let regenerationOutput {
+                        Text("Regeneration Output")
+                            .font(.headline)
+                        Text(regenerationOutput)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
                     }
                 }
                 .padding()
             }
+            .alert("Regenerate figure?", isPresented: $confirmingRegeneration) {
+                Button("Cancel", role: .cancel) {}
+                Button("Run") { runRegeneration(for: figure) }
+            } message: {
+                Text("BookLoop will run the configured figure command in the book root. No command runs unless shell commands and figure regeneration are enabled for this book.")
+            }
         } else {
             EmptyStateView(title: "No Figures", message: "BookLoop scans Markdown image references and docs/assets/figures.", systemImage: "photo")
+        }
+    }
+
+    private func regenerationCommand(for figure: FigureItem) -> String? {
+        if let command = figure.generationCommand?.nilIfBlank {
+            return command
+        }
+        if let command = book.figureGenerationCommand?.nilIfBlank {
+            return command.replacingOccurrences(of: "<figure-id>", with: figure.id)
+        }
+        return nil
+    }
+
+    private func runRegeneration(for figure: FigureItem) {
+        guard book.allowShellCommands, book.allowFigureRegeneration, let command = regenerationCommand(for: figure) else {
+            regenerationOutput = "Figure regeneration is disabled or no command is configured."
+            return
+        }
+        do {
+            let result = try ShellCommandRunner().run(command: command, workingDirectory: book.projectRootPath)
+            regenerationOutput = "Command: \(command)\nExit code: \(result.exitCode)\n\(result.combinedOutput)"
+        } catch {
+            regenerationOutput = error.localizedDescription
         }
     }
 }
@@ -906,6 +1087,8 @@ struct TaskBrowserView: View {
 
     let book: BookConfig
     @State private var selectedURL: URL?
+    @State private var validationOutput: String?
+    @State private var confirmingValidation = false
 
     var body: some View {
         HSplitView {
@@ -917,6 +1100,10 @@ struct TaskBrowserView: View {
                     Button("Validation Task") {
                         taskStore.generate(book: book, mode: .validateBook, chapterID: nil, reviewItems: [], selectedText: nil)
                     }
+                    Button("Run Validation Command") {
+                        confirmingValidation = true
+                    }
+                    .disabled(!book.allowShellCommands || book.validationCommand?.nilIfBlank == nil)
                     Button("Refresh") {
                         taskStore.refresh(book: book)
                     }
@@ -955,6 +1142,20 @@ struct TaskBrowserView: View {
                         }
                     }
                     .padding([.horizontal, .bottom])
+                    if let validationOutput {
+                        Divider()
+                        Text("Validation Output")
+                            .font(.headline)
+                            .padding(.horizontal)
+                        ScrollView {
+                            Text(validationOutput)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding()
+                        }
+                        .frame(maxHeight: 180)
+                    }
                 } else {
                     EmptyStateView(title: "No Task Selected", message: "Generate or select a Cursor-ready task file.", systemImage: "checklist")
                 }
@@ -964,6 +1165,25 @@ struct TaskBrowserView: View {
         .onAppear {
             taskStore.refresh(book: book)
             selectedURL = taskStore.taskFiles.first
+        }
+        .alert("Run validation command?", isPresented: $confirmingValidation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Run") { runValidationCommand() }
+        } message: {
+            Text("BookLoop will run this command in the book root: \(book.validationCommand ?? "")")
+        }
+    }
+
+    private func runValidationCommand() {
+        guard book.allowShellCommands, let command = book.validationCommand?.nilIfBlank else {
+            validationOutput = "Shell commands are disabled or no validation command is configured."
+            return
+        }
+        do {
+            let result = try ShellCommandRunner().run(command: command, workingDirectory: book.projectRootPath)
+            validationOutput = "Command: \(command)\nExit code: \(result.exitCode)\n\(result.combinedOutput)"
+        } catch {
+            validationOutput = error.localizedDescription
         }
     }
 }
@@ -1011,8 +1231,15 @@ struct PatchReviewView: View {
                 applySelectedPatch()
             }
         } message: {
-            Text("BookLoop will run git apply --check first, then git apply if the check succeeds. It will not force apply.")
+            Text(patchApplyConfirmationText)
         }
+    }
+
+    private var patchApplyConfirmationText: String {
+        guard let proposal = patchStore.selectedProposal else {
+            return "No patch selected."
+        }
+        return "BookLoop will run in \(book.projectRootPath):\n\ngit apply --check '\(proposal.filePath)'\ngit apply '\(proposal.filePath)'\n\nIt will not force apply."
     }
 
     private func applySelectedPatch() {
@@ -1077,6 +1304,8 @@ struct PatchActionPanel: View {
     let proposal: PatchProposal?
     @Binding var applyOutput: String?
     @Binding var confirmingApply: Bool
+    @State private var confirmingArchive = false
+    @State private var archiveOutput: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -1108,7 +1337,12 @@ struct PatchActionPanel: View {
                 }
                 .disabled(!book.allowPatchApply)
                 Button("Reject / Archive") {
-                    FileHelpers.openInFinder(path: proposal.filePath)
+                    confirmingArchive = true
+                }
+                if let archiveOutput {
+                    Text(archiveOutput)
+                        .font(.caption)
+                        .textSelection(.enabled)
                 }
                 if let applyOutput {
                     Text(applyOutput)
@@ -1122,6 +1356,30 @@ struct PatchActionPanel: View {
             Spacer()
         }
         .padding()
+        .alert("Archive patch proposal?", isPresented: $confirmingArchive) {
+            Button("Cancel", role: .cancel) {}
+            Button("Archive") { archivePatch() }
+        } message: {
+            Text("BookLoop will move the selected patch into bookloop/patches/archive. No book content is changed.")
+        }
+    }
+
+    private func archivePatch() {
+        guard let proposal else { return }
+        do {
+            let source = URL(fileURLWithPath: proposal.filePath)
+            let archiveDirectory = URL(fileURLWithPath: book.patchDirectoryPath, isDirectory: true).appendingPathComponent("archive", isDirectory: true)
+            try FileManager.default.createDirectory(at: archiveDirectory, withIntermediateDirectories: true, attributes: nil)
+            var destination = archiveDirectory.appendingPathComponent(source.lastPathComponent)
+            if FileManager.default.fileExists(atPath: destination.path) {
+                let timestamp = DateFormatting.taskFilename.string(from: Date())
+                destination = archiveDirectory.appendingPathComponent("\(source.deletingPathExtension().lastPathComponent)-\(timestamp).\(source.pathExtension)")
+            }
+            try FileManager.default.moveItem(at: source, to: destination)
+            archiveOutput = "Archived to \(destination.path). Refresh patches to update the list."
+        } catch {
+            archiveOutput = error.localizedDescription
+        }
     }
 }
 
@@ -1139,8 +1397,11 @@ struct BookSettingsTab: View {
         BookSettingsForm(draft: $draft)
             .safeAreaInset(edge: .bottom) {
                 HStack {
-                    Button("Infer Paths from Project Root") {
+                    Button("Infer Existing Paths") {
                         draft.inferExistingPaths()
+                    }
+                    Button("Fill Suggested Paths") {
+                        draft.fillSuggestedPaths()
                     }
                     Spacer()
                     Button("Save Settings") {
@@ -1173,8 +1434,11 @@ struct BookSettingsView: View {
             BookSettingsForm(draft: $draft)
             Divider()
             HStack {
-                Button("Infer Paths from Project Root") {
+                Button("Infer Existing Paths") {
                     draft.inferExistingPaths()
+                }
+                Button("Fill Suggested Paths") {
+                    draft.fillSuggestedPaths()
                 }
                 Spacer()
                 Button("Cancel", action: onCancel)
