@@ -400,6 +400,38 @@ struct DiffLine: Identifiable, Equatable {
     var content: String
 }
 
+enum PatchBlockDecision: String, Codable, CaseIterable, Identifiable {
+    case pending
+    case accepted
+    case rejected
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .pending: return "Pending"
+        case .accepted: return "Accepted"
+        case .rejected: return "Rejected"
+        }
+    }
+}
+
+struct RenderedPatchBlock: Identifiable, Equatable {
+    var id: String
+    var fileID: String
+    var oldPath: String
+    var newPath: String
+    var title: String
+    var hunkHeader: String
+    var oldStart: Int
+    var newStart: Int
+    var beforeMarkdown: String
+    var afterMarkdown: String
+    var beforeHTML: String
+    var afterHTML: String
+    var rawHunkLines: [String]
+}
+
 enum WorkspaceTab: String, CaseIterable, Identifiable {
     case preview = "Preview"
     case reviews = "Reviews"

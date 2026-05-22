@@ -107,8 +107,20 @@ bookloop/patches/*.patch
 bookloop/patches/*.diff
 ```
 
+Patch review is rendered at the block level. BookLoop parses each unified-diff
+hunk into a rendered before/after HTML block so reviewers can accept or reject
+whole semantic blocks instead of reading a classical line-by-line Git diff.
+
+When blocks are accepted, BookLoop can save a new reviewed patch containing only
+accepted blocks:
+
+```text
+bookloop/patches/reviewed-YYYYMMDD-HHMMSS-<patch-name>.patch
+```
+
 Patch application is explicit and guarded. If enabled for the book, BookLoop
-runs:
+runs `git apply --check` before `git apply` for either the full original patch
+or the accepted-blocks reviewed patch:
 
 ```bash
 git apply --check bookloop/patches/example.patch
@@ -143,7 +155,7 @@ scheme.
 17. **Review item browser**: Scans Markdown review items, parses frontmatter/best-effort Markdown, filters, searches, sorts, groups, and displays cumulative/index files.
 18. **Task generation**: Generates Cursor-ready Markdown tasks under `bookloop/tasks/` for reviews, chapters, figures, and validation.
 19. **Optional Agent Harness Client**: Scaffolded health check and fix-review submission; task-file generation remains the default workflow.
-20. **Patch management**: Scans `.patch`/`.diff`, parses unified diffs, displays hunks, copies raw patches/commands, safely applies, and archives rejected patches.
+20. **Patch management**: Scans `.patch`/`.diff`, parses unified diffs, renders before/after HTML blocks, supports block-level accept/reject, creates accepted-block reviewed patches, safely applies, and archives rejected patches.
 21. **Markdown editing**: Full native editing is intentionally out of v1; current chapter Markdown can be opened externally or revealed in Finder.
 22. **Chapter discovery**: Best-effort scanner reads `mkdocs.yml` nav entries, scans `docs/**/*.md`, and uses Markdown frontmatter IDs/titles.
 23. **Figure management**: Scans Markdown references, output assets, source scripts, and `bookloop/figures.json`; detects missing, stale, unreferenced, and registered figures.

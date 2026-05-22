@@ -696,6 +696,161 @@ final class FigureScanner {
     }
 }
 
+
+final class MarkdownHTMLRenderer {
+    func renderDocument(markdown: String, title: String? = nil) -> String {
+        let body = renderBody(markdown)
+        let safeTitle = escapeHTML(title ?? "BookLoop Patch Block")
+        return """
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <style>
+            :root { color-scheme: light dark; }
+            body {
+              font: -apple-system-body;
+              margin: 0;
+              padding: 14px;
+              line-height: 1.45;
+              color: CanvasText;
+              background: Canvas;
+            }
+            h1, h2, h3, h4 { margin: 0.8em 0 0.35em; }
+            p { margin: 0.45em 0; }
+            blockquote {
+              border-left: 3px solid #8e8e93;
+              color: #636366;
+              margin: 0.6em 0;
+              padding: 0.1em 0 0.1em 0.8em;
+            }
+            pre {
+              background: rgba(127, 127, 127, 0.14);
+              border-radius: 8px;
+              overflow-x: auto;
+              padding: 10px;
+            }
+            code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+            ul, ol { padding-left: 1.4em; }
+            img { max-width: 100%; height: auto; }
+            .empty { color: #8e8e93; font-style: italic; }
+          </style>
+          <title>\(safeTitle)</title>
+        </head>
+        <body>\(body)</body>
+        </html>
+        """
+    }
+
+    private func renderBody(_ markdown: String) -> String {
+        let lines = markdown.components(separatedBy: .newlines)
+        var html: [String] = []
+        var paragraph: [String] = []
+        var codeLines: [String] = []
+        var inCodeBlock = false
+        var inList = false
+
+        func flushParagraph() {
+            guard !paragraph.isEmpty else { return }
+            html.append("<p>" + paragraph.map(renderInline).joined(separator: " ") + "</p>")
+            paragraph.removeAll()
+        }
+
+        func closeListIfNeeded() {
+            if inList {
+                html.append("</ul>")
+                inList = false
+            }
+        }
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("```") {
+                if inCodeBlock {
+                    html.append("<pre><code>" + escapeHTML(codeLines.joined(separator: "\n")) + "</code></pre>")
+                    codeLines.removeAll()
+                    inCodeBlock = false
+                } else {
+                    flushParagraph()
+                    closeListIfNeeded()
+                    inCodeBlock = true
+                }
+                continue
+            }
+
+            if inCodeBlock {
+                codeLines.append(line)
+                continue
+            }
+
+            if trimmed.isEmpty {
+                flushParagraph()
+                closeListIfNeeded()
+                continue
+            }
+
+            if let heading = headingHTML(for: trimmed) {
+                flushParagraph()
+                closeListIfNeeded()
+                html.append(heading)
+                continue
+            }
+
+            if trimmed.hasPrefix(">") {
+                flushParagraph()
+                closeListIfNeeded()
+                let quote = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+                html.append("<blockquote>" + renderInline(String(quote)) + "</blockquote>")
+                continue
+            }
+
+            if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
+                flushParagraph()
+                if !inList {
+                    html.append("<ul>")
+                    inList = true
+                }
+                html.append("<li>" + renderInline(String(trimmed.dropFirst(2))) + "</li>")
+                continue
+            }
+
+            paragraph.append(trimmed)
+        }
+
+        if inCodeBlock {
+            html.append("<pre><code>" + escapeHTML(codeLines.joined(separator: "\n")) + "</code></pre>")
+        }
+        flushParagraph()
+        closeListIfNeeded()
+
+        if html.isEmpty {
+            return "<p class=\"empty\">No rendered content in this side of the block.</p>"
+        }
+        return html.joined(separator: "\n")
+    }
+
+    private func headingHTML(for line: String) -> String? {
+        let level = line.prefix { $0 == "#" }.count
+        guard (1...4).contains(level), line.dropFirst(level).first == " " else { return nil }
+        let text = line.dropFirst(level + 1)
+        return "<h\(level)>" + renderInline(String(text)) + "</h\(level)>"
+    }
+
+    private func renderInline(_ markdown: String) -> String {
+        escapeHTML(markdown)
+    }
+
+    private func escapeHTML(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+    }
+}
+
 final class PatchParser {
     func scanPatchDirectory(path: String) -> [PatchProposal] {
         let directory = URL(fileURLWithPath: path, isDirectory: true)
@@ -773,6 +928,98 @@ final class PatchParser {
         return files
     }
 
+    func renderedBlocks(from proposal: PatchProposal) -> [RenderedPatchBlock] {
+        let renderer = MarkdownHTMLRenderer()
+        return parseDiff(proposal.rawPatch).flatMap { file in
+            file.hunks.enumerated().map { index, hunk in
+                let markdown = markdownPair(for: hunk)
+                let hunkHeader = hunk.lines.first(where: { $0.kind == .header })?.content ?? "@@ -\(hunk.oldStart) +\(hunk.newStart) @@"
+                let title = "\(file.newPath.isEmpty ? file.oldPath : file.newPath) • block \(index + 1)"
+                return RenderedPatchBlock(
+                    id: "\(file.id)::\(index)::\(hunk.oldStart)-\(hunk.newStart)",
+                    fileID: file.id,
+                    oldPath: file.oldPath,
+                    newPath: file.newPath,
+                    title: title,
+                    hunkHeader: hunkHeader,
+                    oldStart: hunk.oldStart,
+                    newStart: hunk.newStart,
+                    beforeMarkdown: markdown.before,
+                    afterMarkdown: markdown.after,
+                    beforeHTML: renderer.renderDocument(markdown: markdown.before, title: "Before \(title)"),
+                    afterHTML: renderer.renderDocument(markdown: markdown.after, title: "After \(title)"),
+                    rawHunkLines: hunk.lines.map(\.content)
+                )
+            }
+        }
+    }
+
+    func buildReviewedPatch(proposal: PatchProposal, acceptedBlockIDs: Set<String>) -> String {
+        let acceptedBlocks = renderedBlocks(from: proposal).filter { acceptedBlockIDs.contains($0.id) }
+        guard !acceptedBlocks.isEmpty else { return "" }
+
+        var lines: [String] = []
+        var currentFileID: String?
+        for block in acceptedBlocks {
+            if block.fileID != currentFileID {
+                if !lines.isEmpty { lines.append("") }
+                let oldDiffPath = diffGitPath(block.oldPath, fallbackPath: block.newPath, prefix: "a")
+                let newDiffPath = diffGitPath(block.newPath, fallbackPath: block.oldPath, prefix: "b")
+                let oldPatchPath = gitPath(block.oldPath, prefix: "a")
+                let newPatchPath = gitPath(block.newPath, prefix: "b")
+                lines.append("diff --git \(oldDiffPath) \(newDiffPath)")
+                lines.append("--- \(oldPatchPath)")
+                lines.append("+++ \(newPatchPath)")
+                currentFileID = block.fileID
+            }
+            lines.append(contentsOf: block.rawHunkLines)
+        }
+
+        return lines.joined(separator: "\n") + "\n"
+    }
+
+    func reviewedPatchFilename(for proposal: PatchProposal) -> String {
+        let basename = URL(fileURLWithPath: proposal.filePath).deletingPathExtension().lastPathComponent.slugified()
+        return "reviewed-\(DateFormatting.taskFilename.string(from: Date()))-\(basename).patch"
+    }
+
+    private func markdownPair(for hunk: DiffHunk) -> (before: String, after: String) {
+        var before: [String] = []
+        var after: [String] = []
+
+        for line in hunk.lines where line.kind != .header {
+            let content = line.content
+            guard !content.hasPrefix("\\ No newline") else { continue }
+            switch line.kind {
+            case .context:
+                before.append(stripDiffPrefix(content))
+                after.append(stripDiffPrefix(content))
+            case .deletion:
+                before.append(stripDiffPrefix(content))
+            case .addition:
+                after.append(stripDiffPrefix(content))
+            case .header:
+                break
+            }
+        }
+
+        return (before.joined(separator: "\n"), after.joined(separator: "\n"))
+    }
+
+    private func stripDiffPrefix(_ line: String) -> String {
+        guard let first = line.first, [" ", "+", "-"].contains(first) else { return line }
+        return String(line.dropFirst())
+    }
+
+    private func diffGitPath(_ path: String, fallbackPath: String, prefix: String) -> String {
+        let resolved = path == "/dev/null" ? fallbackPath : path
+        return "\(prefix)/\(resolved)"
+    }
+
+    private func gitPath(_ path: String, prefix: String) -> String {
+        path == "/dev/null" ? path : "\(prefix)/\(path)"
+    }
+
     private func parsePatch(url: URL) -> PatchProposal? {
         guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         let diffFiles = parseDiff(raw)
@@ -845,13 +1092,21 @@ final class ShellCommandRunner {
 
 final class PatchApplier {
     func check(patch: PatchProposal, book: BookConfig) throws -> ShellCommandResult {
-        try ShellCommandRunner().run(command: "git apply --check \(shellQuoted(patch.filePath))", workingDirectory: book.projectRootPath)
+        try checkPatchFile(path: patch.filePath, book: book)
     }
 
     func apply(patch: PatchProposal, book: BookConfig) throws -> ShellCommandResult {
-        let checkResult = try check(patch: patch, book: book)
+        try applyPatchFile(path: patch.filePath, book: book)
+    }
+
+    func checkPatchFile(path: String, book: BookConfig) throws -> ShellCommandResult {
+        try ShellCommandRunner().run(command: "git apply --check \(shellQuoted(path))", workingDirectory: book.projectRootPath)
+    }
+
+    func applyPatchFile(path: String, book: BookConfig) throws -> ShellCommandResult {
+        let checkResult = try checkPatchFile(path: path, book: book)
         guard checkResult.exitCode == 0 else { return checkResult }
-        return try ShellCommandRunner().run(command: "git apply \(shellQuoted(patch.filePath))", workingDirectory: book.projectRootPath)
+        return try ShellCommandRunner().run(command: "git apply \(shellQuoted(path))", workingDirectory: book.projectRootPath)
     }
 
     private func shellQuoted(_ path: String) -> String {

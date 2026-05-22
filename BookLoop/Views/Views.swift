@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WebKit
 
 struct ContentView: View {
     @EnvironmentObject private var library: BookLibraryStore
@@ -1188,61 +1189,185 @@ struct TaskBrowserView: View {
     }
 }
 
+enum PatchReviewError: LocalizedError {
+    case noSelectedPatch
+    case noAcceptedBlocks
+    case emptyReviewedPatch
+
+    var errorDescription: String? {
+        switch self {
+        case .noSelectedPatch: return "No patch proposal is selected."
+        case .noAcceptedBlocks: return "Accept at least one rendered block before generating a reviewed patch."
+        case .emptyReviewedPatch: return "The reviewed patch is empty."
+        }
+    }
+}
+
 struct PatchReviewView: View {
     @EnvironmentObject private var patchStore: PatchStore
     let book: BookConfig
     @State private var applyOutput: String?
-    @State private var confirmingApply = false
+    @State private var saveOutput: String?
+    @State private var confirmingApplyFullPatch = false
+    @State private var confirmingApplyAcceptedBlocks = false
+    @State private var blockDecisions: [String: PatchBlockDecision] = [:]
+
+    private var renderedBlocks: [RenderedPatchBlock] {
+        guard let proposal = patchStore.selectedProposal else { return [] }
+        return PatchParser().renderedBlocks(from: proposal)
+    }
+
+    private var acceptedBlockIDs: Set<String> {
+        Set(blockDecisions.filter { $0.value == .accepted }.map { $0.key })
+    }
 
     var body: some View {
         HSplitView {
-            VStack {
-                HStack {
-                    Button("Refresh Patches") {
-                        patchStore.refresh(book: book)
-                    }
-                    Button("Open Patch Folder") {
-                        FileHelpers.openInFinder(path: book.patchDirectoryPath)
-                    }
-                }
-                .padding(8)
-                List(patchStore.proposals, selection: $patchStore.selectedProposalID) { proposal in
-                    VStack(alignment: .leading) {
-                        Text(proposal.title)
-                            .fontWeight(.medium)
-                        Text("\(proposal.changedFiles.count) changed file(s)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .tag(proposal.id)
-                }
-            }
-            .frame(minWidth: 260)
-
-            DiffViewer(proposal: patchStore.selectedProposal)
-                .frame(minWidth: 520)
-
-            PatchActionPanel(book: book, proposal: patchStore.selectedProposal, applyOutput: $applyOutput, confirmingApply: $confirmingApply)
+            patchListPane
                 .frame(minWidth: 260)
+
+            RenderedPatchReviewView(blocks: renderedBlocks, decisions: $blockDecisions)
+                .frame(minWidth: 620)
+
+            PatchActionPanel(
+                book: book,
+                proposal: patchStore.selectedProposal,
+                blocks: renderedBlocks,
+                decisions: $blockDecisions,
+                applyOutput: $applyOutput,
+                saveOutput: $saveOutput,
+                confirmingApplyFullPatch: $confirmingApplyFullPatch,
+                confirmingApplyAcceptedBlocks: $confirmingApplyAcceptedBlocks,
+                copyAcceptedPatch: copyAcceptedPatch,
+                saveAcceptedPatch: saveAcceptedPatch
+            )
+            .frame(minWidth: 280)
         }
-        .alert("Apply patch?", isPresented: $confirmingApply) {
+        .onChange(of: patchStore.selectedProposalID) { _ in
+            blockDecisions.removeAll()
+            applyOutput = nil
+            saveOutput = nil
+        }
+        .alert("Apply full patch?", isPresented: $confirmingApplyFullPatch) {
             Button("Cancel", role: .cancel) {}
-            Button("Apply") {
-                applySelectedPatch()
+            Button("Apply Full Patch", role: .destructive) {
+                applyFullPatch()
             }
         } message: {
-            Text(patchApplyConfirmationText)
+            Text(fullPatchApplyConfirmationText)
+        }
+        .alert("Apply accepted rendered blocks?", isPresented: $confirmingApplyAcceptedBlocks) {
+            Button("Cancel", role: .cancel) {}
+            Button("Apply Accepted Blocks", role: .destructive) {
+                applyAcceptedBlocks()
+            }
+        } message: {
+            Text("BookLoop will write a reviewed patch containing only accepted rendered blocks, run git apply --check, then apply it if the check succeeds.")
         }
     }
 
-    private var patchApplyConfirmationText: String {
+    private var patchListPane: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Button("Refresh Patches") {
+                    patchStore.refresh(book: book)
+                }
+                Button("Open Patch Folder") {
+                    FileHelpers.openInFinder(path: book.patchDirectoryPath)
+                }
+            }
+            .padding(8)
+
+            List(patchStore.proposals, selection: $patchStore.selectedProposalID) { proposal in
+                VStack(alignment: .leading) {
+                    Text(proposal.title)
+                        .fontWeight(.medium)
+                    Text("\(proposal.changedFiles.count) changed file(s)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .tag(proposal.id)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Rendered Blocks")
+                    .font(.headline)
+                ForEach(renderedBlocks) { block in
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(color(for: blockDecisions[block.id] ?? .pending))
+                            .frame(width: 8, height: 8)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(block.title)
+                                .font(.caption)
+                                .lineLimit(1)
+                            Text((blockDecisions[block.id] ?? .pending).displayName)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .padding(8)
+        }
+    }
+
+    private var fullPatchApplyConfirmationText: String {
         guard let proposal = patchStore.selectedProposal else {
             return "No patch selected."
         }
-        return "BookLoop will run in \(book.projectRootPath):\n\ngit apply --check '\(proposal.filePath)'\ngit apply '\(proposal.filePath)'\n\nIt will not force apply."
+        return "BookLoop will run in \(book.projectRootPath):\n\ngit apply --check '\(proposal.filePath)'\ngit apply '\(proposal.filePath)'\n\nThis applies the full original patch, ignoring block-level Accept/Reject choices."
     }
 
-    private func applySelectedPatch() {
+    private func color(for decision: PatchBlockDecision) -> Color {
+        switch decision {
+        case .pending: return .orange
+        case .accepted: return .green
+        case .rejected: return .red
+        }
+    }
+
+    private func reviewedPatchText() throws -> String {
+        guard let proposal = patchStore.selectedProposal else { throw PatchReviewError.noSelectedPatch }
+        guard !acceptedBlockIDs.isEmpty else { throw PatchReviewError.noAcceptedBlocks }
+        let text = PatchParser().buildReviewedPatch(proposal: proposal, acceptedBlockIDs: acceptedBlockIDs)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw PatchReviewError.emptyReviewedPatch }
+        return text
+    }
+
+    @discardableResult
+    private func writeAcceptedPatchToDisk() throws -> String {
+        guard let proposal = patchStore.selectedProposal else { throw PatchReviewError.noSelectedPatch }
+        let text = try reviewedPatchText()
+        try FileHelpers.ensureDirectory(book.patchDirectoryPath)
+        let url = URL(fileURLWithPath: book.patchDirectoryPath, isDirectory: true)
+            .appendingPathComponent(PatchParser().reviewedPatchFilename(for: proposal))
+        try text.write(to: url, atomically: true, encoding: .utf8)
+        saveOutput = "Saved reviewed patch: \(url.path)"
+        return url.path
+    }
+
+    private func copyAcceptedPatch() {
+        do {
+            FileHelpers.copyToPasteboard(try reviewedPatchText())
+            saveOutput = "Copied reviewed patch for \(acceptedBlockIDs.count) accepted block(s)."
+        } catch {
+            saveOutput = error.localizedDescription
+        }
+    }
+
+    private func saveAcceptedPatch() {
+        do {
+            _ = try writeAcceptedPatchToDisk()
+            patchStore.refresh(book: book)
+        } catch {
+            saveOutput = error.localizedDescription
+        }
+    }
+
+    private func applyFullPatch() {
         guard let proposal = patchStore.selectedProposal else { return }
         guard book.allowPatchApply else {
             applyOutput = "Patch apply is disabled for this book."
@@ -1250,66 +1375,169 @@ struct PatchReviewView: View {
         }
         do {
             let result = try PatchApplier().apply(patch: proposal, book: book)
-            applyOutput = "Exit code: \(result.exitCode)\n\(result.combinedOutput)"
+            applyOutput = "Full patch exit code: \(result.exitCode)\n\(result.combinedOutput)"
+        } catch {
+            applyOutput = error.localizedDescription
+        }
+    }
+
+    private func applyAcceptedBlocks() {
+        guard book.allowPatchApply else {
+            applyOutput = "Patch apply is disabled for this book."
+            return
+        }
+        do {
+            let reviewedPatchPath = try writeAcceptedPatchToDisk()
+            let result = try PatchApplier().applyPatchFile(path: reviewedPatchPath, book: book)
+            applyOutput = "Accepted-block patch: \(reviewedPatchPath)\nExit code: \(result.exitCode)\n\(result.combinedOutput)"
+            patchStore.refresh(book: book)
         } catch {
             applyOutput = error.localizedDescription
         }
     }
 }
 
-struct DiffViewer: View {
-    let proposal: PatchProposal?
+struct RenderedPatchReviewView: View {
+    let blocks: [RenderedPatchBlock]
+    @Binding var decisions: [String: PatchBlockDecision]
 
     var body: some View {
-        if let proposal {
-            let files = PatchParser().parseDiff(proposal.rawPatch)
+        if blocks.isEmpty {
+            EmptyStateView(title: "No Rendered Patch Blocks", message: "Place .patch or .diff files under bookloop/patches. BookLoop renders each diff hunk as a before/after HTML block for review.", systemImage: "doc.richtext")
+        } else {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(files) { file in
-                        Text(file.newPath)
-                            .font(.headline)
-                            .padding(.top, 10)
-                        ForEach(file.hunks) { hunk in
-                            ForEach(hunk.lines) { line in
-                                Text(line.content)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 1)
-                                    .background(background(for: line.kind))
-                                    .textSelection(.enabled)
-                            }
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    ForEach(blocks) { block in
+                        RenderedPatchBlockCard(block: block, decision: decisions[block.id] ?? .pending) { decision in
+                            decisions[block.id] = decision
                         }
                     }
                 }
                 .padding()
             }
-        } else {
-            EmptyStateView(title: "No Patch Selected", message: "Place .patch or .diff files under bookloop/patches to review them.", systemImage: "doc.text.magnifyingglass")
         }
     }
+}
 
-    private func background(for kind: DiffLineKind) -> Color {
-        switch kind {
-        case .addition: return .green.opacity(0.14)
-        case .deletion: return .red.opacity(0.14)
-        case .header: return .blue.opacity(0.12)
-        case .context: return .clear
+struct RenderedPatchBlockCard: View {
+    let block: RenderedPatchBlock
+    let decision: PatchBlockDecision
+    let setDecision: (PatchBlockDecision) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(block.title)
+                        .font(.headline)
+                    Text(block.hunkHeader)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Spacer()
+                Text(decision.displayName)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(statusColor.opacity(0.16))
+                    .clipShape(Capsule())
+            }
+
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Before", systemImage: "minus.circle")
+                        .foregroundStyle(.red)
+                    HTMLStringView(html: block.beforeHTML)
+                        .frame(minHeight: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.red.opacity(0.22)))
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("After", systemImage: "plus.circle")
+                        .foregroundStyle(.green)
+                    HTMLStringView(html: block.afterHTML)
+                        .frame(minHeight: 220)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.green.opacity(0.22)))
+                }
+            }
+
+            HStack {
+                Button("Accept Block") { setDecision(.accepted) }
+                    .buttonStyle(.borderedProminent)
+                Button("Reject Block") { setDecision(.rejected) }
+                Button("Reset") { setDecision(.pending) }
+                Spacer()
+                Text("Review decisions apply to this rendered block as a unit, not to individual diff lines.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+        .padding()
+        .background(statusColor.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(statusColor.opacity(0.2)))
+    }
+
+    private var statusColor: Color {
+        switch decision {
+        case .pending: return .orange
+        case .accepted: return .green
+        case .rejected: return .red
+        }
+    }
+}
+
+struct HTMLStringView: NSViewRepresentable {
+    let html: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let webView = WKWebView(frame: .zero)
+        webView.setValue(false, forKey: "drawsBackground")
+        webView.scrollView.hasVerticalScroller = true
+        webView.scrollView.hasHorizontalScroller = true
+        context.coordinator.lastHTML = html
+        webView.loadHTMLString(html, baseURL: nil)
+        return webView
+    }
+
+    func updateNSView(_ nsView: WKWebView, context: Context) {
+        guard context.coordinator.lastHTML != html else { return }
+        context.coordinator.lastHTML = html
+        nsView.loadHTMLString(html, baseURL: nil)
+    }
+
+    final class Coordinator {
+        var lastHTML = ""
     }
 }
 
 struct PatchActionPanel: View {
     let book: BookConfig
     let proposal: PatchProposal?
+    let blocks: [RenderedPatchBlock]
+    @Binding var decisions: [String: PatchBlockDecision]
     @Binding var applyOutput: String?
-    @Binding var confirmingApply: Bool
+    @Binding var saveOutput: String?
+    @Binding var confirmingApplyFullPatch: Bool
+    @Binding var confirmingApplyAcceptedBlocks: Bool
+    let copyAcceptedPatch: () -> Void
+    let saveAcceptedPatch: () -> Void
     @State private var confirmingArchive = false
     @State private var archiveOutput: String?
 
+    private var acceptedCount: Int { decisions.values.filter { $0 == .accepted }.count }
+    private var rejectedCount: Int { decisions.values.filter { $0 == .rejected }.count }
+    private var pendingCount: Int { blocks.count - acceptedCount - rejectedCount }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Patch Actions")
+            Text("Rendered Patch Review")
                 .font(.headline)
             if let proposal {
                 Text(proposal.title)
@@ -1320,6 +1548,21 @@ struct PatchActionPanel: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
+
+                GroupBox("Block Decisions") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        LabeledContent("Accepted", value: "\(acceptedCount)")
+                        LabeledContent("Rejected", value: "\(rejectedCount)")
+                        LabeledContent("Pending", value: "\(pendingCount)")
+                        HStack {
+                            Button("Accept All") { setAll(.accepted) }
+                            Button("Reject All") { setAll(.rejected) }
+                            Button("Reset") { decisions.removeAll() }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
                 Text("Changed Files")
                     .font(.headline)
                 ForEach(proposal.changedFiles, id: \.self) { path in
@@ -1327,17 +1570,34 @@ struct PatchActionPanel: View {
                         .font(.caption)
                         .lineLimit(1)
                 }
-                Button("Open Patch File") { FileHelpers.openInFinder(path: proposal.filePath) }
-                Button("Copy Raw Patch") { FileHelpers.copyToPasteboard(proposal.rawPatch) }
-                Button("Copy git apply Command") {
-                    FileHelpers.copyToPasteboard("git apply \(proposal.filePath)")
+
+                Divider()
+
+                Button("Copy Accepted-Blocks Patch") { copyAcceptedPatch() }
+                    .disabled(acceptedCount == 0)
+                Button("Save Accepted-Blocks Patch") { saveAcceptedPatch() }
+                    .disabled(acceptedCount == 0)
+                Button("Apply Accepted Blocks", role: .destructive) {
+                    confirmingApplyAcceptedBlocks = true
                 }
-                Button("Apply Patch", role: .destructive) {
-                    confirmingApply = true
+                .disabled(!book.allowPatchApply || acceptedCount == 0)
+
+                Divider()
+
+                Button("Open Original Patch File") { FileHelpers.openInFinder(path: proposal.filePath) }
+                Button("Copy Original Raw Patch") { FileHelpers.copyToPasteboard(proposal.rawPatch) }
+                Button("Apply Full Original Patch", role: .destructive) {
+                    confirmingApplyFullPatch = true
                 }
                 .disabled(!book.allowPatchApply)
-                Button("Reject / Archive") {
+                Button("Reject / Archive Original Patch") {
                     confirmingArchive = true
+                }
+
+                if let saveOutput {
+                    Text(saveOutput)
+                        .font(.caption)
+                        .textSelection(.enabled)
                 }
                 if let archiveOutput {
                     Text(archiveOutput)
@@ -1350,18 +1610,22 @@ struct PatchActionPanel: View {
                         .textSelection(.enabled)
                 }
             } else {
-                Text("Select a patch proposal to inspect and apply it safely.")
+                Text("Select a patch proposal to review rendered before/after blocks.")
                     .foregroundStyle(.secondary)
             }
             Spacer()
         }
         .padding()
-        .alert("Archive patch proposal?", isPresented: $confirmingArchive) {
+        .alert("Archive original patch proposal?", isPresented: $confirmingArchive) {
             Button("Cancel", role: .cancel) {}
             Button("Archive") { archivePatch() }
         } message: {
-            Text("BookLoop will move the selected patch into bookloop/patches/archive. No book content is changed.")
+            Text("BookLoop will move the selected original patch into bookloop/patches/archive. No book content is changed.")
         }
+    }
+
+    private func setAll(_ decision: PatchBlockDecision) {
+        decisions = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, decision) })
     }
 
     private func archivePatch() {
