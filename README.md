@@ -61,16 +61,29 @@ http://127.0.0.1:8765/api/review
 
 It never writes review Markdown files directly.
 
-## Optional Agent Harness
+## Optional Cursor CLI Harness
 
-BookLoop can check and optionally submit local tasks to a future agent harness
-at:
+BookLoop can optionally integrate with a local `cursor_cli` harness in two ways:
+
+1. **Command mode (preferred)**: configure a command template such as:
+
+```text
+cursor-agent -p --output-format stream-json --force
+```
+
+BookLoop appends the generated task text unless the template uses `<task-text>`
+or `<task-file>` placeholders.
+
+2. **HTTP mode (legacy/compatible)**: configure a harness base URL, typically:
 
 ```text
 http://127.0.0.1:8770
 ```
 
-The harness is optional. Core workflows work without it.
+In HTTP mode, BookLoop checks multiple common health/task paths for compatibility
+with different local harness wrappers.
+
+The harness is optional either way. Core workflows work without it.
 
 ## Add a book in BookLoop
 
@@ -79,7 +92,8 @@ Use the sidebar Add button and select the MkDocs project root. Defaults:
 ```text
 Preview URL: http://127.0.0.1:8000
 Feedback API: http://127.0.0.1:8765
-Agent Harness: http://127.0.0.1:8770
+Cursor CLI Harness URL (optional): http://127.0.0.1:8770
+Cursor CLI Harness command (optional): cursor-agent -p --output-format stream-json --force
 ```
 
 Book settings persist in:
@@ -141,7 +155,7 @@ scheme.
 3. **Target platform and technology**: Swift, SwiftUI, WKWebView, URLSession, Codable, async/await, FileManager, and guarded Process usage; no external packages.
 4. **App name**: Xcode product, bundle display name, target, and window title use `BookLoop`.
 5. **High-level architecture**: Book library, preview, feedback client, review browser, figure manager, task generator, patch manager, and optional harness client are implemented.
-6. **Important local APIs**: Feedback API and optional agent harness API clients include health checks and structured requests.
+6. **Important local APIs**: Feedback API and optional cursor harness integrations include health checks plus task submission via CLI command template or HTTP.
 7. **Book configuration**: `BookConfig` includes the requested paths, commands, notes, defaults, existing-path inference, and suggested-path filling.
 8. **Persistence**: Book library and selected book ID persist to `~/Library/Application Support/BookLoop/books.json` with auto-save on store updates.
 9. **Main app layout**: Native three-pane `NavigationSplitView` with sidebar, tabbed workspace, and workflow inspector.
@@ -154,14 +168,14 @@ scheme.
 16. **Feedback panel**: Inspector form supports validation, API check, selected text, save review, clear form, success, and failure states.
 17. **Review item browser**: Scans Markdown review items, parses frontmatter/best-effort Markdown, filters, searches, sorts, groups, and displays cumulative/index files.
 18. **Task generation**: Generates Cursor-ready Markdown tasks under `bookloop/tasks/` for reviews, chapters, figures, and validation.
-19. **Optional Agent Harness Client**: Scaffolded health check and fix-review submission; task-file generation remains the default workflow.
+19. **Optional Cursor CLI Harness Client**: Supports fix-review submission through a configurable `cursor_cli` command template and compatible HTTP fallback endpoints; task-file generation remains the default workflow.
 20. **Patch management**: Scans `.patch`/`.diff`, parses unified diffs, renders before/after HTML blocks, supports block-level accept/reject, creates accepted-block reviewed patches, safely applies, and archives rejected patches.
 21. **Markdown editing**: Full native editing is intentionally out of v1; current chapter Markdown can be opened externally or revealed in Finder.
 22. **Chapter discovery**: Best-effort scanner reads `mkdocs.yml` nav entries, scans `docs/**/*.md`, and uses Markdown frontmatter IDs/titles.
 23. **Figure management**: Scans Markdown references, output assets, source scripts, and `bookloop/figures.json`; detects missing, stale, unreferenced, and registered figures.
 24. **Figure proposal workflow**: Figure tasks request reproducible sources, output assets, captions, insertion patches, and validation.
 25. **Validation**: Generates validation tasks and can run a configured validation command only when shell commands are enabled and confirmed.
-26. **Status dashboard**: Inspector/sidebar show preview, feedback API, agent harness, reviews, figures, patches, and task counts.
+26. **Status dashboard**: Inspector/sidebar show preview, feedback API, cursor harness, reviews, figures, patches, and task counts.
 27. **Settings UI**: Settings form includes all requested fields, path pickers, path inference, suggestions, safety toggles, and notes.
 28. **Safety rules**: No external LLM calls, no direct feedback-file writes, no automatic shell execution, no silent patch application, and explicit confirmations for commands.
 29. **Suggested file organization**: Source is organized into the requested top-level folders; several related small types are consolidated into shared Swift files for this v1 scaffold.

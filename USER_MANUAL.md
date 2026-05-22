@@ -36,7 +36,7 @@ This manual describes how to install BookLoop, set up a book project, and use ea
 - Optionally, a terminal for running local services:
   - **MkDocs preview** (`mkdocs serve`)
   - **Feedback API** (`python scripts/feedback_api.py …`)
-  - **Agent harness** (optional, for future local agent integration)
+  - **Cursor CLI harness** (optional, command or HTTP integration)
 
 BookLoop does **not**:
 
@@ -70,12 +70,12 @@ BookLoop uses a three-column layout:
 |--------|---------|
 | **Sidebar (left)** | Book list, workspace tabs, status summary, Add/Edit/Delete |
 | **Workspace (center)** | Main content for the selected tab (Preview, Reviews, Figures, etc.) |
-| **Inspector (right)** | Dashboard, feedback form, and agent harness controls |
+| **Inspector (right)** | Dashboard, feedback form, and cursor harness controls |
 
 The toolbar provides:
 
 - **Refresh** — reloads chapters, reviews, figures, tasks, and patches for the selected book
-- **Check APIs** — checks MkDocs preview, Feedback API, and Agent Harness connectivity
+- **Check APIs** — checks MkDocs preview, Feedback API, and Cursor CLI harness connectivity
 
 ---
 
@@ -124,7 +124,8 @@ Default URLs:
 |---------|---------|
 | Preview URL | `http://127.0.0.1:8000` |
 | Feedback API | `http://127.0.0.1:8765` |
-| Agent Harness | `http://127.0.0.1:8770` (optional) |
+| Cursor CLI Harness URL | `http://127.0.0.1:8770` (optional HTTP mode) |
+| Cursor CLI Harness command | `cursor-agent -p --output-format stream-json --force` (optional command mode) |
 
 ### Edit book settings
 
@@ -174,9 +175,14 @@ http://127.0.0.1:8765/api/review
 
 The API is responsible for writing review files under `reviews/review_items/`. BookLoop never writes those files itself.
 
-### Agent harness (optional)
+### Cursor CLI harness (optional)
 
-If configured, BookLoop can check health at the harness base URL and optionally submit tasks. **Task file generation** under `bookloop/tasks/` remains the primary workflow; the harness is optional.
+If configured, BookLoop can check harness availability and optionally submit fix-review tasks. You can use either:
+
+- a **cursor_cli command template** (preferred), or
+- an **HTTP harness base URL** (legacy/compatible mode).
+
+**Task file generation** under `bookloop/tasks/` remains the primary workflow; harness submission is optional.
 
 ---
 
@@ -354,7 +360,7 @@ Full book configuration in one form. Sections:
 
 ### Book
 
-Display name, project root, preview URL, feedback API URL, optional agent harness URL.
+Display name, project root, preview URL, feedback API URL, and optional cursor harness URL.
 
 ### Paths
 
@@ -366,6 +372,7 @@ Optional shell commands (reference only unless execution is explicitly allowed):
 
 - MkDocs serve
 - Feedback API
+- Cursor CLI harness command (supports `<task-text>` and `<task-file>` placeholders)
 - Figure generation (supports `<figure-id>` placeholder)
 - Validation
 
@@ -389,7 +396,7 @@ Always visible when a book is selected.
 
 ### Dashboard
 
-Status badges for MkDocs preview, Feedback API, and Agent Harness, plus counts for open reviews, figures, patches, and tasks.
+Status badges for MkDocs preview, Feedback API, and Cursor CLI Harness, plus counts for open reviews, figures, patches, and tasks.
 
 Click **Check MkDocs Preview** to verify the preview URL responds.
 
@@ -412,10 +419,10 @@ Click **Check MkDocs Preview** to verify the preview URL responds.
 | **Save Review** | Submit to Feedback API (⌘Return) |
 | **Clear Form** | Reset all fields |
 
-### Agent harness panel
+### Cursor CLI harness panel
 
 - **Check Harness** — health check
-- **Send Task to Harness** — submit selected review items (optional; task files remain the default path)
+- **Send Task to Harness** — submit selected review items using configured cursor_cli command or HTTP harness (optional; task files remain the default path)
 
 ---
 
@@ -494,7 +501,7 @@ When in doubt, leave safety toggles off and use BookLoop only for reading, feedb
 |---------|-------------|
 | MkDocs preview | `http://127.0.0.1:8000` |
 | Feedback API | `http://127.0.0.1:8765` |
-| Agent harness | `http://127.0.0.1:8770` |
+| Cursor CLI harness (HTTP mode) | `http://127.0.0.1:8770` |
 
 ---
 

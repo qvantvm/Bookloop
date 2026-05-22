@@ -11,12 +11,85 @@ final class FeedbackAPIClient {
 }
 
 final class AgentHarnessClient {
+    private let healthPaths = ["/api/health", "/health", "/status"]
+    private let taskPaths = ["/api/tasks/fix_reviews", "/tasks/fix_reviews", "/api/tasks", "/tasks"]
+
     func checkHealth(baseURL: String) async throws -> HealthResponse {
-        try await LocalHTTPClient().get(baseURL: baseURL, path: "/api/health")
+        var lastError: Error?
+        for path in healthPaths {
+            do {
+                return try await LocalHTTPClient().get(baseURL: baseURL, path: path)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? FeedbackAPIError.invalidResponse
     }
 
     func submitFixReviewsTask(baseURL: String, request: AgentTaskRequest) async throws -> AgentTaskResponse {
-        try await LocalHTTPClient().post(baseURL: baseURL, path: "/api/tasks/fix_reviews", body: request)
+        var lastError: Error?
+        for path in taskPaths {
+            do {
+                return try await LocalHTTPClient().post(baseURL: baseURL, path: path, body: request)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError ?? FeedbackAPIError.invalidResponse
+    }
+
+    func checkCursorCLI(commandTemplate: String, workingDirectory: String) -> LocalAPIStatus {
+        guard let executable = firstCommandToken(in: commandTemplate) else {
+            return .offline("Cursor CLI harness command is empty.")
+        }
+        do {
+            let result = try ShellCommandRunner().run(
+                command: "command -v \(shellQuoted(executable))",
+                workingDirectory: workingDirectory
+            )
+            return result.exitCode == 0 ? .online : .offline("Could not find `\(executable)` in PATH.")
+        } catch {
+            return .offline(error.localizedDescription)
+        }
+    }
+
+    func submitFixReviewsTaskToCursorCLI(
+        commandTemplate: String,
+        workingDirectory: String,
+        taskText: String,
+        taskFilePath: String
+    ) throws -> ShellCommandResult {
+        var command = commandTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else {
+            throw FeedbackAPIError.transportError("Cursor CLI harness command is empty.")
+        }
+
+        let supportsPlaceholders = command.contains("<task-file>") || command.contains("<task-text>")
+        command = command.replacingOccurrences(of: "<task-file>", with: shellQuoted(taskFilePath))
+        command = command.replacingOccurrences(of: "<task-text>", with: shellQuoted(taskText))
+
+        if !supportsPlaceholders {
+            command += " " + shellQuoted(taskText)
+        }
+
+        return try ShellCommandRunner().run(command: command, workingDirectory: workingDirectory)
+    }
+
+    private func firstCommandToken(in commandTemplate: String) -> String? {
+        let trimmed = commandTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let tokens = trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
+        for token in tokens {
+            if token.contains("="), !token.hasPrefix("/"), !token.contains("/") {
+                continue
+            }
+            return token.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        }
+        return nil
+    }
+
+    private func shellQuoted(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }
 

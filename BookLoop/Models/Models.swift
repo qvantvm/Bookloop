@@ -7,6 +7,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
     var previewURL: String
     var feedbackAPIBaseURL: String
     var agentHarnessBaseURL: String?
+    var cursorCLIHarnessCommand: String?
     var mkdocsConfigPath: String?
     var docsPath: String?
     var reviewsPath: String?
@@ -34,6 +35,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
             previewURL: "http://127.0.0.1:8000",
             feedbackAPIBaseURL: "http://127.0.0.1:8765",
             agentHarnessBaseURL: "http://127.0.0.1:8770",
+            cursorCLIHarnessCommand: nil,
             mkdocsConfigPath: nil,
             docsPath: nil,
             reviewsPath: nil,

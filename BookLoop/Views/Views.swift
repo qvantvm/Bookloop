@@ -115,7 +115,8 @@ struct ContentView: View {
         patchStore.refresh(book: book)
         previewStatus = .unknown
         feedbackStatus = .unknown
-        agentStatus = book?.agentHarnessBaseURL?.nilIfBlank == nil ? .notConfigured : .unknown
+        let hasHarness = book?.agentHarnessBaseURL?.nilIfBlank != nil || book?.cursorCLIHarnessCommand?.nilIfBlank != nil
+        agentStatus = hasHarness ? .unknown : .notConfigured
     }
 
     private func addBookFromPanel() {
@@ -160,7 +161,16 @@ struct ContentView: View {
     }
 
     private func checkAgentHarness() async {
-        guard let baseURL = library.selectedBook?.agentHarnessBaseURL?.nilIfBlank else {
+        guard let book = library.selectedBook else {
+            agentStatus = .notConfigured
+            return
+        }
+        if let commandTemplate = book.cursorCLIHarnessCommand?.nilIfBlank {
+            agentStatus = .checking
+            agentStatus = AgentHarnessClient().checkCursorCLI(commandTemplate: commandTemplate, workingDirectory: book.projectRootPath)
+            return
+        }
+        guard let baseURL = book.agentHarnessBaseURL?.nilIfBlank else {
             agentStatus = .notConfigured
             return
         }
@@ -220,7 +230,7 @@ struct SidebarView: View {
                 Section("Status") {
                     StatusBadge(title: "MkDocs Preview", status: previewStatus)
                     StatusBadge(title: "Feedback API", status: feedbackStatus)
-                    StatusBadge(title: "Agent", status: agentStatus)
+                    StatusBadge(title: "Harness", status: agentStatus)
                     Label("\(reviewStore.openCount) open reviews", systemImage: "text.badge.checkmark")
                     Label("\(figureStore.staleCount) stale figures", systemImage: "photo.on.rectangle")
                     Label("\(patchStore.proposals.count) pending patches", systemImage: "square.and.pencil")
@@ -398,7 +408,7 @@ struct DashboardView: View {
                 .font(.headline)
             StatusBadge(title: "MkDocs Preview", status: previewStatus)
             StatusBadge(title: "Feedback API", status: feedbackStatus)
-            StatusBadge(title: "Agent Harness", status: agentStatus)
+            StatusBadge(title: "Cursor CLI Harness", status: agentStatus)
             LabeledContent("Review Items", value: "\(reviewStore.openCount) open")
             LabeledContent("Critical Reviews", value: "\(reviewStore.criticalCount)")
             LabeledContent("Figures", value: "\(figureStore.okCount) ok, \(figureStore.staleCount) stale, \(figureStore.missingCount) missing")
@@ -621,12 +631,12 @@ struct AgentHarnessPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Agent Harness")
+                Text("Cursor CLI Harness")
                     .font(.headline)
                 Spacer()
                 StatusBadge(title: "Harness", status: agentStatus)
             }
-            Text("Task-file generation is the default. Harness submission is optional and local.")
+            Text("Task-file generation is still the default. Optional submission can use either a local cursor_cli command or an HTTP harness endpoint.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
@@ -638,6 +648,17 @@ struct AgentHarnessPanel: View {
                 }
                 .disabled(agentStatus != .online)
             }
+            if let command = book.cursorCLIHarnessCommand?.nilIfBlank {
+                Text("cursor_cli command: \(command)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            } else if let baseURL = book.agentHarnessBaseURL?.nilIfBlank {
+                Text("HTTP endpoint: \(baseURL)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
             if let message {
                 Text(message)
                     .font(.caption)
@@ -647,11 +668,46 @@ struct AgentHarnessPanel: View {
     }
 
     private func sendTask() async {
-        guard let baseURL = book.agentHarnessBaseURL?.nilIfBlank else {
-            message = "Agent harness is not configured."
+        let selected = reviewStore.items.filter { reviewStore.selectedIDs.contains($0.id) }
+        guard !selected.isEmpty else {
+            message = "Select at least one review item before sending a harness task."
             return
         }
-        let selected = reviewStore.items.filter { reviewStore.selectedIDs.contains($0.id) }
+
+        if let commandTemplate = book.cursorCLIHarnessCommand?.nilIfBlank {
+            do {
+                let generatedTask = try TaskGenerator().generateTask(
+                    book: book,
+                    mode: .fixReviews,
+                    chapterID: selected.compactMap(\.chapter).first,
+                    reviewItems: selected,
+                    selectedText: nil
+                )
+                let result = try AgentHarnessClient().submitFixReviewsTaskToCursorCLI(
+                    commandTemplate: commandTemplate,
+                    workingDirectory: book.projectRootPath,
+                    taskText: generatedTask.text,
+                    taskFilePath: generatedTask.url.path
+                )
+                let output = result.combinedOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+                let summary = output.isEmpty ? "No output returned." : String(output.prefix(1200))
+                message = """
+                cursor_cli command finished with exit code \(result.exitCode).
+                Task file: \(generatedTask.url.lastPathComponent)
+
+                \(summary)
+                """
+            } catch {
+                message = error.localizedDescription
+            }
+            return
+        }
+
+        guard let baseURL = book.agentHarnessBaseURL?.nilIfBlank else {
+            message = "Cursor CLI harness is not configured."
+            return
+        }
+
         let request = AgentTaskRequest(
             bookRoot: book.projectRootPath,
             chapterID: selected.compactMap(\.chapter).first,
@@ -1746,7 +1802,7 @@ struct BookSettingsForm: View {
                 PathField(title: "Project Root", path: $draft.projectRootPath, isDirectory: true)
                 TextField("Preview URL", text: $draft.previewURL)
                 TextField("Feedback API Base URL", text: $draft.feedbackAPIBaseURL)
-                OptionalTextField("Agent Harness Base URL", text: $draft.agentHarnessBaseURL)
+                OptionalTextField("Cursor CLI Harness Base URL", text: $draft.agentHarnessBaseURL)
             }
 
             Section("Paths") {
@@ -1765,6 +1821,7 @@ struct BookSettingsForm: View {
             Section("Commands") {
                 OptionalTextField("MkDocs serve command", text: $draft.mkdocsServeCommand)
                 OptionalTextField("Feedback API command", text: $draft.feedbackAPICommand)
+                OptionalTextField("Cursor CLI harness command", text: $draft.cursorCLIHarnessCommand)
                 OptionalTextField("Figure generation command", text: $draft.figureGenerationCommand)
                 OptionalTextField("Validation command", text: $draft.validationCommand)
             }
