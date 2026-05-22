@@ -1,0 +1,27 @@
+import SwiftUI
+
+@main
+struct BookLoopApp: App {
+    @StateObject private var library = BookLibraryStore()
+
+    var body: some Scene {
+        WindowGroup("BookLoop") {
+            ContentView()
+                .environmentObject(library)
+                .frame(minWidth: 1180, minHeight: 760)
+        }
+        .windowStyle(.titleBar)
+        .commands {
+            CommandGroup(after: .newItem) {
+                Button("Reload Preview") {
+                    NotificationCenter.default.post(name: .bookLoopReloadPreview, object: nil)
+                }
+                .keyboardShortcut("r", modifiers: [.command])
+            }
+        }
+    }
+}
+
+extension Notification.Name {
+    static let bookLoopReloadPreview = Notification.Name("BookLoopReloadPreview")
+}

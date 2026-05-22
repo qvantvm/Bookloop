@@ -1,0 +1,397 @@
+import Foundation
+
+struct BookConfig: Identifiable, Codable, Equatable {
+    var id: UUID
+    var displayName: String
+    var projectRootPath: String
+    var previewURL: String
+    var feedbackAPIBaseURL: String
+    var agentHarnessBaseURL: String?
+    var mkdocsConfigPath: String?
+    var docsPath: String?
+    var reviewsPath: String?
+    var reviewItemsPath: String?
+    var cumulativeReviewPath: String?
+    var figuresSourcePath: String?
+    var figuresOutputPath: String?
+    var bookloopPath: String?
+    var styleGuidePath: String?
+    var figuresRegistryPath: String?
+    var mkdocsServeCommand: String?
+    var feedbackAPICommand: String?
+    var figureGenerationCommand: String?
+    var validationCommand: String?
+    var allowShellCommands: Bool
+    var allowFigureRegeneration: Bool
+    var allowPatchApply: Bool
+    var notes: String?
+
+    static func defaults(projectRootPath: String = "") -> BookConfig {
+        var book = BookConfig(
+            id: UUID(),
+            displayName: "Untitled Book",
+            projectRootPath: projectRootPath,
+            previewURL: "http://127.0.0.1:8000",
+            feedbackAPIBaseURL: "http://127.0.0.1:8765",
+            agentHarnessBaseURL: "http://127.0.0.1:8770",
+            mkdocsConfigPath: nil,
+            docsPath: nil,
+            reviewsPath: nil,
+            reviewItemsPath: nil,
+            cumulativeReviewPath: nil,
+            figuresSourcePath: nil,
+            figuresOutputPath: nil,
+            bookloopPath: nil,
+            styleGuidePath: nil,
+            figuresRegistryPath: nil,
+            mkdocsServeCommand: "mkdocs serve",
+            feedbackAPICommand: "python scripts/feedback_api.py --host 127.0.0.1 --port 8765",
+            figureGenerationCommand: nil,
+            validationCommand: "mkdocs build",
+            allowShellCommands: false,
+            allowFigureRegeneration: false,
+            allowPatchApply: true,
+            notes: nil
+        )
+        book.inferExistingPaths()
+        return book
+    }
+
+    mutating func inferExistingPaths() {
+        guard !projectRootPath.isEmpty else { return }
+        let root = URL(fileURLWithPath: projectRootPath, isDirectory: true)
+        let fm = FileManager.default
+
+        func existing(_ relativePath: String, directory: Bool? = nil) -> String? {
+            let url = root.appendingPathComponent(relativePath)
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return nil }
+            if let directory, isDirectory.boolValue != directory { return nil }
+            return url.path
+        }
+
+        mkdocsConfigPath = existing("mkdocs.yml", directory: false) ?? mkdocsConfigPath
+        docsPath = existing("docs", directory: true) ?? docsPath
+        reviewsPath = existing("reviews", directory: true) ?? reviewsPath
+        reviewItemsPath = existing("reviews/review_items", directory: true) ?? reviewItemsPath
+        cumulativeReviewPath = existing("reviews/cumulative_review.md", directory: false) ?? cumulativeReviewPath
+        figuresSourcePath = existing("figures", directory: true) ?? figuresSourcePath
+        figuresOutputPath = existing("docs/assets/figures", directory: true) ?? figuresOutputPath
+        bookloopPath = existing("bookloop", directory: true) ?? bookloopPath
+        styleGuidePath = existing("bookloop/style_guide.md", directory: false) ?? styleGuidePath
+        figuresRegistryPath = existing("bookloop/figures.json", directory: false) ?? figuresRegistryPath
+    }
+
+    func suggestedPath(_ relativePath: String) -> String {
+        URL(fileURLWithPath: projectRootPath, isDirectory: true).appendingPathComponent(relativePath).path
+    }
+
+    var taskDirectoryPath: String {
+        if let bookloopPath {
+            return URL(fileURLWithPath: bookloopPath, isDirectory: true).appendingPathComponent("tasks", isDirectory: true).path
+        }
+        return suggestedPath("bookloop/tasks")
+    }
+
+    var patchDirectoryPath: String {
+        if let bookloopPath {
+            return URL(fileURLWithPath: bookloopPath, isDirectory: true).appendingPathComponent("patches", isDirectory: true).path
+        }
+        return suggestedPath("bookloop/patches")
+    }
+}
+
+struct Chapter: Identifiable, Codable, Equatable {
+    var id: String
+    var title: String
+    var markdownPath: String
+    var relativePath: String
+    var urlSlug: String?
+    var order: Int?
+}
+
+enum FeedbackType: String, Codable, CaseIterable, Identifiable {
+    case question
+    case confusion
+    case missingExample = "missing_example"
+    case missingReference = "missing_reference"
+    case outdatedClaim = "outdated_claim"
+    case wrongOrUnclear = "wrong_or_unclear"
+    case figureNeeded = "figure_needed"
+    case exerciseNeeded = "exercise_needed"
+    case structureIssue = "structure_issue"
+    case styleIssue = "style_issue"
+    case implementationNote = "implementation_note"
+    case other
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .question: return "Question"
+        case .confusion: return "Confusion"
+        case .missingExample: return "Missing Example"
+        case .missingReference: return "Missing Reference"
+        case .outdatedClaim: return "Outdated Claim"
+        case .wrongOrUnclear: return "Wrong or Unclear"
+        case .figureNeeded: return "Figure Needed"
+        case .exerciseNeeded: return "Exercise Needed"
+        case .structureIssue: return "Structure Issue"
+        case .styleIssue: return "Style Issue"
+        case .implementationNote: return "Implementation Note"
+        case .other: return "Other"
+        }
+    }
+}
+
+enum FeedbackSeverity: String, Codable, CaseIterable, Identifiable {
+    case low
+    case medium
+    case high
+    case critical
+
+    var id: String { rawValue }
+
+    var rank: Int {
+        switch self {
+        case .critical: return 0
+        case .high: return 1
+        case .medium: return 2
+        case .low: return 3
+        }
+    }
+}
+
+struct ReviewRequest: Codable {
+    let chapter: String
+    let type: String
+    let severity: String
+    let title: String
+    let body: String
+    let section: String?
+    let suggested_fix: String?
+}
+
+struct ReviewResponse: Codable {
+    let ok: Bool
+    let id: String
+    let file: String
+}
+
+struct HealthResponse: Codable, Equatable {
+    let status: String
+    let service: String
+}
+
+enum LocalAPIStatus: Equatable {
+    case unknown
+    case checking
+    case online
+    case offline(String?)
+    case notConfigured
+
+    var label: String {
+        switch self {
+        case .unknown: return "Unknown"
+        case .checking: return "Checking"
+        case .online: return "Online"
+        case .offline: return "Offline"
+        case .notConfigured: return "Not Configured"
+        }
+    }
+}
+
+enum FeedbackAPIError: LocalizedError {
+    case invalidBaseURL
+    case invalidResponse
+    case httpError(statusCode: Int, body: String?)
+    case decodingFailed(String)
+    case transportError(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidBaseURL:
+            return "The API base URL is invalid."
+        case .invalidResponse:
+            return "The API returned an invalid response."
+        case let .httpError(statusCode, body):
+            if let body, !body.isEmpty {
+                return "The API returned HTTP \(statusCode): \(body)"
+            }
+            return "The API returned HTTP \(statusCode)."
+        case let .decodingFailed(message):
+            return "Could not decode the API response: \(message)"
+        case let .transportError(message):
+            if message.localizedCaseInsensitiveContains("refused") || message.localizedCaseInsensitiveContains("could not connect") {
+                return """
+                Feedback API is offline.
+
+                Start it from the book root:
+
+                python scripts/feedback_api.py --host 127.0.0.1 --port 8765
+                """
+            }
+            return message
+        }
+    }
+}
+
+struct ReviewItem: Identifiable, Codable, Equatable {
+    var id: String
+    var filePath: String
+    var chapter: String?
+    var type: String?
+    var severity: String?
+    var section: String?
+    var title: String
+    var body: String?
+    var suggestedFix: String?
+    var status: ReviewStatus
+    var createdAt: Date?
+}
+
+enum ReviewStatus: String, Codable, CaseIterable {
+    case open
+    case fixed
+    case rejected
+    case needsDiscussion = "needs_discussion"
+    case unknown
+}
+
+struct RevisionTask: Identifiable, Codable {
+    var id: UUID
+    var createdAt: Date
+    var title: String
+    var bookName: String
+    var bookRootPath: String
+    var chapterID: String?
+    var reviewItemIDs: [String]
+    var selectedText: String?
+    var mode: RevisionTaskMode
+    var constraints: [String]
+    var expectedOutputs: [String]
+}
+
+enum RevisionTaskMode: String, Codable, CaseIterable, Identifiable {
+    case proposePatchOnly = "propose_patch_only"
+    case planOnly = "plan_only"
+    case proposeFigure = "propose_figure"
+    case fixReviews = "fix_reviews"
+    case validateBook = "validate_book"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .proposePatchOnly: return "Propose Patch Only"
+        case .planOnly: return "Plan Only"
+        case .proposeFigure: return "Propose Figure"
+        case .fixReviews: return "Fix Reviews"
+        case .validateBook: return "Validate Book"
+        }
+    }
+}
+
+struct AgentTaskRequest: Codable {
+    var bookRoot: String
+    var chapterID: String?
+    var reviewItemIDs: [String]
+    var mode: String
+    var constraints: [String]
+}
+
+struct AgentTaskResponse: Codable {
+    var taskID: String
+    var status: String
+    var summary: String?
+    var patchFile: String?
+    var changedFiles: [String]?
+    var validation: [String: String]?
+}
+
+struct FigureItem: Identifiable, Codable, Equatable {
+    var id: String
+    var title: String?
+    var chapterID: String?
+    var section: String?
+    var sourcePath: String?
+    var outputPath: String
+    var referencedFrom: [String]
+    var type: FigureType
+    var status: FigureStatus
+    var caption: String?
+    var generationCommand: String?
+    var lastGeneratedAt: Date?
+    var isStale: Bool
+}
+
+enum FigureType: String, Codable, CaseIterable {
+    case python
+    case tikz
+    case mermaid
+    case graphviz
+    case svg
+    case png
+    case jpg
+    case imageModel = "image_model"
+    case unknown
+}
+
+enum FigureStatus: String, Codable, CaseIterable {
+    case ok
+    case missingOutput = "missing_output"
+    case stale
+    case unreferenced
+    case referencedButUnregistered = "referenced_but_unregistered"
+    case unknown
+}
+
+struct PatchProposal: Identifiable, Codable, Equatable {
+    var id: UUID
+    var filePath: String
+    var title: String
+    var summary: String?
+    var createdAt: Date?
+    var changedFiles: [String]
+    var rawPatch: String
+}
+
+struct DiffFile: Identifiable, Equatable {
+    var id: String
+    var oldPath: String
+    var newPath: String
+    var hunks: [DiffHunk]
+}
+
+struct DiffHunk: Identifiable, Equatable {
+    var id: UUID
+    var oldStart: Int
+    var oldCount: Int
+    var newStart: Int
+    var newCount: Int
+    var lines: [DiffLine]
+}
+
+enum DiffLineKind: Equatable {
+    case context
+    case addition
+    case deletion
+    case header
+}
+
+struct DiffLine: Identifiable, Equatable {
+    var id: UUID
+    var kind: DiffLineKind
+    var content: String
+}
+
+enum WorkspaceTab: String, CaseIterable, Identifiable {
+    case preview = "Preview"
+    case reviews = "Reviews"
+    case figures = "Figures"
+    case tasks = "Tasks"
+    case patches = "Patches"
+    case settings = "Settings"
+
+    var id: String { rawValue }
+}
