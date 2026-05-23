@@ -69,6 +69,8 @@ struct ContentView: View {
         }
         .sheet(item: $editingBook) { book in
             BookSettingsView(book: book) { updated in
+                var updated = updated
+                updated.refreshProjectRootBookmark()
                 library.updateBook(updated)
                 refreshProjectState()
                 editingBook = nil
@@ -123,6 +125,7 @@ struct ContentView: View {
         guard let path = PathPicker.pickDirectory(title: "Choose MkDocs Project Root", initialPath: nil) else { return }
         var book = BookConfig.defaults(projectRootPath: path)
         book.displayName = URL(fileURLWithPath: path, isDirectory: true).lastPathComponent
+        book.refreshProjectRootBookmark()
         library.addBook(book)
         refreshProjectState()
     }
@@ -627,6 +630,7 @@ struct AgentHarnessPanel: View {
     @Binding var agentStatus: LocalAPIStatus
     let checkAgentHarness: () async -> Void
     @State private var message: String?
+    @State private var isSubmittingHarnessTask = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -643,10 +647,18 @@ struct AgentHarnessPanel: View {
                 Button("Check Harness") {
                     Task { await checkAgentHarness() }
                 }
-                Button("Send Task to Harness") {
-                    Task { await sendTask() }
+                Button(isSubmittingHarnessTask ? "Sending..." : "Fix Reviews") {
+                    Task { await sendTask(mode: .fixReviews) }
                 }
-                .disabled(agentStatus != .online)
+                .disabled(isSubmittingHarnessTask || agentStatus != .online)
+                Button("Propose Figure") {
+                    Task { await sendTask(mode: .proposeFigure) }
+                }
+                .disabled(isSubmittingHarnessTask || agentStatus != .online)
+                Button("Run Validation") {
+                    Task { await sendTask(mode: .validateBook) }
+                }
+                .disabled(isSubmittingHarnessTask || agentStatus != .online)
             }
             if let command = book.cursorCLIHarnessCommand?.nilIfBlank {
                 Text("cursor_cli command: \(command)")
@@ -667,9 +679,12 @@ struct AgentHarnessPanel: View {
         }
     }
 
-    private func sendTask() async {
+    private func sendTask(mode: RevisionTaskMode) async {
+        isSubmittingHarnessTask = true
+        defer { isSubmittingHarnessTask = false }
+
         let selected = reviewStore.items.filter { reviewStore.selectedIDs.contains($0.id) }
-        guard !selected.isEmpty else {
+        if mode == .fixReviews && selected.isEmpty {
             message = "Select at least one review item before sending a harness task."
             return
         }
@@ -678,7 +693,7 @@ struct AgentHarnessPanel: View {
             do {
                 let generatedTask = try TaskGenerator().generateTask(
                     book: book,
-                    mode: .fixReviews,
+                    mode: mode,
                     chapterID: selected.compactMap(\.chapter).first,
                     reviewItems: selected,
                     selectedText: nil
@@ -712,12 +727,21 @@ struct AgentHarnessPanel: View {
             bookRoot: book.projectRootPath,
             chapterID: selected.compactMap(\.chapter).first,
             reviewItemIDs: selected.map(\.id),
-            mode: RevisionTaskMode.fixReviews.rawValue,
-            constraints: ["Return a unified diff.", "Do not apply changes directly."]
+            mode: mode.rawValue,
+            constraints: ["Return a unified diff.", "Do not apply changes directly.", "BookLoop must review any patch before it is applied."]
         )
         do {
-            let response = try await AgentHarnessClient().submitFixReviewsTask(baseURL: baseURL, request: request)
-            message = "Harness task \(response.taskID): \(response.status)"
+            let client = AgentHarnessClient()
+            let response: AgentTaskResponse
+            switch mode {
+            case .proposeFigure:
+                response = try await client.submitProposeFigureTask(baseURL: baseURL, request: request)
+            case .validateBook:
+                response = try await client.submitValidationTask(baseURL: baseURL, request: request)
+            default:
+                response = try await client.submitFixReviewsTask(baseURL: baseURL, request: request)
+            }
+            message = "Harness \(mode.displayName) task \(response.taskID): \(response.status)"
         } catch {
             message = error.localizedDescription
         }
@@ -1054,6 +1078,7 @@ struct FigureDetailView: View {
     let figure: FigureItem?
     @State private var confirmingRegeneration = false
     @State private var regenerationOutput: String?
+    @State private var isRegenerating = false
 
     var body: some View {
         if let figure {
@@ -1082,10 +1107,10 @@ struct FigureDetailView: View {
                         Button("Copy Markdown Reference") {
                             FileHelpers.copyToPasteboard("![\(figure.caption ?? figure.id)](\(figure.outputPath))")
                         }
-                        Button("Regenerate") {
+                        Button(isRegenerating ? "Regenerating..." : "Regenerate") {
                             confirmingRegeneration = true
                         }
-                        .disabled(!book.allowShellCommands || !book.allowFigureRegeneration || regenerationCommand(for: figure) == nil)
+                        .disabled(isRegenerating || !book.allowShellCommands || !book.allowFigureRegeneration || regenerationCommand(for: figure) == nil)
                     }
                     if let regenerationOutput {
                         Text("Regeneration Output")
@@ -1099,7 +1124,7 @@ struct FigureDetailView: View {
             }
             .alert("Regenerate figure?", isPresented: $confirmingRegeneration) {
                 Button("Cancel", role: .cancel) {}
-                Button("Run") { runRegeneration(for: figure) }
+                Button("Run") { Task { await runRegeneration(for: figure) } }
             } message: {
                 Text("BookLoop will run the configured figure command in the book root. No command runs unless shell commands and figure regeneration are enabled for this book.")
             }
@@ -1118,13 +1143,16 @@ struct FigureDetailView: View {
         return nil
     }
 
-    private func runRegeneration(for figure: FigureItem) {
+    private func runRegeneration(for figure: FigureItem) async {
         guard book.allowShellCommands, book.allowFigureRegeneration, let command = regenerationCommand(for: figure) else {
             regenerationOutput = "Figure regeneration is disabled or no command is configured."
             return
         }
+        isRegenerating = true
+        regenerationOutput = "Running: \(command)"
+        defer { isRegenerating = false }
         do {
-            let result = try ShellCommandRunner().run(command: command, workingDirectory: book.projectRootPath)
+            let result = try await ShellCommandRunner().runAsync(command: command, book: book)
             regenerationOutput = "Command: \(command)\nExit code: \(result.exitCode)\n\(result.combinedOutput)"
         } catch {
             regenerationOutput = error.localizedDescription
@@ -1168,6 +1196,7 @@ struct TaskBrowserView: View {
     @State private var selectedURL: URL?
     @State private var validationOutput: String?
     @State private var confirmingValidation = false
+    @State private var isRunningValidation = false
 
     var body: some View {
         HSplitView {
@@ -1179,10 +1208,10 @@ struct TaskBrowserView: View {
                     Button("Validation Task") {
                         taskStore.generate(book: book, mode: .validateBook, chapterID: nil, reviewItems: [], selectedText: nil)
                     }
-                    Button("Run Validation Command") {
+                    Button(isRunningValidation ? "Running Validation..." : "Run Validation Command") {
                         confirmingValidation = true
                     }
-                    .disabled(!book.allowShellCommands || book.validationCommand?.nilIfBlank == nil)
+                    .disabled(isRunningValidation || !book.allowShellCommands || book.validationCommand?.nilIfBlank == nil)
                     Button("Refresh") {
                         taskStore.refresh(book: book)
                     }
@@ -1247,19 +1276,22 @@ struct TaskBrowserView: View {
         }
         .alert("Run validation command?", isPresented: $confirmingValidation) {
             Button("Cancel", role: .cancel) {}
-            Button("Run") { runValidationCommand() }
+            Button("Run") { Task { await runValidationCommand() } }
         } message: {
             Text("BookLoop will run this command in the book root: \(book.validationCommand ?? "")")
         }
     }
 
-    private func runValidationCommand() {
+    private func runValidationCommand() async {
         guard book.allowShellCommands, let command = book.validationCommand?.nilIfBlank else {
             validationOutput = "Shell commands are disabled or no validation command is configured."
             return
         }
+        isRunningValidation = true
+        validationOutput = "Running: \(command)"
+        defer { isRunningValidation = false }
         do {
-            let result = try ShellCommandRunner().run(command: command, workingDirectory: book.projectRootPath)
+            let result = try await ShellCommandRunner().runAsync(command: command, book: book)
             validationOutput = "Command: \(command)\nExit code: \(result.exitCode)\n\(result.combinedOutput)"
         } catch {
             validationOutput = error.localizedDescription
@@ -1286,6 +1318,9 @@ struct PatchReviewView: View {
     let book: BookConfig
     @State private var applyOutput: String?
     @State private var saveOutput: String?
+    @State private var preflightOutput: String?
+    @State private var gitStatusOutput: String?
+    @State private var isRunningPatchCommand = false
     @State private var confirmingApplyFullPatch = false
     @State private var confirmingApplyAcceptedBlocks = false
     @State private var blockDecisions: [String: PatchBlockDecision] = [:]
@@ -1314,10 +1349,16 @@ struct PatchReviewView: View {
                 decisions: $blockDecisions,
                 applyOutput: $applyOutput,
                 saveOutput: $saveOutput,
+                preflightOutput: $preflightOutput,
+                gitStatusOutput: $gitStatusOutput,
+                isRunningPatchCommand: isRunningPatchCommand,
                 confirmingApplyFullPatch: $confirmingApplyFullPatch,
                 confirmingApplyAcceptedBlocks: $confirmingApplyAcceptedBlocks,
                 copyAcceptedPatch: copyAcceptedPatch,
-                saveAcceptedPatch: saveAcceptedPatch
+                saveAcceptedPatch: saveAcceptedPatch,
+                checkOriginalPatch: checkOriginalPatch,
+                checkAcceptedBlocksPatch: checkAcceptedBlocksPatch,
+                refreshGitStatus: refreshGitStatus
             )
             .frame(minWidth: 280)
         }
@@ -1325,11 +1366,13 @@ struct PatchReviewView: View {
             blockDecisions.removeAll()
             applyOutput = nil
             saveOutput = nil
+            preflightOutput = nil
+            gitStatusOutput = nil
         }
         .alert("Apply full patch?", isPresented: $confirmingApplyFullPatch) {
             Button("Cancel", role: .cancel) {}
             Button("Apply Full Patch", role: .destructive) {
-                applyFullPatch()
+                Task { await applyFullPatch() }
             }
         } message: {
             Text(fullPatchApplyConfirmationText)
@@ -1337,7 +1380,7 @@ struct PatchReviewView: View {
         .alert("Apply accepted rendered blocks?", isPresented: $confirmingApplyAcceptedBlocks) {
             Button("Cancel", role: .cancel) {}
             Button("Apply Accepted Blocks", role: .destructive) {
-                applyAcceptedBlocks()
+                Task { await applyAcceptedBlocks() }
             }
         } message: {
             Text("BookLoop will write a reviewed patch containing only accepted rendered blocks, run git apply --check, then apply it if the check succeeds.")
@@ -1445,29 +1488,88 @@ struct PatchReviewView: View {
         }
     }
 
-    private func applyFullPatch() {
+    private func checkOriginalPatch() {
+        guard let proposal = patchStore.selectedProposal else {
+            preflightOutput = PatchReviewError.noSelectedPatch.localizedDescription
+            return
+        }
+        Task { await runPatchPreflight(label: "Original patch", path: proposal.filePath) }
+    }
+
+    private func checkAcceptedBlocksPatch() {
+        Task {
+            do {
+                let path = try writeAcceptedPatchToDisk()
+                await runPatchPreflight(label: "Accepted-block patch", path: path)
+                patchStore.refresh(book: book)
+            } catch {
+                preflightOutput = error.localizedDescription
+            }
+        }
+    }
+
+    private func refreshGitStatus() {
+        Task {
+            isRunningPatchCommand = true
+            gitStatusOutput = "Running: git status --short"
+            defer { isRunningPatchCommand = false }
+            do {
+                let result = try await PatchApplier().gitStatus(book: book)
+                let body = result.combinedOutput.nilIfBlank ?? "Working tree clean."
+                gitStatusOutput = "git status --short\nExit code: \(result.exitCode)\n\(body)"
+            } catch {
+                gitStatusOutput = error.localizedDescription
+            }
+        }
+    }
+
+    private func runPatchPreflight(label: String, path: String) async {
+        isRunningPatchCommand = true
+        preflightOutput = "Running: git apply --check \(path)"
+        defer { isRunningPatchCommand = false }
+        do {
+            let status = try await PatchApplier().gitStatus(book: book)
+            let check = try await PatchApplier().checkPatchFileAsync(path: path, book: book)
+            let statusBody = status.combinedOutput.nilIfBlank ?? "Working tree clean."
+            preflightOutput = "\(label) preflight\n\nGit status:\n\(statusBody)\n\nPatch check exit code: \(check.exitCode)\n\(check.combinedOutput)"
+        } catch {
+            preflightOutput = error.localizedDescription
+        }
+    }
+
+    private func applyFullPatch() async {
         guard let proposal = patchStore.selectedProposal else { return }
         guard book.allowPatchApply else {
             applyOutput = "Patch apply is disabled for this book."
             return
         }
+        isRunningPatchCommand = true
+        applyOutput = "Applying full original patch..."
+        defer { isRunningPatchCommand = false }
         do {
-            let result = try PatchApplier().apply(patch: proposal, book: book)
-            applyOutput = "Full patch exit code: \(result.exitCode)\n\(result.combinedOutput)"
+            let result = try await PatchApplier().applyAsync(patch: proposal, book: book)
+            let status = try await PatchApplier().gitStatus(book: book)
+            let statusBody = status.combinedOutput.nilIfBlank ?? "Working tree clean."
+            applyOutput = "Full patch exit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status after apply:\n\(statusBody)"
         } catch {
             applyOutput = error.localizedDescription
         }
     }
 
-    private func applyAcceptedBlocks() {
+    private func applyAcceptedBlocks() async {
         guard book.allowPatchApply else {
             applyOutput = "Patch apply is disabled for this book."
             return
         }
+        isRunningPatchCommand = true
+        applyOutput = "Applying accepted rendered blocks..."
+        defer { isRunningPatchCommand = false }
         do {
             let reviewedPatchPath = try writeAcceptedPatchToDisk()
-            let result = try PatchApplier().applyPatchFile(path: reviewedPatchPath, book: book)
-            applyOutput = "Accepted-block patch: \(reviewedPatchPath)\nExit code: \(result.exitCode)\n\(result.combinedOutput)"
+            let result = try await PatchApplier().applyPatchFileAsync(path: reviewedPatchPath, book: book)
+            let status = try await PatchApplier().gitStatus(book: book)
+            let statusBody = status.combinedOutput.nilIfBlank ?? "Working tree clean."
+            applyOutput = "Accepted-block patch: \(reviewedPatchPath)\nExit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status after apply:\n\(statusBody)"
             patchStore.refresh(book: book)
         } catch {
             applyOutput = error.localizedDescription
@@ -1600,10 +1702,16 @@ struct PatchActionPanel: View {
     @Binding var decisions: [String: PatchBlockDecision]
     @Binding var applyOutput: String?
     @Binding var saveOutput: String?
+    @Binding var preflightOutput: String?
+    @Binding var gitStatusOutput: String?
+    let isRunningPatchCommand: Bool
     @Binding var confirmingApplyFullPatch: Bool
     @Binding var confirmingApplyAcceptedBlocks: Bool
     let copyAcceptedPatch: () -> Void
     let saveAcceptedPatch: () -> Void
+    let checkOriginalPatch: () -> Void
+    let checkAcceptedBlocksPatch: () -> Void
+    let refreshGitStatus: () -> Void
     @State private var confirmingArchive = false
     @State private var archiveOutput: String?
 
@@ -1649,27 +1757,43 @@ struct PatchActionPanel: View {
 
                 Divider()
 
+                Button("Refresh Git Status") { refreshGitStatus() }
+                    .disabled(isRunningPatchCommand)
+                Button("Check Accepted-Blocks Patch") { checkAcceptedBlocksPatch() }
+                    .disabled(isRunningPatchCommand || acceptedCount == 0)
                 Button("Copy Accepted-Blocks Patch") { copyAcceptedPatch() }
                     .disabled(acceptedCount == 0)
                 Button("Save Accepted-Blocks Patch") { saveAcceptedPatch() }
                     .disabled(acceptedCount == 0)
-                Button("Apply Accepted Blocks", role: .destructive) {
+                Button(isRunningPatchCommand ? "Patch Command Running..." : "Apply Accepted Blocks", role: .destructive) {
                     confirmingApplyAcceptedBlocks = true
                 }
-                .disabled(!book.allowPatchApply || acceptedCount == 0)
+                .disabled(isRunningPatchCommand || !book.allowPatchApply || acceptedCount == 0)
 
                 Divider()
 
                 Button("Open Original Patch File") { FileHelpers.openInFinder(path: proposal.filePath) }
                 Button("Copy Original Raw Patch") { FileHelpers.copyToPasteboard(proposal.rawPatch) }
-                Button("Apply Full Original Patch", role: .destructive) {
+                Button("Check Full Original Patch") { checkOriginalPatch() }
+                    .disabled(isRunningPatchCommand)
+                Button(isRunningPatchCommand ? "Patch Command Running..." : "Apply Full Original Patch", role: .destructive) {
                     confirmingApplyFullPatch = true
                 }
-                .disabled(!book.allowPatchApply)
+                .disabled(isRunningPatchCommand || !book.allowPatchApply)
                 Button("Reject / Archive Original Patch") {
                     confirmingArchive = true
                 }
 
+                if let gitStatusOutput {
+                    Text(gitStatusOutput)
+                        .font(.caption)
+                        .textSelection(.enabled)
+                }
+                if let preflightOutput {
+                    Text(preflightOutput)
+                        .font(.caption)
+                        .textSelection(.enabled)
+                }
                 if let saveOutput {
                     Text(saveOutput)
                         .font(.caption)
@@ -1745,6 +1869,7 @@ struct BookSettingsTab: View {
                     }
                     Spacer()
                     Button("Save Settings") {
+                        draft.refreshProjectRootBookmark()
                         library.updateBook(draft)
                     }
                     .keyboardShortcut("s", modifiers: [.command])
@@ -1783,6 +1908,7 @@ struct BookSettingsView: View {
                 Spacer()
                 Button("Cancel", action: onCancel)
                 Button("Save") {
+                    draft.refreshProjectRootBookmark()
                     onSave(draft)
                 }
                 .keyboardShortcut(.return, modifiers: [.command])
@@ -1800,6 +1926,7 @@ struct BookSettingsForm: View {
             Section("Book") {
                 TextField("Display Name", text: $draft.displayName)
                 PathField(title: "Project Root", path: $draft.projectRootPath, isDirectory: true)
+                LabeledContent("Folder Access", value: draft.projectRootBookmark == nil ? "Bookmark will be captured on save" : "Security-scoped bookmark saved")
                 TextField("Preview URL", text: $draft.previewURL)
                 TextField("Feedback API Base URL", text: $draft.feedbackAPIBaseURL)
                 OptionalTextField("Cursor CLI Harness Base URL", text: $draft.agentHarnessBaseURL)

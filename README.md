@@ -81,7 +81,9 @@ http://127.0.0.1:8770
 ```
 
 In HTTP mode, BookLoop checks multiple common health/task paths for compatibility
-with different local harness wrappers.
+with different local harness wrappers. When configured and online, BookLoop can
+submit local harness requests for fixing reviews, proposing figures, and running
+validation.
 
 The harness is optional either way. Core workflows work without it.
 
@@ -101,6 +103,10 @@ Book settings persist in:
 ```text
 ~/Library/Application Support/BookLoop/books.json
 ```
+
+When a project root is selected or saved, BookLoop stores a security-scoped
+bookmark for that folder so sandboxed builds can regain access to the local book
+between launches.
 
 ## Workflow
 
@@ -132,9 +138,9 @@ accepted blocks:
 bookloop/patches/reviewed-YYYYMMDD-HHMMSS-<patch-name>.patch
 ```
 
-Patch application is explicit and guarded. If enabled for the book, BookLoop
-runs `git apply --check` before `git apply` for either the full original patch
-or the accepted-blocks reviewed patch:
+Patch application is explicit and guarded. If enabled for the book, BookLoop can
+show `git status --short`, run `git apply --check`, and then run `git apply` for
+either the full original patch or the accepted-blocks reviewed patch:
 
 ```bash
 git apply --check bookloop/patches/example.patch
@@ -168,15 +174,15 @@ scheme.
 16. **Feedback panel**: Inspector form supports validation, API check, selected text, save review, clear form, success, and failure states.
 17. **Review item browser**: Scans Markdown review items, parses frontmatter/best-effort Markdown, filters, searches, sorts, groups, and displays cumulative/index files.
 18. **Task generation**: Generates Cursor-ready Markdown tasks under `bookloop/tasks/` for reviews, chapters, figures, and validation.
-19. **Optional Cursor CLI Harness Client**: Supports fix-review submission through a configurable `cursor_cli` command template and compatible HTTP fallback endpoints; task-file generation remains the default workflow.
-20. **Patch management**: Scans `.patch`/`.diff`, parses unified diffs, renders before/after HTML blocks, supports block-level accept/reject, creates accepted-block reviewed patches, safely applies, and archives rejected patches.
+19. **Optional Cursor CLI Harness Client**: Supports fix-review, propose-figure, and validation submission through a configurable `cursor_cli` command template and compatible HTTP fallback endpoints; task-file generation remains the default workflow.
+20. **Patch management**: Scans `.patch`/`.diff`, parses unified diffs, renders before/after HTML blocks, supports block-level accept/reject, creates accepted-block reviewed patches, shows git status/preflight checks, safely applies, and archives rejected patches.
 21. **Markdown editing**: Full native editing is intentionally out of v1; current chapter Markdown can be opened externally or revealed in Finder.
 22. **Chapter discovery**: Best-effort scanner reads `mkdocs.yml` nav entries, scans `docs/**/*.md`, and uses Markdown frontmatter IDs/titles.
 23. **Figure management**: Scans Markdown references, output assets, source scripts, and `bookloop/figures.json`; detects missing, stale, unreferenced, and registered figures.
 24. **Figure proposal workflow**: Figure tasks request reproducible sources, output assets, captions, insertion patches, and validation.
-25. **Validation**: Generates validation tasks and can run a configured validation command only when shell commands are enabled and confirmed.
+25. **Validation**: Generates validation tasks and can run a configured validation command asynchronously only when shell commands are enabled and confirmed.
 26. **Status dashboard**: Inspector/sidebar show preview, feedback API, cursor harness, reviews, figures, patches, and task counts.
-27. **Settings UI**: Settings form includes all requested fields, path pickers, path inference, suggestions, safety toggles, and notes.
+27. **Settings UI**: Settings form includes all requested fields, path pickers, path inference, suggestions, security-scoped project-root bookmarks, safety toggles, and notes.
 28. **Safety rules**: No external LLM calls, no direct feedback-file writes, no automatic shell execution, no silent patch application, and explicit confirmations for commands.
 29. **Suggested file organization**: Source is organized into the requested top-level folders; several related small types are consolidated into shared Swift files for this v1 scaffold.
 30. **Implementation order**: The branch was built in the requested sequence: shell, library, preview, feedback, chapter detection, reviews, tasks, figures, patches, and polish.

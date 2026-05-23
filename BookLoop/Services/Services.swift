@@ -91,6 +91,14 @@ final class AgentHarnessClient {
     private func shellQuoted(_ value: String) -> String {
         "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
+
+    func submitProposeFigureTask(baseURL: String, request: AgentTaskRequest) async throws -> AgentTaskResponse {
+        try await LocalHTTPClient().post(baseURL: baseURL, path: "/api/tasks/propose_figure", body: request)
+    }
+
+    func submitValidationTask(baseURL: String, request: AgentTaskRequest) async throws -> AgentTaskResponse {
+        try await LocalHTTPClient().post(baseURL: baseURL, path: "/api/tasks/run_validation", body: request)
+    }
 }
 
 final class PreviewHealthChecker {
@@ -1161,6 +1169,26 @@ final class ShellCommandRunner {
             stderr: String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         )
     }
+
+    func run(command: String, book: BookConfig) throws -> ShellCommandResult {
+        try book.withSecurityScopedProjectRoot {
+            try run(command: command, workingDirectory: book.projectRootPath)
+        }
+    }
+
+    func runAsync(command: String, workingDirectory: String) async throws -> ShellCommandResult {
+        try await Task.detached(priority: .userInitiated) {
+            try self.run(command: command, workingDirectory: workingDirectory)
+        }.value
+    }
+
+    func runAsync(command: String, book: BookConfig) async throws -> ShellCommandResult {
+        try await Task.detached(priority: .userInitiated) {
+            try book.withSecurityScopedProjectRoot {
+                try self.run(command: command, workingDirectory: book.projectRootPath)
+            }
+        }.value
+    }
 }
 
 final class PatchApplier {
@@ -1173,13 +1201,35 @@ final class PatchApplier {
     }
 
     func checkPatchFile(path: String, book: BookConfig) throws -> ShellCommandResult {
-        try ShellCommandRunner().run(command: "git apply --check \(shellQuoted(path))", workingDirectory: book.projectRootPath)
+        try ShellCommandRunner().run(command: "git apply --check \(shellQuoted(path))", book: book)
     }
 
     func applyPatchFile(path: String, book: BookConfig) throws -> ShellCommandResult {
         let checkResult = try checkPatchFile(path: path, book: book)
         guard checkResult.exitCode == 0 else { return checkResult }
-        return try ShellCommandRunner().run(command: "git apply \(shellQuoted(path))", workingDirectory: book.projectRootPath)
+        return try ShellCommandRunner().run(command: "git apply \(shellQuoted(path))", book: book)
+    }
+
+    func checkAsync(patch: PatchProposal, book: BookConfig) async throws -> ShellCommandResult {
+        try await checkPatchFileAsync(path: patch.filePath, book: book)
+    }
+
+    func applyAsync(patch: PatchProposal, book: BookConfig) async throws -> ShellCommandResult {
+        try await applyPatchFileAsync(path: patch.filePath, book: book)
+    }
+
+    func checkPatchFileAsync(path: String, book: BookConfig) async throws -> ShellCommandResult {
+        try await ShellCommandRunner().runAsync(command: "git apply --check \(shellQuoted(path))", book: book)
+    }
+
+    func applyPatchFileAsync(path: String, book: BookConfig) async throws -> ShellCommandResult {
+        let checkResult = try await checkPatchFileAsync(path: path, book: book)
+        guard checkResult.exitCode == 0 else { return checkResult }
+        return try await ShellCommandRunner().runAsync(command: "git apply \(shellQuoted(path))", book: book)
+    }
+
+    func gitStatus(book: BookConfig) async throws -> ShellCommandResult {
+        try await ShellCommandRunner().runAsync(command: "git status --short", book: book)
     }
 
     private func shellQuoted(_ path: String) -> String {

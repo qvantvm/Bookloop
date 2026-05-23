@@ -4,6 +4,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
     var id: UUID
     var displayName: String
     var projectRootPath: String
+    var projectRootBookmark: Data?
     var previewURL: String
     var feedbackAPIBaseURL: String
     var agentHarnessBaseURL: String?
@@ -32,6 +33,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
             id: UUID(),
             displayName: "Untitled Book",
             projectRootPath: projectRootPath,
+            projectRootBookmark: nil,
             previewURL: "http://127.0.0.1:8000",
             feedbackAPIBaseURL: "http://127.0.0.1:8765",
             agentHarnessBaseURL: "http://127.0.0.1:8770",
@@ -82,6 +84,38 @@ struct BookConfig: Identifiable, Codable, Equatable {
         bookloopPath = existing("bookloop", directory: true) ?? bookloopPath
         styleGuidePath = existing("bookloop/style_guide.md", directory: false) ?? styleGuidePath
         figuresRegistryPath = existing("bookloop/figures.json", directory: false) ?? figuresRegistryPath
+    }
+
+    mutating func refreshProjectRootBookmark() {
+        guard !projectRootPath.isEmpty else {
+            projectRootBookmark = nil
+            return
+        }
+        let url = URL(fileURLWithPath: projectRootPath, isDirectory: true)
+        projectRootBookmark = try? url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+    }
+
+    func withSecurityScopedProjectRoot<T>(_ work: () throws -> T) rethrows -> T {
+        var didStartAccessing = false
+        var scopedURL: URL?
+        if let projectRootBookmark {
+            var isStale = false
+            if let url = try? URL(
+                resolvingBookmarkData: projectRootBookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) {
+                scopedURL = url
+                didStartAccessing = url.startAccessingSecurityScopedResource()
+            }
+        }
+        defer {
+            if didStartAccessing {
+                scopedURL?.stopAccessingSecurityScopedResource()
+            }
+        }
+        return try work()
     }
 
 
