@@ -52,29 +52,38 @@ final class WebViewModel: NSObject, ObservableObject {
     }
 
     func refreshNavigationState(from webView: WKWebView) {
-        currentURL = webView.url
-        pageTitle = webView.title
-        canGoBack = webView.canGoBack
-        canGoForward = webView.canGoForward
+        let newURL = webView.url
+        let newTitle = webView.title
+        let newCanGoBack = webView.canGoBack
+        let newCanGoForward = webView.canGoForward
+
+        if currentURL != newURL { currentURL = newURL }
+        if pageTitle != newTitle { pageTitle = newTitle }
+        if canGoBack != newCanGoBack { canGoBack = newCanGoBack }
+        if canGoForward != newCanGoForward { canGoForward = newCanGoForward }
     }
 
     func detectChapterID() async {
+        let detected: String?
         do {
             let meta = try await evaluateJavaScript("document.querySelector('meta[name=\"chapter-id\"]')?.getAttribute('content')")
             if let chapter = (meta as? String)?.nilIfBlank {
-                detectedChapterID = chapter
+                detected = chapter
             } else {
-                detectedChapterID = currentURL?.detectedChapterSlug
+                detected = currentURL?.detectedChapterSlug
             }
         } catch {
-            detectedChapterID = currentURL?.detectedChapterSlug
+            detected = currentURL?.detectedChapterSlug
+        }
+        if detectedChapterID != detected {
+            detectedChapterID = detected
         }
     }
 }
 
 struct WebView: NSViewRepresentable {
     let url: URL
-    @ObservedObject var model: WebViewModel
+    let model: WebViewModel
 
     func makeCoordinator() -> WebViewCoordinator {
         WebViewCoordinator(model: model)
@@ -87,20 +96,22 @@ struct WebView: NSViewRepresentable {
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         model.webView = webView
+        context.coordinator.boundURL = url
         webView.load(URLRequest(url: url))
         return webView
     }
 
     func updateNSView(_ nsView: WKWebView, context: Context) {
         model.webView = nsView
-        if nsView.url == nil || nsView.url?.absoluteString != url.absoluteString && nsView.isLoading == false {
-            nsView.load(URLRequest(url: url))
-        }
+        guard context.coordinator.boundURL?.absoluteString != url.absoluteString else { return }
+        context.coordinator.boundURL = url
+        nsView.load(URLRequest(url: url))
     }
 }
 
 final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     private weak var model: WebViewModel?
+    fileprivate var boundURL: URL?
 
     init(model: WebViewModel) {
         self.model = model

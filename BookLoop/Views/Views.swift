@@ -65,6 +65,7 @@ struct ContentView: View {
             .environmentObject(taskStore)
             .environmentObject(patchStore)
             .environmentObject(webModel)
+            .environmentObject(projectStore)
             .navigationSplitViewColumnWidth(min: 280, ideal: 340)
         }
         .sheet(item: $editingBook) { book in
@@ -484,6 +485,7 @@ struct PreviewView: View {
 struct FeedbackPanelView: View {
     @EnvironmentObject private var webModel: WebViewModel
     @EnvironmentObject private var reviewStore: ReviewStore
+    @EnvironmentObject private var projectStore: ProjectContentStore
 
     let book: BookConfig
     @Binding var feedbackStatus: LocalAPIStatus
@@ -509,6 +511,9 @@ struct FeedbackPanelView: View {
             }
 
             TextField("Chapter ID", text: $chapter)
+            Text("Use the chapter id from frontmatter (for example home), not a docs/ path. The API saves to docs/{id}.md.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
             Picker("Type", selection: $type) {
                 ForEach(FeedbackType.allCases) { item in
                     Text(item.displayName).tag(item)
@@ -557,14 +562,20 @@ struct FeedbackPanelView: View {
             }
         }
         .onAppear {
-            if chapter.isEmpty {
-                chapter = webModel.detectedChapterID ?? ""
-            }
+            syncChapterFromPreview()
         }
-        .onChange(of: webModel.detectedChapterID) { _, newValue in
-            if chapter.isEmpty, let newValue {
-                chapter = newValue
-            }
+        .onChange(of: webModel.detectedChapterID) { _, _ in
+            syncChapterFromPreview()
+        }
+        .onChange(of: webModel.currentURL) { _, _ in
+            syncChapterFromPreview()
+        }
+    }
+
+    private func syncChapterFromPreview() {
+        let resolved = resolvedChapterID(from: webModel.detectedChapterID)
+        if !resolved.isEmpty {
+            chapter = resolved
         }
     }
 
@@ -575,6 +586,11 @@ struct FeedbackPanelView: View {
         bodyText += block
     }
 
+    private func resolvedChapterID(from raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "" }
+        return ChapterResolver.feedbackAPIChapterID(raw, book: book, chapters: projectStore.chapters, currentURL: webModel.currentURL)
+    }
+
     private func submitReview() async {
         let validation = validate()
         guard validation == nil else {
@@ -583,9 +599,15 @@ struct FeedbackPanelView: View {
         }
         isSubmitting = true
         defer { isSubmitting = false }
+        let resolvedChapter = ChapterResolver.feedbackAPIChapterID(
+            chapter.trimmingCharacters(in: .whitespacesAndNewlines),
+            book: book,
+            chapters: projectStore.chapters,
+            currentURL: webModel.currentURL
+        )
         do {
             let request = ReviewRequest(
-                chapter: chapter.trimmingCharacters(in: .whitespacesAndNewlines),
+                chapter: resolvedChapter,
                 type: type.rawValue,
                 severity: severity.rawValue,
                 title: title.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -609,11 +631,20 @@ struct FeedbackPanelView: View {
         if title.nilIfBlank == nil { return "Title is required." }
         if bodyText.nilIfBlank == nil { return "Body is required." }
         if feedbackStatus != .online { return "Feedback API must be online. Use Check API first." }
+        let resolvedChapter = ChapterResolver.feedbackAPIChapterID(
+            chapter.trimmingCharacters(in: .whitespacesAndNewlines),
+            book: book,
+            chapters: projectStore.chapters,
+            currentURL: webModel.currentURL
+        )
+        if !ChapterResolver.feedbackAPIChapterExists(resolvedChapter, book: book) {
+            return "Chapter not found: docs/\(resolvedChapter).md. Use the chapter id from frontmatter, or open the page in Preview to auto-detect it."
+        }
         return nil
     }
 
     private func clearAll() {
-        chapter = webModel.detectedChapterID ?? ""
+        chapter = resolvedChapterID(from: webModel.detectedChapterID)
         type = .confusion
         severity = .medium
         section = ""

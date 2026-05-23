@@ -246,19 +246,28 @@ final class MkDocsProjectScanner {
                     title = nil
                     pathPart = parts[0]
                 }
-                let markdown = pathPart.trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+                let markdown = normalizedDocsRelativeMarkdownPath(pathPart.trimmingCharacters(in: CharacterSet(charactersIn: " \"'")))
                 guard markdown.hasSuffix(".md") else { return nil }
                 return chapterFromMarkdown(url: docsURL.appendingPathComponent(markdown), docsURL: docsURL, titleOverride: title, order: nil)
             }
     }
 
     private func chapterFromMarkdown(url: URL, docsURL: URL, titleOverride: String? = nil, order: Int?) -> Chapter {
-        let relativePath = url.path.replacingOccurrences(of: docsURL.path + "/", with: "")
+        let docsPath = docsURL.standardizedFileURL.path
+        let filePath = url.standardizedFileURL.path
+        var relativePath = filePath.hasPrefix(docsPath + "/")
+            ? String(filePath.dropFirst(docsPath.count + 1))
+            : url.lastPathComponent
+        relativePath = ChapterResolver.normalizedDocsRelativeMarkdownPath(relativePath)
         let frontmatter = parseFrontmatter(path: url.path)
         let id = frontmatter["id"] ?? relativePath.replacingOccurrences(of: ".md", with: "").replacingOccurrences(of: "/", with: "-")
         let title = titleOverride ?? frontmatter["title"] ?? url.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "_", with: " ").capitalized
         let slug = relativePath == "index.md" ? "" : relativePath.replacingOccurrences(of: ".md", with: "/").replacingOccurrences(of: "index/", with: "")
         return Chapter(id: id, title: title, markdownPath: url.path, relativePath: relativePath, urlSlug: slug.nilIfBlank, order: order)
+    }
+
+    private func normalizedDocsRelativeMarkdownPath(_ path: String) -> String {
+        ChapterResolver.normalizedDocsRelativeMarkdownPath(path)
     }
 
     private func parseFrontmatter(path: String) -> [String: String] {
@@ -278,6 +287,180 @@ final class MkDocsProjectScanner {
 
     private func existing(_ path: String) -> String? {
         FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+}
+
+enum ChapterResolver {
+    /// Chapter id for `POST /api/review`. The feedback API resolves this to `docs/{id}.md`.
+    static func feedbackAPIChapterID(_ raw: String, book: BookConfig, chapters: [Chapter], currentURL: URL? = nil) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return trimmed }
+
+        let normalizedID = normalizedAPIChapterID(trimmed, book: book)
+
+        if chapters.contains(where: { $0.id == normalizedID }) {
+            return normalizedID
+        }
+
+        if let match = matchChapter(for: trimmed, book: book, chapters: chapters) {
+            return match.id
+        }
+
+        if let currentURL,
+           let match = matchChapter(forPreviewURL: currentURL, book: book, chapters: chapters) {
+            return match.id
+        }
+
+        if let match = chapters.first(where: { matchesStem($0, stem: normalizedID) }) {
+            return match.id
+        }
+
+        return normalizedID
+    }
+
+    static func feedbackAPIChapterExists(_ chapterID: String, book: BookConfig) -> Bool {
+        let normalized = normalizedAPIChapterID(chapterID, book: book)
+        guard !normalized.isEmpty else { return false }
+        return FileManager.default.fileExists(atPath: book.suggestedPath("docs/\(normalized).md"))
+    }
+
+    static func normalizedAPIChapterID(_ raw: String, book: BookConfig? = nil) -> String {
+        var result = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let book {
+            let root = book.projectRootPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if result.hasPrefix(root + "/") {
+                result = String(result.dropFirst(root.count + 1))
+            }
+        }
+        result = result.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        while result.hasPrefix("docs/") {
+            result = String(result.dropFirst("docs/".count))
+        }
+        while result.hasSuffix(".md") {
+            result = String(result.dropLast(".md".count))
+        }
+        if result.contains("/") {
+            result = result.replacingOccurrences(of: "/", with: "-")
+        }
+        return result
+    }
+
+    static func resolve(_ raw: String, book: BookConfig, chapters: [Chapter], currentURL: URL? = nil) -> String {
+        feedbackAPIChapterID(raw, book: book, chapters: chapters, currentURL: currentURL)
+    }
+
+    static func exists(_ chapterID: String, book: BookConfig) -> Bool {
+        feedbackAPIChapterExists(chapterID, book: book)
+    }
+
+    static func normalizedDocsRelativeMarkdownPath(_ path: String) -> String {
+        var result = path.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        while result.hasPrefix("docs/") {
+            result = String(result.dropFirst("docs/".count))
+        }
+        while result.hasSuffix(".md.md") {
+            result = String(result.dropLast(".md".count))
+        }
+        return result
+    }
+
+    static func normalizedProjectRelativeMarkdownPath(_ path: String, book: BookConfig) -> String {
+        var result = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        let root = book.projectRootPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if result.hasPrefix(root + "/") {
+            result = String(result.dropFirst(root.count + 1))
+        }
+        result = result.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        while result.hasPrefix("docs/docs/") {
+            result = String(result.dropFirst("docs/".count))
+        }
+        if !result.hasPrefix("docs/"), !result.isEmpty {
+            result = "docs/\(normalizedDocsRelativeMarkdownPath(result))"
+        } else if result.hasPrefix("docs/") {
+            result = "docs/\(normalizedDocsRelativeMarkdownPath(String(result.dropFirst("docs/".count))))"
+        }
+        while result.hasSuffix(".md.md") {
+            result = String(result.dropLast(".md".count))
+        }
+        return result
+    }
+
+    private static func matchChapter(for value: String, book: BookConfig, chapters: [Chapter]) -> Chapter? {
+        chapters.first { matches($0, value: value, book: book) }
+    }
+
+    private static func matchChapter(forPreviewURL url: URL, book: BookConfig, chapters: [Chapter]) -> Chapter? {
+        if let slug = url.detectedChapterSlug?.nilIfBlank {
+            if let match = chapters.first(where: { matchesSlug($0, slug: slug) }) {
+                return match
+            }
+        }
+
+        let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        if path.isEmpty {
+            return chapters.first { $0.relativePath == "index.md" || $0.urlSlug?.nilIfBlank == nil }
+        }
+
+        return nil
+    }
+
+    private static func matches(_ chapter: Chapter, value: String, book: BookConfig) -> Bool {
+        let normalizedValue = normalizedAPIChapterID(value, book: book)
+        let projectPath = projectRelativePath(for: chapter, book: book)
+        let optionalCandidates: [String?] = [
+            chapter.id,
+            chapter.relativePath,
+            chapter.urlSlug?.trimmingCharacters(in: CharacterSet(charactersIn: "/")),
+            chapter.urlSlug,
+            chapter.markdownPath,
+            projectPath,
+            "docs/\(chapter.relativePath)",
+            chapter.relativePath.replacingOccurrences(of: ".md", with: "")
+        ]
+        let candidates = optionalCandidates.compactMap { $0?.nilIfBlank }
+
+        if candidates.contains(value) || chapter.id == normalizedValue {
+            return true
+        }
+
+        let stem = normalizedValue
+        return matchesStem(chapter, stem: stem)
+    }
+
+    private static func matchesStem(_ chapter: Chapter, stem: String) -> Bool {
+        guard !stem.isEmpty else { return false }
+        let relativeStem = chapter.relativePath.replacingOccurrences(of: ".md", with: "")
+        let stemWithoutExtension = stem.hasSuffix(".md") ? String(stem.dropLast(".md".count)) : stem
+        return chapter.id == stem
+            || chapter.id == stemWithoutExtension
+            || relativeStem == stem
+            || relativeStem == stemWithoutExtension
+            || chapter.relativePath == markdownFilename(forStem: stem)
+            || chapter.urlSlug?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == stem
+            || chapter.urlSlug?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == stemWithoutExtension
+    }
+
+    private static func markdownFilename(forStem stem: String) -> String {
+        stem.hasSuffix(".md") ? stem : "\(stem).md"
+    }
+
+    private static func matchesSlug(_ chapter: Chapter, slug: String) -> Bool {
+        let normalizedSlug = slug.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !normalizedSlug.isEmpty else {
+            return chapter.relativePath == "index.md"
+        }
+        return matchesStem(chapter, stem: normalizedSlug)
+            || chapter.urlSlug?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == normalizedSlug
+    }
+
+    private static func projectRelativePath(for chapter: Chapter, book: BookConfig) -> String {
+        let rootURL = URL(fileURLWithPath: book.projectRootPath, isDirectory: true).standardizedFileURL
+        let markdownURL = URL(fileURLWithPath: chapter.markdownPath).standardizedFileURL
+        if markdownURL.path.hasPrefix(rootURL.path + "/") {
+            let relative = String(markdownURL.path.dropFirst(rootURL.path.count + 1))
+            return normalizedProjectRelativeMarkdownPath(relative, book: book)
+        }
+        return normalizedProjectRelativeMarkdownPath("docs/\(chapter.relativePath)", book: book)
     }
 }
 
