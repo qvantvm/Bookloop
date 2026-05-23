@@ -96,10 +96,17 @@ struct BookConfig: Identifiable, Codable, Equatable {
     func withSecurityScopedProjectRoot<T>(_ work: () throws -> T) rethrows -> T {
         var didStartAccessing = false
         var scopedURL: URL?
-        if let projectRootBookmark,
-           let url = try? URL(resolvingBookmarkData: projectRootBookmark, options: [.withSecurityScope], relativeTo: nil, bookmarkDataIsStale: nil) {
-            scopedURL = url
-            didStartAccessing = url.startAccessingSecurityScopedResource()
+        if let projectRootBookmark {
+            var isStale = false
+            if let url = try? URL(
+                resolvingBookmarkData: projectRootBookmark,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) {
+                scopedURL = url
+                didStartAccessing = url.startAccessingSecurityScopedResource()
+            }
         }
         defer {
             if didStartAccessing {
