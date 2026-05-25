@@ -39,6 +39,16 @@
 		10100000000000000000001E /* AgentPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001F /* AgentPanelView.swift */; };
 		10100000000000000000001F /* AgentPatchExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000020 /* AgentPatchExporter.swift */; };
 		101000000000000000000020 /* PatchActionPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000021 /* PatchActionPanel.swift */; };
+		101000000000000000000021 /* NavConfigLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000022 /* NavConfigLoader.swift */; };
+		101000000000000000000022 /* BookMarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000023 /* BookMarkdownRenderer.swift */; };
+		101000000000000000000029 /* BookStylesheetResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000002A /* BookStylesheetResolver.swift */; };
+		101000000000000000000023 /* preview.css in Resources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000024 /* preview.css */; };
+		101000000000000000000024 /* preview.js in Resources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000025 /* preview.js */; };
+		101000000000000000000025 /* markdown-it.min.js in Resources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000026 /* markdown-it.min.js */; };
+		101000000000000000000026 /* katex.min.js in Resources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000027 /* katex.min.js */; };
+		101000000000000000000027 /* katex-auto-render.min.js in Resources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000028 /* katex-auto-render.min.js */; };
+		101000000000000000000028 /* katex.min.css in Resources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000029 /* katex.min.css */; };
+		10C000000000000000000001 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = 10B000000000000000000001 /* Yams */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -75,6 +85,15 @@
 		10200000000000000000001F /* AgentPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPanelView.swift; sourceTree = "<group>"; };
 		102000000000000000000020 /* AgentPatchExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPatchExporter.swift; sourceTree = "<group>"; };
 		102000000000000000000021 /* PatchActionPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatchActionPanel.swift; sourceTree = "<group>"; };
+		102000000000000000000022 /* NavConfigLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavConfigLoader.swift; sourceTree = "<group>"; };
+		102000000000000000000023 /* BookMarkdownRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookMarkdownRenderer.swift; sourceTree = "<group>"; };
+		10200000000000000000002A /* BookStylesheetResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookStylesheetResolver.swift; sourceTree = "<group>"; };
+		102000000000000000000024 /* preview.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = preview.css; sourceTree = "<group>"; };
+		102000000000000000000025 /* preview.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = preview.js; sourceTree = "<group>"; };
+		102000000000000000000026 /* markdown-it.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "markdown-it.min.js"; sourceTree = "<group>"; };
+		102000000000000000000027 /* katex.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "katex.min.js"; sourceTree = "<group>"; };
+		102000000000000000000028 /* katex-auto-render.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "katex-auto-render.min.js"; sourceTree = "<group>"; };
+		102000000000000000000029 /* katex.min.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = "katex.min.css"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -82,6 +101,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				10C000000000000000000001 /* Yams in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -117,6 +137,7 @@
 				10400000000000000000000D /* OpenAI */,
 				104000000000000000000007 /* Views */,
 				104000000000000000000008 /* Web */,
+				10400000000000000000000E /* Preview */,
 				104000000000000000000009 /* Utilities */,
 			);
 			path = BookLoop;
@@ -223,6 +244,30 @@
 			path = OpenAI;
 			sourceTree = "<group>";
 		};
+		10400000000000000000000E /* Preview */ = {
+			isa = PBXGroup;
+			children = (
+				102000000000000000000022 /* NavConfigLoader.swift */,
+				102000000000000000000023 /* BookMarkdownRenderer.swift */,
+				10200000000000000000002A /* BookStylesheetResolver.swift */,
+				10400000000000000000000F /* Resources */,
+			);
+			path = Preview;
+			sourceTree = "<group>";
+		};
+		10400000000000000000000F /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				102000000000000000000024 /* preview.css */,
+				102000000000000000000025 /* preview.js */,
+				102000000000000000000026 /* markdown-it.min.js */,
+				102000000000000000000027 /* katex.min.js */,
+				102000000000000000000028 /* katex-auto-render.min.js */,
+				102000000000000000000029 /* katex.min.css */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -239,6 +284,9 @@
 			dependencies = (
 			);
 			name = BookLoop;
+			packageProductDependencies = (
+				10B000000000000000000001 /* Yams */,
+			);
 			productName = BookLoop;
 			productReference = 102000000000000000000008 /* BookLoop.app */;
 			productType = "com.apple.product-type.application";
@@ -267,6 +315,9 @@
 				Base,
 			);
 			mainGroup = 104000000000000000000001;
+			packageReferences = (
+				10A000000000000000000001 /* XCRemoteSwiftPackageReference "Yams" */,
+			);
 			productRefGroup = 104000000000000000000002 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -281,6 +332,12 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				101000000000000000000023 /* preview.css in Resources */,
+				101000000000000000000024 /* preview.js in Resources */,
+				101000000000000000000025 /* markdown-it.min.js in Resources */,
+				101000000000000000000026 /* katex.min.js in Resources */,
+				101000000000000000000027 /* katex-auto-render.min.js in Resources */,
+				101000000000000000000028 /* katex.min.css in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -323,6 +380,9 @@
 				10100000000000000000001E /* AgentPanelView.swift in Sources */,
 				10100000000000000000001F /* AgentPatchExporter.swift in Sources */,
 				101000000000000000000020 /* PatchActionPanel.swift in Sources */,
+				101000000000000000000021 /* NavConfigLoader.swift in Sources */,
+				101000000000000000000022 /* BookMarkdownRenderer.swift in Sources */,
+				101000000000000000000029 /* BookStylesheetResolver.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -508,6 +568,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		10A000000000000000000001 /* XCRemoteSwiftPackageReference "Yams" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jpsim/Yams.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		10B000000000000000000001 /* Yams */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 10A000000000000000000001 /* XCRemoteSwiftPackageReference "Yams" */;
+			productName = Yams;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 106000000000000000000001 /* Project object */;
 }

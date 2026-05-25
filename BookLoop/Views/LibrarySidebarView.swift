@@ -13,11 +13,11 @@ struct LibrarySidebarView: View {
     @Binding var isSidebarVisible: Bool
     let previewStatus: LocalAPIStatus
     let chapterItems: [ChapterNavItem]
-    let currentURL: URL?
+    let currentChapterPath: String?
     let addBook: () -> Void
     let editBook: () -> Void
     let deleteBook: () -> Void
-    let onChapterSelect: (URL) -> Void
+    let onChapterSelect: (String) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -84,7 +84,7 @@ struct LibrarySidebarView: View {
                             ForEach(chapterItems) { item in
                                 ChapterNavRow(
                                     item: item,
-                                    currentURL: currentURL,
+                                    currentChapterPath: currentChapterPath,
                                     level: 0,
                                     onSelect: onChapterSelect
                                 )
@@ -172,18 +172,15 @@ private struct CompactStatusRow: View {
 
 private struct ChapterNavRow: View {
     let item: ChapterNavItem
-    let currentURL: URL?
+    let currentChapterPath: String?
     let level: Int
-    let onSelect: (URL) -> Void
+    let onSelect: (String) -> Void
 
     @State private var isExpanded = true
 
     private var isSelected: Bool {
-        guard item.isNavigable, let currentURL,
-              let target = URLHelpers.normalizedPreviewURL(from: item.href, base: currentURL) else {
-            return false
-        }
-        return URLsMatch(currentURL, target)
+        guard item.isNavigable, let currentChapterPath else { return false }
+        return item.href == currentChapterPath
     }
 
     var body: some View {
@@ -205,7 +202,7 @@ private struct ChapterNavRow: View {
 
             if isExpanded {
                 ForEach(item.children) { child in
-                    ChapterNavRow(item: child, currentURL: currentURL, level: level + 1, onSelect: onSelect)
+                    ChapterNavRow(item: child, currentChapterPath: currentChapterPath, level: level + 1, onSelect: onSelect)
                 }
             }
         }
@@ -215,9 +212,7 @@ private struct ChapterNavRow: View {
     private var rowLabel: some View {
         if item.isNavigable {
             Button {
-                if let resolved = URLHelpers.normalizedPreviewURL(from: item.href, base: currentURL) {
-                    onSelect(resolved)
-                }
+                onSelect(item.href)
             } label: {
                 Text(item.title)
                     .font(.callout)
@@ -237,11 +232,6 @@ private struct ChapterNavRow: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
         }
-    }
-
-    private func URLsMatch(_ lhs: URL, _ rhs: URL) -> Bool {
-        lhs.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) ==
-            rhs.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     }
 }
 

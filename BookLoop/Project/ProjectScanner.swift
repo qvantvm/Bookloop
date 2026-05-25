@@ -1,7 +1,6 @@
 import Foundation
 
 final class ProjectScanner {
-    private let mkdocsScanner = MkDocsProjectScanner()
     private let reviewParser = ReviewItemParser()
 
     func scan(book: BookConfig, config: BookProjectConfig) throws -> ProjectMap {
@@ -9,8 +8,8 @@ final class ProjectScanner {
         var entries: [ProjectFileEntry] = []
         let fm = FileManager.default
 
-        let chapters = try mkdocsScanner.discoverChapters(book: book)
-        for chapter in chapters {
+        let navigation = try NavConfigLoader.loadNavigation(for: book)
+        for chapter in navigation.chapters {
             let relative = relativePath(for: URL(fileURLWithPath: chapter.markdownPath), rootURL: rootURL)
             let text = (try? String(contentsOfFile: chapter.markdownPath, encoding: .utf8)) ?? ""
             entries.append(ProjectFileEntry(
@@ -28,9 +27,9 @@ final class ProjectScanner {
             scanDirectory(contentRootURL, rootURL: rootURL, kind: .chapter, into: &entries)
         }
 
-        let mkdocsURL = rootURL.appendingPathComponent("mkdocs.yml")
-        if fm.fileExists(atPath: mkdocsURL.path) {
-            addFile(url: mkdocsURL, rootURL: rootURL, kind: .config, into: &entries)
+        let navURL = rootURL.appendingPathComponent("nav.yaml")
+        if fm.fileExists(atPath: navURL.path) {
+            addFile(url: navURL, rootURL: rootURL, kind: .config, into: &entries)
         }
 
         let scriptsURL = rootURL.appendingPathComponent("scripts")

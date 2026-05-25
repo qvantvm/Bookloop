@@ -1495,6 +1495,7 @@ struct BookSettingsView: View {
 
 struct BookSettingsForm: View {
     @Binding var draft: BookConfig
+    @State private var migrationMessage: String?
 
     var body: some View {
         Form {
@@ -1502,11 +1503,20 @@ struct BookSettingsForm: View {
                 TextField("Display Name", text: $draft.displayName)
                 PathField(title: "Project Root", path: $draft.projectRootPath, isDirectory: true)
                 LabeledContent("Folder Access", value: draft.projectRootBookmark == nil ? "Bookmark will be captured on save" : "Security-scoped bookmark saved")
-                TextField("Preview URL", text: $draft.previewURL)
             }
 
             Section("Paths") {
-                PathField(title: "mkdocs.yml", path: $draft.mkdocsConfigPath, isDirectory: false)
+                PathField(title: "nav.yaml", path: $draft.navConfigPath, isDirectory: false)
+                if showsNavMigrationButton {
+                    Button("Create nav.yaml from mkdocs.yml") {
+                        migrateNavYAML()
+                    }
+                    if let migrationMessage {
+                        Text(migrationMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 PathField(title: "docs", path: $draft.docsPath, isDirectory: true)
                 PathField(title: "reviews", path: $draft.reviewsPath, isDirectory: true)
                 PathField(title: "review_items", path: $draft.reviewItemsPath, isDirectory: true)
@@ -1519,7 +1529,6 @@ struct BookSettingsForm: View {
             }
 
             Section("Commands") {
-                OptionalTextField("MkDocs serve command", text: $draft.mkdocsServeCommand)
                 OptionalTextField("Figure generation command", text: $draft.figureGenerationCommand)
                 OptionalTextField("Validation command", text: $draft.validationCommand)
             }
@@ -1537,6 +1546,27 @@ struct BookSettingsForm: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    private var showsNavMigrationButton: Bool {
+        guard !draft.projectRootPath.isEmpty else { return false }
+        let navPath = draft.navConfigPath ?? draft.suggestedPath("nav.yaml")
+        let mkdocsPath = draft.suggestedPath("mkdocs.yml")
+        return FileManager.default.fileExists(atPath: mkdocsPath)
+            && !FileManager.default.fileExists(atPath: navPath)
+    }
+
+    private func migrateNavYAML() {
+        let mkdocsPath = draft.suggestedPath("mkdocs.yml")
+        let navPath = draft.navConfigPath ?? draft.suggestedPath("nav.yaml")
+        do {
+            let content = try NavConfigLoader.createNavYAML(fromLegacyMkDocsAt: mkdocsPath)
+            try content.write(toFile: navPath, atomically: true, encoding: .utf8)
+            draft.navConfigPath = navPath
+            migrationMessage = "Created nav.yaml from mkdocs.yml."
+        } catch {
+            migrationMessage = error.localizedDescription
+        }
     }
 }
 

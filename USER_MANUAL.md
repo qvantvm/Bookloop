@@ -1,6 +1,6 @@
 # BookLoop User Manual
 
-BookLoop is a native macOS app for working on MkDocs books. It helps you read the rendered book, ask questions about the current chapter (optional OpenAI chat), run a built-in native agent, capture structured feedback, browse review items, manage figures, generate Cursor-ready revision tasks, and review or apply agent-produced patches.
+BookLoop is a native macOS app for working on technical book projects. It helps you read chapters with built-in Markdown preview, ask questions about the current chapter (optional OpenAI chat), run a built-in native agent, capture structured feedback, browse review items, manage figures, generate Cursor-ready revision tasks, and review or apply agent-produced patches.
 
 This manual describes how to install BookLoop, set up a book project, and use each part of the interface.
 
@@ -35,11 +35,12 @@ This manual describes how to install BookLoop, set up a book project, and use ea
 
 - **macOS 14 or newer**
 - **Xcode** (to build and run BookLoop from source)
-- An **MkDocs book project** on disk
+- A **book project** on disk (`docs/`, `nav.yaml`, reviews folders)
 - Optionally, an **OpenAI API key** for Chapter Chat and the built-in **Native Agent** (stored in the macOS Keychain)
-- Optionally, a terminal for running **MkDocs preview** (`mkdocs serve`)
 
-BookLoop does **not** (unless you enable OpenAI features):
+BookLoop does **not** require an external preview server. It renders Markdown chapters in-app.
+
+BookLoop also does **not** (unless you enable OpenAI features):
 
 - Call external LLM APIs by default — Chapter Chat and the Native Agent are optional and require your OpenAI key
 - Silently rewrite book files or force-apply patches
@@ -69,13 +70,13 @@ BookLoop uses a three-column layout optimized for reading:
 | Column | Purpose |
 |--------|---------|
 | **Library sidebar (left)** | Books, clickable chapter tree, compact status, Tools launcher, Add/Edit/Delete |
-| **Center** | **Reading mode** — MkDocs preview (default), or **Tools mode** — Reviews, Figures, Tasks, Patches, Agent, or Settings |
+| **Center** | **Reading mode** — native Markdown preview (default), or **Tools mode** — Reviews, Figures, Tasks, Patches, Agent, or Settings |
 | **Chapter Chat (right)** | OpenAI-powered chat about the current page; **Send as Feedback** saves the transcript to `reviews/review_items/` |
 
 ### Reading vs Tools mode
 
 - **Reading mode** (default): the center column shows the book preview. Use the sidebar chapter tree or preview navigation to move between pages.
-- **Tools mode**: choose **Reviews**, **Figures**, **Tasks**, **Patches**, **Agent**, or **Settings** under **Tools** in the sidebar. The center column switches to that tool. Click **Back to Reading** to return to the preview at the same URL.
+- **Tools mode**: choose **Reviews**, **Figures**, **Tasks**, **Patches**, **Agent**, or **Settings** under **Tools** in the sidebar. The center column switches to that tool. Click **Back to Reading** to return to the preview at the same chapter.
 
 ### Hide panels
 
@@ -85,17 +86,16 @@ BookLoop uses a three-column layout optimized for reading:
 The toolbar provides:
 
 - **Refresh** — reloads chapters, reviews, figures, tasks, and patches for the selected book
-- **Check Preview** — checks MkDocs preview connectivity
 
 ---
 
 ## 4. Prepare your book project
 
-BookLoop expects a typical MkDocs layout. Recommended structure:
+BookLoop expects a typical book layout with Markdown under `docs/` and navigation in `nav.yaml`. Recommended structure:
 
 ```text
 my-book/
-  mkdocs.yml
+  nav.yaml
   docs/
     index.md
     chapters/
@@ -119,6 +119,8 @@ my-book/
 
 You do not need every folder on day one. BookLoop can infer or suggest paths when you configure a book.
 
+If you still have `mkdocs.yml` but no `nav.yaml`, BookLoop reads the legacy `nav:` section and shows a banner suggesting migration. Use **Create nav.yaml from mkdocs.yml** in book settings to copy the nav block.
+
 ### Git hygiene (book repo)
 
 BookLoop writes **two different kinds of output**:
@@ -141,14 +143,14 @@ What you **should** commit after a successful patch workflow: the modified chapt
 ### Add a book
 
 1. Click **Add** in the sidebar toolbar.
-2. Choose the **MkDocs project root** (the folder containing `mkdocs.yml`).
+2. Choose the **book project root** (the folder containing `docs/` and preferably `nav.yaml`).
 3. BookLoop creates a book entry with sensible defaults.
 
-Default URLs:
+Default paths:
 
 | Setting | Default |
 |---------|---------|
-| Preview URL | `http://127.0.0.1:8000` |
+| Navigation | `nav.yaml` |
 | Review items | `reviews/review_items/` (under project root) |
 
 ### Edit book settings
@@ -169,21 +171,11 @@ Select the book and click **Delete** (trash icon). This removes the entry from B
 
 ---
 
-## 6. Start local services
-
-BookLoop connects to MkDocs preview separately in Terminal.
-
-### MkDocs preview
-
-From the book root:
-
-```bash
-mkdocs serve
-```
-
-BookLoop loads the preview URL (default `http://127.0.0.1:8000`) in the center **Reading** column.
+## 6. Local services
 
 Feedback (**Save Review** and **Send as Feedback**) is written directly to `reviews/review_items/` in your book project. No separate server is required.
+
+Reading mode uses BookLoop's built-in Markdown renderer. The sidebar **Preview** status dot reflects whether the `docs/` folder is available.
 
 ---
 
@@ -201,18 +193,18 @@ Read → Save Review → Generate Task → Agent/Cursor Creates Patch → Review
 4. Let the agent produce a **patch** in `bookloop/patches/`.
 5. **Review** the patch block-by-block in **Tools → Patches**.
 6. **Apply** accepted changes (with confirmation and `git apply --check` first).
-7. Rebuild or re-serve MkDocs and continue reading.
+7. Optionally run your configured validation command and continue reading.
 
 ---
 
 ## 8. Reading mode (preview)
 
-The center column embeds your MkDocs site in a web view. MkDocs side navigation is hidden so the chapter uses the full width.
+The center column renders the current chapter from `docs/` using bundled Markdown and KaTeX support. Navigation comes from `nav.yaml` (or legacy `mkdocs.yml` nav).
 
 ### Sidebar chapter tree
 
-- Click a chapter in the sidebar **Chapters** section to navigate the preview.
-- After the preview loads, BookLoop extracts the MkDocs nav tree from the page. Until then, a fallback list from your project’s chapter scan is shown.
+- Click a chapter in the sidebar **Chapters** section to load that Markdown file.
+- The tree matches your `nav.yaml` nesting.
 
 ### Preview toolbar
 
@@ -367,7 +359,7 @@ Select a task file to view its contents. Use **Open Task in Finder** or **Copy T
 
 ### Run validation command
 
-If a **validation command** is configured (default suggestion: `mkdocs build`) and **Allow shell commands** is enabled, you can run validation from this tool. BookLoop shows a confirmation dialog before executing anything.
+If a **validation command** is configured and **Allow shell commands** is enabled, you can run validation from this tool. BookLoop shows a confirmation dialog before executing anything.
 
 ---
 
@@ -471,17 +463,18 @@ Full book configuration in one form. Sections:
 
 ### Book
 
-Display name, project root, and preview URL.
+Display name, project root, and security-scoped folder access.
 
 ### Paths
 
-Paths to `mkdocs.yml`, `docs/`, review folders, figure folders, `bookloop/`, style guide, and figures registry.
+Paths to `nav.yaml`, `docs/`, review folders, figure folders, `bookloop/`, style guide, and figures registry.
+
+If you have `mkdocs.yml` but no `nav.yaml`, use **Create nav.yaml from mkdocs.yml** to migrate navigation.
 
 ### Commands
 
 Optional shell commands (reference only unless execution is explicitly allowed):
 
-- MkDocs serve
 - Figure generation (supports `<figure-id>` placeholder)
 - Validation
 
@@ -548,9 +541,9 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 
 ### Preview shows blank or error
 
-- Confirm `mkdocs serve` is running.
-- Check the preview URL in **Tools → Settings** (default `http://127.0.0.1:8000`).
-- Use toolbar **Check Preview**.
+- Confirm `docs/` exists and contains the chapter Markdown file.
+- Check `nav.yaml` (or legacy `mkdocs.yml` nav) points to valid `.md` paths.
+- Use toolbar **Refresh** to reload navigation and the current chapter.
 
 ### Save Review fails
 
@@ -603,16 +596,18 @@ These files (`changed_files.json`, `diff.patch`, `project_snapshot.json`, `diff-
 
 ### Chapter not detected in preview
 
-- Add `<meta name="chapter-id" content="your-chapter-id">` to your MkDocs theme or chapter templates.
+- Add YAML frontmatter with `id: your-chapter-id` to the Markdown source.
+- BookLoop also injects `<meta name="chapter-id">` from frontmatter during rendering.
 - Or enter the chapter ID manually in the Reviews feedback form.
 
 ---
 
-## Quick reference: default ports
+## Quick reference
 
-| Service | Default URL |
-|---------|-------------|
-| MkDocs preview | `http://127.0.0.1:8000` |
+| Item | Default |
+|------|---------|
+| Navigation config | `nav.yaml` |
+| Review items folder | `reviews/review_items/` |
 
 ---
 

@@ -11,34 +11,54 @@ struct BookPreviewView: View {
     var body: some View {
         VStack(spacing: 0) {
             previewToolbar
+            if let hint = model.navigationHint ?? projectStore.navigationHint {
+                Text(hint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+            }
             Divider()
             previewContent
+        }
+        .onChange(of: model.autoRefreshEnabled) { _, enabled in
+            model.setAutoRefreshEnabled(enabled)
         }
     }
 
     @ViewBuilder
     private var previewContent: some View {
-        if let previewURL = model.previewURL {
+        if let html = model.renderedHTML, let baseURL = model.renderedBaseURL {
             WebView(
-                url: previewURL,
+                html: html,
+                baseURL: baseURL,
+                contentID: model.renderContentID,
                 currentURL: $model.currentURL,
                 canGoBack: $model.canGoBack,
                 canGoForward: $model.canGoForward,
                 reloadToken: model.reloadToken,
                 goBackToken: model.goBackToken,
                 goForwardToken: model.goForwardToken,
-                navigateToken: model.navigateToken,
-                navigateURL: model.navigateURL,
                 onPageLoaded: { webView in
                     model.handlePageLoaded(webView)
                     Task { await refreshPageContext(from: webView) }
+                },
+                onInternalChapterLink: { url in
+                    model.handleInternalLink(url)
                 }
             )
+        } else if let error = model.loadError {
+            ContentUnavailableView {
+                Label("Preview Error", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            }
         } else if model.book != nil {
             ContentUnavailableView {
-                Label("Invalid Preview URL", systemImage: "exclamationmark.triangle")
+                Label("No Chapter Loaded", systemImage: "doc.text")
             } description: {
-                Text("Check the book's preview URL in settings.")
+                Text("Select a chapter from the sidebar.")
             }
         } else {
             EmptyStateView(
@@ -56,14 +76,12 @@ struct BookPreviewView: View {
             } label: {
                 Text(isSidebarVisible ? "Hide Panel" : "Show Panel")
             }
-            .help(isSidebarVisible ? "Hide books and chapters panel" : "Show books and chapters panel")
 
             Button {
                 withAnimation { isChatVisible.toggle() }
             } label: {
                 Text(isChatVisible ? "Hide Chat" : "Show Chat")
             }
-            .help(isChatVisible ? "Hide chapter chat panel" : "Show chapter chat panel")
 
             Button(action: model.goBack) { Image(systemName: "chevron.left") }
                 .disabled(!model.canGoBack)
@@ -71,7 +89,7 @@ struct BookPreviewView: View {
                 .disabled(!model.canGoForward)
             Button(action: model.reload) { Image(systemName: "arrow.clockwise") }
 
-            Text(model.currentURL?.absoluteString ?? model.previewURL?.absoluteString ?? "No URL loaded")
+            Text(model.currentChapterPath ?? "No chapter loaded")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -86,33 +104,21 @@ struct BookPreviewView: View {
                     FileHelpers.openFile(path: chapter.markdownPath)
                 }
             }
-
-            Button("Open in Browser", action: model.openInBrowser)
-                .disabled(model.previewURL == nil)
         }
         .padding(10)
     }
 
     private var currentChapter: Chapter? {
-        guard let detected = model.detectedChapterID?.nilIfBlank else { return nil }
-        return projectStore.chapters.first { chapter in
-            chapter.id == detected || chapter.urlSlug == detected || chapter.relativePath.replacingOccurrences(of: ".md", with: "") == detected
-        }
+        guard let path = model.currentChapterPath else { return nil }
+        return projectStore.chapters.first { $0.relativePath == path }
+            ?? projectStore.chapters.first { $0.id == model.detectedChapterID }
     }
 
     private func refreshPageContext(from webView: WKWebView) async {
-        await updatePageContext(from: webView)
-        try? await Task.sleep(nanoseconds: 600_000_000)
-        await updatePageContext(from: webView)
-    }
-
-    private func updatePageContext(from webView: WKWebView) async {
         let chapterID = await WebView.detectChapterID(in: webView)
         let pageTitle = await WebView.detectPageTitle(in: webView)
-        let navItems = await WebView.extractChapterNav(in: webView)
-        model.updateChapterNav(navItems)
         model.detectedChapterID = chapterID
         model.pageTitle = pageTitle
-        chatModel.updatePageContext(chapterID: chapterID, pageTitle: pageTitle, pageURL: webView.url)
+        chatModel.updatePageContext(chapterID: chapterID, pageTitle: pageTitle, pageURL: model.currentURL)
     }
 }

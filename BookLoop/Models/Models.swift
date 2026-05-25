@@ -5,8 +5,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
     var displayName: String
     var projectRootPath: String
     var projectRootBookmark: Data?
-    var previewURL: String
-    var mkdocsConfigPath: String?
+    var navConfigPath: String?
     var docsPath: String?
     var reviewsPath: String?
     var reviewItemsPath: String?
@@ -16,7 +15,6 @@ struct BookConfig: Identifiable, Codable, Equatable {
     var bookloopPath: String?
     var styleGuidePath: String?
     var figuresRegistryPath: String?
-    var mkdocsServeCommand: String?
     var figureGenerationCommand: String?
     var validationCommand: String?
     var allowShellCommands: Bool
@@ -34,8 +32,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
             displayName: "Untitled Book",
             projectRootPath: projectRootPath,
             projectRootBookmark: nil,
-            previewURL: "http://127.0.0.1:8000",
-            mkdocsConfigPath: nil,
+            navConfigPath: nil,
             docsPath: nil,
             reviewsPath: nil,
             reviewItemsPath: nil,
@@ -45,9 +42,8 @@ struct BookConfig: Identifiable, Codable, Equatable {
             bookloopPath: nil,
             styleGuidePath: nil,
             figuresRegistryPath: nil,
-            mkdocsServeCommand: "mkdocs serve",
             figureGenerationCommand: nil,
-            validationCommand: "mkdocs build",
+            validationCommand: nil,
             allowShellCommands: false,
             allowFigureRegeneration: false,
             allowPatchApply: true,
@@ -70,7 +66,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
             return url.path
         }
 
-        mkdocsConfigPath = existing("mkdocs.yml", directory: false) ?? mkdocsConfigPath
+        navConfigPath = existing("nav.yaml", directory: false) ?? navConfigPath
         docsPath = existing("docs", directory: true) ?? docsPath
         reviewsPath = existing("reviews", directory: true) ?? reviewsPath
         reviewItemsPath = existing("reviews/review_items", directory: true) ?? reviewItemsPath
@@ -117,7 +113,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
 
     mutating func fillSuggestedPaths() {
         guard !projectRootPath.isEmpty else { return }
-        mkdocsConfigPath = mkdocsConfigPath ?? suggestedPath("mkdocs.yml")
+        navConfigPath = navConfigPath ?? suggestedPath("nav.yaml")
         docsPath = docsPath ?? suggestedPath("docs")
         reviewsPath = reviewsPath ?? suggestedPath("reviews")
         reviewItemsPath = reviewItemsPath ?? suggestedPath("reviews/review_items")

@@ -96,135 +96,12 @@ final class ReviewItemWriter {
 }
 
 final class PreviewHealthChecker {
-    func check(previewURL: String) async -> LocalAPIStatus {
-        let value = previewURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: value), url.scheme == "http" || url.scheme == "https" else {
-            if FileManager.default.fileExists(atPath: value) {
-                return .online
-            }
-            return .offline("Preview URL is not a valid HTTP(S) URL or existing file path.")
-        }
-
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 5
-        let session = URLSession(configuration: configuration)
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-
-        do {
-            let (_, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                return .offline("Preview returned a non-HTTP response.")
-            }
-            return (200..<500).contains(http.statusCode) ? .online : .offline("Preview returned HTTP \(http.statusCode).")
-        } catch {
-            return .offline("MkDocs preview appears offline. Start it from the book root with `mkdocs serve`.")
-        }
-    }
-}
-
-final class MkDocsProjectScanner {
-    func discoverChapters(book: BookConfig) throws -> [Chapter] {
-        var chaptersByPath: [String: Chapter] = [:]
+    func check(book: BookConfig) -> LocalAPIStatus {
         let docsPath = book.docsPath ?? book.suggestedPath("docs")
-        let docsURL = URL(fileURLWithPath: docsPath, isDirectory: true)
-        let fm = FileManager.default
-
-        if let mkdocsPath = book.mkdocsConfigPath ?? existing(book.suggestedPath("mkdocs.yml")),
-           let content = try? String(contentsOfFile: mkdocsPath, encoding: .utf8) {
-            for (order, entry) in parseMkDocsNav(content: content, docsURL: docsURL).enumerated() {
-                var chapter = entry
-                chapter.order = order
-                chaptersByPath[chapter.markdownPath] = chapter
-            }
+        guard FileManager.default.fileExists(atPath: docsPath) else {
+            return .offline("docs/ folder not found.")
         }
-
-        guard fm.fileExists(atPath: docsURL.path) else {
-            return chaptersByPath.values.sorted {
-                let leftOrder = $0.order ?? Int.max
-                let rightOrder = $1.order ?? Int.max
-                if leftOrder != rightOrder { return leftOrder < rightOrder }
-                return $0.title.localizedStandardCompare($1.title) == .orderedAscending
-            }
-        }
-
-        if let enumerator = fm.enumerator(at: docsURL, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) {
-            for case let url as URL in enumerator where url.pathExtension.lowercased() == "md" {
-                if chaptersByPath[url.path] == nil {
-                    chaptersByPath[url.path] = chapterFromMarkdown(url: url, docsURL: docsURL, order: nil)
-                }
-            }
-        }
-
-        return chaptersByPath.values.sorted {
-            if $0.order != $1.order { return ($0.order ?? Int.max) < ($1.order ?? Int.max) }
-            return $0.relativePath.localizedStandardCompare($1.relativePath) == .orderedAscending
-        }
-    }
-
-    private func parseMkDocsNav(content: String, docsURL: URL) -> [Chapter] {
-        content
-            .components(separatedBy: .newlines)
-            .compactMap { line -> String? in
-                guard line.contains(".md") else { return nil }
-                let cleaned = line
-                    .trimmingCharacters(in: .whitespaces)
-                    .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-                    .trimmingCharacters(in: .whitespaces)
-                return cleaned.nilIfBlank
-            }
-            .compactMap { entry in
-                let parts = entry.split(separator: ":", maxSplits: 1).map(String.init)
-                let title: String?
-                let pathPart: String
-                if parts.count == 2 {
-                    title = parts[0].trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
-                    pathPart = parts[1]
-                } else {
-                    title = nil
-                    pathPart = parts[0]
-                }
-                let markdown = normalizedDocsRelativeMarkdownPath(pathPart.trimmingCharacters(in: CharacterSet(charactersIn: " \"'")))
-                guard markdown.hasSuffix(".md") else { return nil }
-                return chapterFromMarkdown(url: docsURL.appendingPathComponent(markdown), docsURL: docsURL, titleOverride: title, order: nil)
-            }
-    }
-
-    private func chapterFromMarkdown(url: URL, docsURL: URL, titleOverride: String? = nil, order: Int?) -> Chapter {
-        let docsPath = docsURL.standardizedFileURL.path
-        let filePath = url.standardizedFileURL.path
-        var relativePath = filePath.hasPrefix(docsPath + "/")
-            ? String(filePath.dropFirst(docsPath.count + 1))
-            : url.lastPathComponent
-        relativePath = ChapterResolver.normalizedDocsRelativeMarkdownPath(relativePath)
-        let frontmatter = parseFrontmatter(path: url.path)
-        let id = frontmatter["id"] ?? relativePath.replacingOccurrences(of: ".md", with: "").replacingOccurrences(of: "/", with: "-")
-        let title = titleOverride ?? frontmatter["title"] ?? url.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "_", with: " ").capitalized
-        let slug = relativePath == "index.md" ? "" : relativePath.replacingOccurrences(of: ".md", with: "/").replacingOccurrences(of: "index/", with: "")
-        return Chapter(id: id, title: title, markdownPath: url.path, relativePath: relativePath, urlSlug: slug.nilIfBlank, order: order)
-    }
-
-    private func normalizedDocsRelativeMarkdownPath(_ path: String) -> String {
-        ChapterResolver.normalizedDocsRelativeMarkdownPath(path)
-    }
-
-    private func parseFrontmatter(path: String) -> [String: String] {
-        guard let content = try? String(contentsOfFile: path, encoding: .utf8),
-              content.hasPrefix("---") else { return [:] }
-        let lines = content.components(separatedBy: .newlines)
-        var result: [String: String] = [:]
-        for line in lines.dropFirst() {
-            if line.trimmingCharacters(in: .whitespaces) == "---" { break }
-            let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
-            if parts.count == 2 {
-                result[parts[0].trimmingCharacters(in: .whitespaces)] = parts[1].trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
-            }
-        }
-        return result
-    }
-
-    private func existing(_ path: String) -> String? {
-        FileManager.default.fileExists(atPath: path) ? path : nil
+        return .online
     }
 }
 
@@ -556,7 +433,7 @@ final class TaskGenerator {
         case .proposeFigure:
             title = "Create a script-generated figure for chapter `\(chapterID ?? "current")`."
         case .validateBook:
-            title = "Validate the MkDocs book and report issues."
+            title = "Validate the book and report issues."
         case .planOnly:
             title = "Plan revisions for the selected book context."
         case .proposePatchOnly, .fixReviews:
@@ -634,7 +511,7 @@ final class TaskGenerator {
             "- Do not introduce unsupported benchmark claims.",
             "- Do not rewrite the whole chapter unless necessary.",
             "- Return a unified diff.",
-            "- Run `mkdocs build` if possible.",
+            "- Run the configured validation command if possible.",
             "- If a figure is needed, generate a script-based figure rather than only a static image.",
             "- Do not directly apply changes; BookLoop must review the patch first.",
             "",
@@ -661,7 +538,7 @@ final class TaskGenerator {
         case .fixReviews:
             return "Fix selected reviews by proposing a unified diff. Do not directly apply changes."
         case .validateBook:
-            return "Run validation such as `mkdocs build` and report issues. Do not directly modify files."
+            return "Run the configured validation command and report issues. Do not directly modify files."
         }
     }
 
@@ -676,7 +553,7 @@ final class TaskGenerator {
             "- Save final asset under `docs/assets/figures/`.",
             "- Add alt text and caption.",
             "- Insert figure into the chapter only through a visible patch.",
-            "- Validate through `mkdocs build` if possible."
+            "- Run the configured validation command if possible."
         ]
     }
 
@@ -684,7 +561,7 @@ final class TaskGenerator {
         [
             "",
             "## Validation Checklist",
-            "- Run `mkdocs build` if possible.",
+            "- Run the configured validation command if possible.",
             "- Check image references.",
             "- Check broken internal links.",
             "- Check stale figures.",

@@ -84,19 +84,38 @@ final class BookLibraryStore: ObservableObject {
 @MainActor
 final class ProjectContentStore: ObservableObject {
     @Published var chapters: [Chapter] = []
+    @Published var chapterNav: [ChapterNavItem] = []
+    @Published var navigationHint: String?
+    @Published var usedLegacyMkDocsNav = false
+    @Published var navigationResult: BookNavigationScanResult?
     @Published var errorMessage: String?
 
     func refresh(book: BookConfig?) {
         guard let book else {
             chapters = []
+            chapterNav = []
+            navigationHint = nil
+            usedLegacyMkDocsNav = false
+            navigationResult = nil
             errorMessage = nil
             return
         }
         do {
-            chapters = try MkDocsProjectScanner().discoverChapters(book: book)
+            let result = try NavConfigLoader.loadNavigation(for: book)
+            chapters = result.chapters
+            chapterNav = result.navItems
+            navigationResult = result
+            navigationHint = result.usedLegacyMkDocsNav
+                ? "Create nav.yaml at the book root (currently using mkdocs.yml nav)."
+                : nil
+            usedLegacyMkDocsNav = result.usedLegacyMkDocsNav
             errorMessage = nil
         } catch {
             chapters = []
+            chapterNav = []
+            navigationHint = nil
+            usedLegacyMkDocsNav = false
+            navigationResult = nil
             errorMessage = error.localizedDescription
         }
     }

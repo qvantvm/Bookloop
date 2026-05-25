@@ -39,6 +39,12 @@ enum URLHelpers {
     static func inferChapterID(from url: URL?) -> String? {
         guard let url else { return nil }
 
+        if url.scheme == "bookloop", url.host == "chapter",
+           let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let path = components.queryItems?.first(where: { $0.name == "path" })?.value {
+            return path.replacingOccurrences(of: ".md", with: "").replacingOccurrences(of: "/", with: "-")
+        }
+
         let path = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !path.isEmpty else { return nil }
 
@@ -48,7 +54,40 @@ enum URLHelpers {
         }
 
         guard let slug = components.last, !slug.isEmpty else { return nil }
-        if slug == "site" || slug.contains(".") { return nil }
+        if slug == "site" { return nil }
+        if slug.hasSuffix(".md") {
+            return slug.replacingOccurrences(of: ".md", with: "").replacingOccurrences(of: "/", with: "-")
+        }
+        if slug.contains(".") { return nil }
         return slug
+    }
+
+    static func resolveDocsRelativePath(_ target: String, from currentPath: String) -> String {
+        if target.hasPrefix("/") {
+            return ChapterResolver.normalizedDocsRelativeMarkdownPath(String(target.dropFirst()))
+        }
+
+        var currentParts = currentPath.split(separator: "/").map(String.init)
+        if currentParts.last?.hasSuffix(".md") == true {
+            currentParts.removeLast()
+        }
+
+        for part in target.split(separator: "/").map(String.init) {
+            if part == "." || part.isEmpty { continue }
+            if part == ".." {
+                if !currentParts.isEmpty { currentParts.removeLast() }
+            } else {
+                currentParts.append(part)
+            }
+        }
+        return ChapterResolver.normalizedDocsRelativeMarkdownPath(currentParts.joined(separator: "/"))
+    }
+
+    static func bookloopChapterURL(for relativePath: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = "bookloop"
+        components.host = "chapter"
+        components.queryItems = [URLQueryItem(name: "path", value: relativePath)]
+        return components.url
     }
 }

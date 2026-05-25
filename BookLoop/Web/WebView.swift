@@ -2,119 +2,31 @@ import AppKit
 import SwiftUI
 import WebKit
 
-enum WebViewSupport {
-    static let embedCSS = """
-    aside.md-sidebar, .md-sidebar--primary, .md-sidebar--secondary {
-      display: none !important; visibility: hidden !important; width: 0 !important;
-    }
-    .md-main, .md-main__inner, .md-content, .md-content__inner {
-      max-width: none !important; margin-left: 0 !important; width: 100% !important;
-    }
-    .md-main__inner, .md-content, .md-content__inner, article.md-content__inner {
-      padding-left: 1.50rem !important; padding-right: 1.00rem !important;
-    }
-    .md-grid { max-width: none !important; }
-    .md-overlay, label[for="__drawer"], .md-header__button[for="__drawer"] {
-      display: none !important;
-    }
-    @media screen and (max-width: 76.1875em) {
-      aside.md-sidebar, .md-sidebar--primary { display: none !important; }
-      .md-content { margin-left: 0 !important; }
-    }
-    body:not(.bookloop-ready) .md-main {
-      opacity: 0 !important;
-    }
-    body.bookloop-ready .md-main {
-      opacity: 1 !important;
-    }
-    """
-
-    static var cssInjectionScript: String {
-        let cssLiteral = embedCSS
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "`", with: "\\`")
-            .replacingOccurrences(of: "$", with: "\\$")
-
-        return """
-        (function() {
-          var viewport = document.querySelector('meta[name=\"viewport\"]');
-          if (!viewport) {
-            viewport = document.createElement('meta');
-            viewport.name = 'viewport';
-            (document.head || document.documentElement).appendChild(viewport);
-          }
-          viewport.content = 'width=1600';
-
-          var styleId = 'bookloop-mkdocs-embed-style';
-          var style = document.getElementById(styleId);
-          if (!style) {
-            style = document.createElement('style');
-            style.id = styleId;
-            (document.head || document.documentElement).appendChild(style);
-          }
-          style.textContent = `\(cssLiteral)`;
-        })();
-        """
-    }
-
-    static var mkdocsEmbedScript: String {
-        """
-        \(cssInjectionScript)
-        (function() {
-          if (document.body) {
-            document.body.classList.add('bookloop-ready');
-          }
-        })();
-        """
-    }
-
-    static let hideContentScript = """
-    (function() {
-      if (document.body) {
-        document.body.classList.remove('bookloop-ready');
-      }
-    })();
-    """
-}
-
-private struct RawChapterNavItem: Decodable {
-    let title: String
-    let href: String
-    let children: [RawChapterNavItem]?
-}
-
 final class WebViewCoordinator: NSObject, WKNavigationDelegate {
     var parent: WebView
     var lastGoBackToken: UUID?
     var lastGoForwardToken: UUID?
     var lastReloadToken: UUID?
-    var lastLoadedPreviewURL: URL?
+    var lastLoadedContentID: UUID?
     var lastNavigateToken: UUID?
 
     init(parent: WebView) {
         self.parent = parent
     }
 
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        updateNavigationState(webView)
-        webView.evaluateJavaScript(WebViewSupport.hideContentScript, completionHandler: nil)
-    }
-
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         updateNavigationState(webView)
-        webView.evaluateJavaScript(WebViewSupport.mkdocsEmbedScript) { _, _ in
-            self.parent.onPageLoaded?(webView)
-        }
+        parent.onPageLoaded?(webView)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         updateNavigationState(webView)
-        webView.evaluateJavaScript(WebViewSupport.mkdocsEmbedScript, completionHandler: nil)
+        parent.onPageLoaded?(webView)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         updateNavigationState(webView)
-        webView.evaluateJavaScript(WebViewSupport.mkdocsEmbedScript, completionHandler: nil)
+        parent.onPageLoaded?(webView)
     }
 
     func webView(
@@ -122,6 +34,31 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
         decidePolicyFor navigationAction: WKNavigationAction,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.allow)
+            return
+        }
+
+        if url.scheme == "bookloop", url.host == "chapter" {
+            parent.onInternalChapterLink?(url)
+            decisionHandler(.cancel)
+            return
+        }
+
+        if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
+            if navigationAction.navigationType == .linkActivated {
+                NSWorkspace.shared.open(url)
+                decisionHandler(.cancel)
+                return
+            }
+        }
+
+        if url.isFileURL, url.pathExtension.lowercased() == "md" {
+            parent.onInternalChapterLink?(url)
+            decisionHandler(.cancel)
+            return
+        }
+
         decisionHandler(.allow)
     }
 
@@ -133,7 +70,9 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
 }
 
 struct WebView: NSViewRepresentable {
-    let url: URL
+    let html: String
+    let baseURL: URL
+    let contentID: UUID
     @Binding var currentURL: URL?
     @Binding var canGoBack: Bool
     @Binding var canGoForward: Bool
@@ -142,8 +81,8 @@ struct WebView: NSViewRepresentable {
     var goBackToken: UUID?
     var goForwardToken: UUID?
     var navigateToken: UUID?
-    var navigateURL: URL?
     var onPageLoaded: ((WKWebView) -> Void)?
+    var onInternalChapterLink: ((URL) -> Void)?
 
     func makeCoordinator() -> WebViewCoordinator {
         WebViewCoordinator(parent: self)
@@ -152,44 +91,17 @@ struct WebView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.preferredContentMode = .desktop
-
-        let controller = configuration.userContentController
-        controller.addUserScript(WKUserScript(
-            source: WebViewSupport.cssInjectionScript,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        ))
-        controller.addUserScript(WKUserScript(
-            source: WebViewSupport.cssInjectionScript,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true
-        ))
-
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
+        context.coordinator.lastLoadedContentID = contentID
         context.coordinator.lastReloadToken = reloadToken
-        context.coordinator.lastLoadedPreviewURL = url
-        webView.load(URLRequest(url: url))
+        webView.loadHTMLString(html, baseURL: baseURL)
         return webView
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.parent = self
-
-        if let navigateURL, let navigateToken,
-           navigateToken != context.coordinator.lastNavigateToken {
-            context.coordinator.lastNavigateToken = navigateToken
-            webView.load(URLRequest(url: navigateURL))
-            return
-        }
-
-        if context.coordinator.lastLoadedPreviewURL != url {
-            context.coordinator.lastLoadedPreviewURL = url
-            context.coordinator.lastReloadToken = reloadToken
-            webView.load(URLRequest(url: url))
-            return
-        }
 
         if let goBackToken, goBackToken != context.coordinator.lastGoBackToken {
             context.coordinator.lastGoBackToken = goBackToken
@@ -203,9 +115,11 @@ struct WebView: NSViewRepresentable {
             return
         }
 
-        if reloadToken != context.coordinator.lastReloadToken {
+        let shouldReload = reloadToken != context.coordinator.lastReloadToken || contentID != context.coordinator.lastLoadedContentID
+        if shouldReload {
             context.coordinator.lastReloadToken = reloadToken
-            webView.reload()
+            context.coordinator.lastLoadedContentID = contentID
+            webView.loadHTMLString(html, baseURL: baseURL)
         }
     }
 
@@ -228,8 +142,8 @@ struct WebView: NSViewRepresentable {
         guard let webView else { return "" }
         let script = """
         (function() {
-          const article = document.querySelector('article')
-            || document.querySelector('.md-content')
+          const article = document.getElementById('bookloop-content')
+            || document.querySelector('article')
             || document.querySelector('main');
           const text = article ? article.innerText : document.body.innerText;
           return text ? text.trim() : '';
@@ -238,29 +152,15 @@ struct WebView: NSViewRepresentable {
         let text = try? await webView.evaluateJavaScript(script) as? String
         return text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
-
-    static func extractChapterNav(in webView: WKWebView) async -> [ChapterNavItem] {
-        guard let json = try? await webView.evaluateJavaScript(ChapterNavExtractor.script) as? String,
-              let data = json.data(using: .utf8),
-              let rawItems = try? JSONDecoder().decode([RawChapterNavItem].self, from: data) else {
-            return []
-        }
-        return rawItems.map(mapRawItem)
-    }
-
-    private static func mapRawItem(_ raw: RawChapterNavItem) -> ChapterNavItem {
-        ChapterNavItem(
-            title: raw.title,
-            href: raw.href,
-            children: (raw.children ?? []).map(mapRawItem)
-        )
-    }
 }
 
 @MainActor
 final class BookPreviewModel: ObservableObject {
     @Published var book: BookConfig?
-    @Published var previewURL: URL?
+    @Published var currentChapterPath: String?
+    @Published var renderedHTML: String?
+    @Published var renderedBaseURL: URL?
+    @Published var renderContentID = UUID()
     @Published var currentURL: URL?
     @Published var pageTitle: String?
     @Published var canGoBack = false
@@ -268,63 +168,115 @@ final class BookPreviewModel: ObservableObject {
     @Published var reloadToken = UUID()
     @Published var goBackToken: UUID?
     @Published var goForwardToken: UUID?
-    @Published var navigateToken: UUID?
-    @Published var navigateURL: URL?
     @Published var chapterNav: [ChapterNavItem] = []
     @Published var autoRefreshEnabled = false
     @Published var detectedChapterID: String?
     @Published var selectedText: String?
     @Published var loadError: String?
+    @Published var navigationHint: String?
+    @Published var previewStatus: LocalAPIStatus = .unknown
+
+    private var history: [String] = []
+    private var historyIndex = -1
+    private var lastRenderedModificationDate: Date?
+    private var autoRefreshTask: Task<Void, Never>?
+    private let renderer = BookMarkdownRenderer()
 
     weak var webView: WKWebView?
 
+    deinit {
+        autoRefreshTask?.cancel()
+    }
+
     func reset() {
         book = nil
-        previewURL = nil
+        currentChapterPath = nil
+        renderedHTML = nil
+        renderedBaseURL = nil
         currentURL = nil
         pageTitle = nil
         canGoBack = false
         canGoForward = false
-        navigateToken = nil
-        navigateURL = nil
         chapterNav = []
         detectedChapterID = nil
         selectedText = nil
         loadError = nil
+        navigationHint = nil
+        previewStatus = .unknown
+        history = []
+        historyIndex = -1
         webView = nil
+        autoRefreshTask?.cancel()
+        autoRefreshTask = nil
     }
 
-    func load(book: BookConfig) {
+    func load(book: BookConfig, navigation: BookNavigationScanResult) {
         self.book = book
-        previewURL = URLHelpers.normalizedPreviewURL(from: book.previewURL)
-        chapterNav = []
-        detectedChapterID = nil
-        reloadToken = UUID()
+        chapterNav = navigation.navItems
+        navigationHint = navigation.usedLegacyMkDocsNav
+            ? "Using nav from mkdocs.yml. Create nav.yaml at the book root."
+            : nil
+        previewStatus = FileManager.default.fileExists(atPath: book.docsPath ?? book.suggestedPath("docs"))
+            ? .online
+            : .offline("docs/ folder not found.")
+
+        let initialPath = ChapterNavItem.firstNavigablePath(in: navigation.navItems)
+            ?? navigation.chapters.first?.relativePath
+            ?? "index.md"
+        history = [initialPath]
+        historyIndex = 0
+        renderChapter(initialPath, recordHistory: false)
     }
 
     func reload() {
-        reloadToken = UUID()
+        guard let path = currentChapterPath else { return }
+        renderChapter(path, recordHistory: false)
     }
 
-    func goBack() { goBackToken = UUID() }
-    func goForward() { goForwardToken = UUID() }
-
-    func navigate(to url: URL) {
-        navigateURL = url
-        navigateToken = UUID()
+    func goBack() {
+        guard historyIndex > 0 else { return }
+        historyIndex -= 1
+        renderChapter(history[historyIndex], recordHistory: false)
     }
 
-    func updateChapterNav(_ items: [ChapterNavItem]) {
-        if !items.isEmpty { chapterNav = items }
+    func goForward() {
+        guard historyIndex + 1 < history.count else { return }
+        historyIndex += 1
+        renderChapter(history[historyIndex], recordHistory: false)
+    }
+
+    func navigateToChapter(_ relativePath: String) {
+        let normalized = ChapterResolver.normalizedDocsRelativeMarkdownPath(relativePath)
+        renderChapter(normalized, recordHistory: true)
+    }
+
+    func handleInternalLink(_ url: URL) {
+        if url.scheme == "bookloop", url.host == "chapter",
+           let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let path = components.queryItems?.first(where: { $0.name == "path" })?.value {
+            navigateToChapter(path)
+            return
+        }
+
+        if url.isFileURL, url.pathExtension.lowercased() == "md", let book {
+            let docsPath = URL(fileURLWithPath: book.docsPath ?? book.suggestedPath("docs"), isDirectory: true).standardizedFileURL.path
+            let filePath = url.standardizedFileURL.path
+            if filePath.hasPrefix(docsPath + "/") {
+                let relative = String(filePath.dropFirst(docsPath.count + 1))
+                navigateToChapter(relative)
+            }
+        }
     }
 
     func openInBrowser() {
-        guard let url = currentURL ?? previewURL else { return }
+        guard let url = currentURL else { return }
         NSWorkspace.shared.open(url)
     }
 
     func handlePageLoaded(_ webView: WKWebView) {
         self.webView = webView
+        canGoBack = historyIndex > 0
+        canGoForward = historyIndex + 1 < history.count
     }
 
     func captureSelectedText() async {
@@ -332,6 +284,68 @@ final class BookPreviewModel: ObservableObject {
         do {
             let result = try await webView.evaluateJavaScript("window.getSelection()?.toString()")
             selectedText = (result as? String)?.nilIfBlank
+        } catch {
+            loadError = error.localizedDescription
+        }
+    }
+
+    func setAutoRefreshEnabled(_ enabled: Bool) {
+        autoRefreshEnabled = enabled
+        autoRefreshTask?.cancel()
+        guard enabled else { return }
+        autoRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                await self?.pollForChapterChanges()
+            }
+        }
+    }
+
+    private func pollForChapterChanges() async {
+        guard autoRefreshEnabled,
+              let book,
+              let path = currentChapterPath else { return }
+        let docsURL = URL(fileURLWithPath: book.docsPath ?? book.suggestedPath("docs"), isDirectory: true)
+        let fileURL = docsURL.appendingPathComponent(path)
+        guard let modified = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else {
+            return
+        }
+        if let lastRenderedModificationDate, modified <= lastRenderedModificationDate {
+            return
+        }
+        renderChapter(path, recordHistory: false)
+    }
+
+    private func renderChapter(_ relativePath: String, recordHistory: Bool) {
+        guard let book else { return }
+        do {
+            let rendered = try renderer.renderChapter(book: book, relativePath: relativePath)
+            renderedHTML = rendered.html
+            renderedBaseURL = rendered.baseDirectory
+            renderContentID = UUID()
+            currentChapterPath = rendered.relativePath
+            pageTitle = rendered.title
+            detectedChapterID = rendered.chapterID
+            currentURL = URLHelpers.bookloopChapterURL(for: rendered.relativePath)
+            loadError = nil
+
+            let fileURL = rendered.baseDirectory.appendingPathComponent(rendered.relativePath)
+            lastRenderedModificationDate = try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+
+            if recordHistory {
+                if historyIndex >= 0 && historyIndex + 1 < history.count {
+                    history.removeSubrange((historyIndex + 1)...)
+                }
+                if history.last != rendered.relativePath {
+                    history.append(rendered.relativePath)
+                    historyIndex = history.count - 1
+                }
+            } else if historyIndex >= 0 {
+                history[historyIndex] = rendered.relativePath
+            }
+
+            canGoBack = historyIndex > 0
+            canGoForward = historyIndex + 1 < history.count
         } catch {
             loadError = error.localizedDescription
         }

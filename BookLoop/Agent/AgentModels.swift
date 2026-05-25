@@ -49,7 +49,7 @@ struct AgentResult: Equatable {
 
 enum AgentPromptBuilder {
     static let systemPrompt = """
-    You are BookLoop Agent, a careful local editing agent for a MkDocs-based technical book.
+    You are BookLoop Agent, a careful local editing agent for a technical book project.
     You are not inside an IDE. You can only inspect and modify the project through the tools provided by BookLoop.
     Rules:
     - Read before editing.
@@ -162,7 +162,7 @@ enum AgentToolRegistry {
                 "old_text": prop("string", "Exact text to replace"),
                 "new_text": prop("string", "Replacement text")
             ], required: ["path", "old_text", "new_text"]),
-            tool(name: "run_build", description: "Run the configured mkdocs build command.", properties: [:], required: []),
+            tool(name: "run_build", description: "Run the configured validation/build command.", properties: [:], required: []),
             tool(name: "get_git_status", description: "Return git status --porcelain.", properties: [:], required: []),
             tool(name: "get_git_diff", description: "Return git diff for the project.", properties: [:], required: [])
         ]

@@ -1,7 +1,7 @@
 # BookLoop
 
-BookLoop is a native macOS companion for MkDocs books. It is designed as a
-local-first AI/Human revision cockpit: read the rendered book, capture
+BookLoop is a native macOS companion for technical book projects. It is designed as a
+local-first AI/Human revision cockpit: read chapters with built-in Markdown preview, capture
 structured feedback, generate Cursor-ready revision tasks, inspect proposed
 patches, and apply approved diffs safely.
 
@@ -14,7 +14,7 @@ review before apply.
 
 ```text
 my-book/
-  mkdocs.yml
+  nav.yaml
   docs/
     index.md
     chapters/
@@ -35,18 +35,19 @@ my-book/
     sessions/
 ```
 
-## Start MkDocs
+## Native preview
 
-From the book root:
+BookLoop renders `docs/**/*.md` in-app using bundled Markdown and KaTeX assets. No external preview server is required.
 
-```bash
-mkdocs serve
-```
+Navigation comes from a root-level `nav.yaml` file (BookLoop falls back to the `nav:` section in `mkdocs.yml` if `nav.yaml` is missing).
 
-BookLoop defaults the preview URL to:
+Example `nav.yaml`:
 
-```text
-http://127.0.0.1:8000
+```yaml
+nav:
+  - Home: index.md
+  - Part One:
+    - Intro: part-one/intro.md
 ```
 
 ## Save feedback locally
@@ -82,10 +83,10 @@ The agent is optional. Core workflows (feedback, tasks, patches) work without it
 
 ## Add a book in BookLoop
 
-Use the sidebar Add button and select the MkDocs project root. Defaults:
+Use the sidebar Add button and select the book project root. Defaults:
 
 ```text
-Preview URL: http://127.0.0.1:8000
+Navigation: nav.yaml
 Review items: reviews/review_items/
 ```
 
@@ -154,7 +155,7 @@ scheme.
 3. **Target platform and technology**: Swift, SwiftUI, WKWebView, URLSession, Codable, async/await, FileManager, and guarded Process usage; no external packages.
 4. **App name**: Xcode product, bundle display name, target, and window title use `BookLoop`.
 5. **High-level architecture**: Book library, preview, feedback client, review browser, figure manager, task generator, patch manager, and native OpenAI agent with Swift tools are implemented.
-6. **Important local APIs**: MkDocs preview health check; optional OpenAI for Chapter Chat and Native Agent.
+6. **Important local APIs**: Native Markdown preview; optional OpenAI for Chapter Chat and Native Agent.
 7. **Book configuration**: `BookConfig` includes the requested paths, commands, notes, defaults, existing-path inference, and suggested-path filling.
 8. **Persistence**: Book library and selected book ID persist to `~/Library/Application Support/BookLoop/books.json` with auto-save on store updates.
 9. **Main app layout**: Native three-pane `NavigationSplitView` with sidebar, tabbed workspace, and workflow inspector.
@@ -170,7 +171,7 @@ scheme.
 19. **Native Agent**: OpenAI tool-calling loop with list/read/search/stage-patch/build/git tools; exports proposals to `bookloop/patches/`; `.bookloop/config.json` and session logging.
 20. **Patch management**: Scans `.patch`/`.diff`, parses unified diffs, renders before/after HTML blocks, supports block-level accept/reject, creates accepted-block reviewed patches, shows git status/preflight checks, safely applies, and archives rejected patches.
 21. **Markdown editing**: Full native editing is intentionally out of v1; current chapter Markdown can be opened externally or revealed in Finder.
-22. **Chapter discovery**: Best-effort scanner reads `mkdocs.yml` nav entries, scans `docs/**/*.md`, and uses Markdown frontmatter IDs/titles.
+22. **Chapter discovery**: Reads `nav.yaml` (or legacy `mkdocs.yml` nav), scans `docs/**/*.md`, and uses Markdown frontmatter IDs/titles.
 23. **Figure management**: Scans Markdown references, output assets, source scripts, and `bookloop/figures.json`; detects missing, stale, unreferenced, and registered figures.
 24. **Figure proposal workflow**: Figure tasks request reproducible sources, output assets, captions, insertion patches, and validation.
 25. **Validation**: Generates validation tasks and can run a configured validation command asynchronously only when shell commands are enabled and confirmed.
@@ -181,6 +182,6 @@ scheme.
 30. **Implementation order**: The branch was built in the requested sequence: shell, library, preview, feedback, chapter detection, reviews, tasks, figures, patches, and polish.
 31. **UI details**: Uses native sidebar sections, toolbar actions, status badges, inspector panels, tabs, empty states, and restrained styling.
 32. **Error handling**: Missing folders, offline APIs, invalid URLs, bad patches, permission issues, and command failures are surfaced as empty states or messages.
-33. **README**: This README documents expected structure, MkDocs startup, local feedback, BookLoop setup, workflow, patch safety, and build instructions.
+33. **README**: This README documents expected structure, native preview, local feedback, BookLoop setup, workflow, patch safety, and build instructions.
 34. **Acceptance criteria**: The app covers all listed v1 acceptance criteria in source; macOS runtime verification requires Xcode on macOS 14+.
-35. **Non-goals for v1**: Rich Markdown editing, collaboration, automatic AI rewriting without review, and a custom MkDocs renderer are intentionally excluded. External Cursor CLI harness is replaced by the native agent.
+35. **Non-goals for v1**: Rich Markdown editing, collaboration, and automatic AI rewriting without review are intentionally excluded. External Cursor CLI harness is replaced by the native agent.

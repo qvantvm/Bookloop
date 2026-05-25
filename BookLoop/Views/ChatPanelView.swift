@@ -145,7 +145,7 @@ final class ChatPanelModel: ObservableObject {
             OpenAIChatMessage(
                 role: "system",
                 content: """
-                You are a reading assistant helping the user understand the current MkDocs book chapter. \
+                You are a reading assistant helping the user understand the current book chapter. \
                 Answer using the provided page content and the conversation so far. \
                 If the answer is not in the page, say so clearly.
                 """

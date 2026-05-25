@@ -25,7 +25,7 @@ struct BookProjectConfig: Codable, Equatable {
         "docs/**/*.yml",
         "docs/*.yaml",
         "docs/**/*.yaml",
-        "mkdocs.yml",
+        "nav.yaml",
         "reviews/*.md",
         "reviews/**/*.md"
     ]
@@ -35,8 +35,8 @@ struct BookProjectConfig: Codable, Equatable {
             projectName: book.displayName,
             contentRoot: "docs",
             reviewRoot: "reviews/review_items",
-            buildCommand: book.validationCommand?.nilIfBlank ?? "mkdocs build",
-            previewCommand: book.mkdocsServeCommand?.nilIfBlank ?? "mkdocs serve",
+            buildCommand: book.validationCommand?.nilIfBlank ?? "",
+            previewCommand: "",
             protectedPaths: [".git", ".env", "secrets", ".bookloop"],
             allowedWriteGlobs: standardWriteGlobs,
             agent: BookProjectAgentConfig(model: nil)

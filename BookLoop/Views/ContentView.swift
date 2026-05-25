@@ -16,7 +16,6 @@ struct ContentView: View {
     @StateObject private var agentPanelModel = AgentPanelModel()
 
     @State private var workspaceMode: WorkspaceMode = .reading
-    @State private var previewStatus: LocalAPIStatus = .unknown
     @State private var editingBook: BookConfig?
     @State private var showingAppSettings = false
     @State private var isSidebarVisible = true
@@ -74,13 +73,6 @@ struct ContentView: View {
                 } label: {
                     Label("Refresh", systemImage: "arrow.clockwise")
                 }
-                Button {
-                    Task {
-                        await checkPreview()
-                    }
-                } label: {
-                    Label("Check Preview", systemImage: "network")
-                }
             }
         }
     }
@@ -90,13 +82,13 @@ struct ContentView: View {
             workspaceMode: $workspaceMode,
             showingAppSettings: $showingAppSettings,
             isSidebarVisible: $isSidebarVisible,
-            previewStatus: previewStatus,
+            previewStatus: previewModel.previewStatus,
             chapterItems: effectiveChapterNav,
-            currentURL: previewModel.currentURL ?? previewModel.previewURL,
+            currentChapterPath: previewModel.currentChapterPath,
             addBook: addBookFromPanel,
             editBook: beginEditingSelectedBook,
             deleteBook: deleteSelectedBook,
-            onChapterSelect: { url in previewModel.navigate(to: url) }
+            onChapterSelect: { path in previewModel.navigateToChapter(path) }
         )
         .environmentObject(library)
         .environmentObject(projectStore)
@@ -163,6 +155,9 @@ struct ContentView: View {
         if !previewModel.chapterNav.isEmpty {
             return previewModel.chapterNav
         }
+        if !projectStore.chapterNav.isEmpty {
+            return projectStore.chapterNav
+        }
         return projectStore.chapters.map { chapter in
             ChapterNavItem(
                 id: chapter.id,
@@ -181,18 +176,25 @@ struct ContentView: View {
         taskStore.refresh(book: book)
         patchStore.refresh(book: book)
         bookProjectStore.refresh(book: book, currentChapterID: previewModel.detectedChapterID)
-        previewStatus = .unknown
 
         guard let book else {
             previewModel.reset()
             chatModel.reset()
             return
         }
-        previewModel.load(book: book)
+
+        if let navigation = projectStore.navigationResult {
+            previewModel.load(book: book, navigation: navigation)
+        } else {
+            previewModel.reset()
+            previewModel.book = book
+            previewModel.loadError = projectStore.errorMessage ?? "Could not load navigation."
+            previewModel.previewStatus = PreviewHealthChecker().check(book: book)
+        }
     }
 
     private func addBookFromPanel() {
-        guard let path = PathPicker.pickDirectory(title: "Choose MkDocs Project Root", initialPath: nil) else { return }
+        guard let path = PathPicker.pickDirectory(title: "Choose Book Project Root", initialPath: nil) else { return }
         var book = BookConfig.defaults(projectRootPath: path)
         book.displayName = URL(fileURLWithPath: path, isDirectory: true).lastPathComponent
         book.refreshProjectRootBookmark()
@@ -208,15 +210,6 @@ struct ContentView: View {
         guard let book = library.selectedBook else { return }
         library.deleteBook(book)
         refreshProjectState()
-    }
-
-    private func checkPreview() async {
-        guard let book = library.selectedBook else {
-            previewStatus = .notConfigured
-            return
-        }
-        previewStatus = .checking
-        previewStatus = await PreviewHealthChecker().check(previewURL: book.previewURL)
     }
 }
 
@@ -275,7 +268,7 @@ struct ToolWorkspaceView: View {
             } else {
                 EmptyStateView(
                     title: "No Books Configured",
-                    message: "Add a local MkDocs project to use \(tool.rawValue).",
+                    message: "Add a local book project to use \(tool.rawValue).",
                     systemImage: "books.vertical"
                 )
             }
