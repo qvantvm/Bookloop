@@ -77,7 +77,7 @@ struct AppSettingsView: View {
             try settingsStore.save(openAIModel: draftModel, apiKey: draftAPIKey)
             settingsStore.saveAgentSettings()
             draftAPIKey = ""
-            saveMessage = "Settings saved."
+            saveMessage = "Settings saved. If macOS asked for your keychain password, click Always Allow once — or re-save your API key to stop future prompts."
             saveIsError = false
         } catch {
             saveMessage = error.localizedDescription

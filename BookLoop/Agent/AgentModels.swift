@@ -48,7 +48,7 @@ struct AgentResult: Equatable {
 }
 
 enum AgentPromptBuilder {
-    static let systemPrompt = """
+    private static let baseSystemPrompt = """
     You are BookLoop Agent, a careful local editing agent for a technical book project.
     You are not inside an IDE. You can only inspect and modify the project through the tools provided by BookLoop.
     Rules:
@@ -67,6 +67,19 @@ enum AgentPromptBuilder {
     - Always return a concise summary, staged files, and unresolved issues.
     """
 
+    static func systemPrompt(for book: BookConfig) -> String {
+        var lines = [baseSystemPrompt.trimmingCharacters(in: .whitespacesAndNewlines)]
+        if let relative = BookLLMsContext.relativePath(for: book) {
+            lines.append("Book context file: \(relative). A summary is included below; use read_file on chapter markdown for full source text.")
+        }
+        if let excerpt = BookLLMsContext.promptExcerpt(for: book) {
+            lines.append("")
+            lines.append("--- llms.txt ---")
+            lines.append(excerpt)
+        }
+        return lines.joined(separator: "\n")
+    }
+
     static func taskPrompt(task: AgentTask, project: BookProject) -> String {
         var lines = ["Task type: \(task.type.displayName)"]
         if !task.instruction.isEmpty {
@@ -75,6 +88,9 @@ enum AgentPromptBuilder {
         lines.append("Project summary: \(project.projectMap.compactSummary)")
         if let chapter = project.currentChapterID?.nilIfBlank {
             lines.append("Current chapter ID: \(chapter)")
+        }
+        if let relative = BookLLMsContext.relativePath(for: project.book) {
+            lines.append("llms.txt: \(relative)")
         }
         lines.append("Build command: \(project.config.buildCommand)")
         lines.append("Patch output directory: \(project.book.patchDirectoryPath)")

@@ -27,6 +27,8 @@ struct BookProjectConfig: Codable, Equatable {
         "docs/**/*.yaml",
         "bookloop.yml",
         "bookloop.yaml",
+        "llms.txt",
+        "static/llms.txt",
         "nav.yml",
         "nav.yaml",
         "reviews/*.md",

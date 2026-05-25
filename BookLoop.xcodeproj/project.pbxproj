@@ -44,6 +44,8 @@
 		101000000000000000000029 /* BookStylesheetResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000002A /* BookStylesheetResolver.swift */; };
 		10100000000000000000002A /* BookloopYamlConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000002B /* BookloopYamlConfig.swift */; };
 		10100000000000000000002B /* BookloopThemeCSSGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000002C /* BookloopThemeCSSGenerator.swift */; };
+		10100000000000000000002D /* BookLLMsContext.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000002E /* BookLLMsContext.swift */; };
+		10100000000000000000002E /* BookLLMsTxtGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000002F /* BookLLMsTxtGenerator.swift */; };
 		10100000000000000000002C /* material-typeset.css in Resources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000002D /* material-typeset.css */; };
 		101000000000000000000023 /* preview.css in Resources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000024 /* preview.css */; };
 		101000000000000000000024 /* preview.js in Resources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000025 /* preview.js */; };
@@ -93,6 +95,8 @@
 		10200000000000000000002A /* BookStylesheetResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookStylesheetResolver.swift; sourceTree = "<group>"; };
 		10200000000000000000002B /* BookloopYamlConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookloopYamlConfig.swift; sourceTree = "<group>"; };
 		10200000000000000000002C /* BookloopThemeCSSGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookloopThemeCSSGenerator.swift; sourceTree = "<group>"; };
+		10200000000000000000002E /* BookLLMsContext.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookLLMsContext.swift; sourceTree = "<group>"; };
+		10200000000000000000002F /* BookLLMsTxtGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookLLMsTxtGenerator.swift; sourceTree = "<group>"; };
 		10200000000000000000002D /* material-typeset.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = material-typeset.css; sourceTree = "<group>"; };
 		102000000000000000000024 /* preview.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = preview.css; sourceTree = "<group>"; };
 		102000000000000000000025 /* preview.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = preview.js; sourceTree = "<group>"; };
@@ -214,6 +218,8 @@
 			isa = PBXGroup;
 			children = (
 				102000000000000000000014 /* BookProjectConfig.swift */,
+				10200000000000000000002E /* BookLLMsContext.swift */,
+				10200000000000000000002F /* BookLLMsTxtGenerator.swift */,
 				102000000000000000000015 /* ProjectMap.swift */,
 				102000000000000000000016 /* ProjectPathGuard.swift */,
 				102000000000000000000017 /* ProjectScanner.swift */,
@@ -395,6 +401,8 @@
 				101000000000000000000029 /* BookStylesheetResolver.swift in Sources */,
 				10100000000000000000002A /* BookloopYamlConfig.swift in Sources */,
 				10100000000000000000002B /* BookloopThemeCSSGenerator.swift in Sources */,
+				10100000000000000000002D /* BookLLMsContext.swift in Sources */,
+				10100000000000000000002E /* BookLLMsTxtGenerator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

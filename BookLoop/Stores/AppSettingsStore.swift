@@ -15,6 +15,7 @@ final class AppSettingsStore: ObservableObject {
     }
 
     private(set) var apiKey: String = ""
+    private var didLoadKeychain = false
 
     func load() {
         openAIModel = UserDefaults.standard.string(forKey: Self.modelKey) ?? "gpt-4.1"
@@ -26,8 +27,14 @@ final class AppSettingsStore: ObservableObject {
            let mode = PreviewColorSchemeMode(rawValue: raw) {
             previewColorScheme = mode
         }
+        reloadKeychainIfNeeded()
+    }
+
+    func reloadKeychainIfNeeded(force: Bool = false) {
+        guard force || !didLoadKeychain else { return }
         apiKey = KeychainStore.loadOpenAIAPIKey() ?? ""
         hasAPIKey = !apiKey.isEmpty
+        didLoadKeychain = true
     }
 
     func save(openAIModel: String, apiKey: String) throws {
@@ -36,6 +43,7 @@ final class AppSettingsStore: ObservableObject {
             try KeychainStore.saveOpenAIAPIKey(trimmedKey)
             self.apiKey = trimmedKey
             hasAPIKey = true
+            didLoadKeychain = true
         }
 
         let trimmedModel = openAIModel.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -52,6 +60,7 @@ final class AppSettingsStore: ObservableObject {
         KeychainStore.deleteOpenAIAPIKey()
         apiKey = ""
         hasAPIKey = false
+        didLoadKeychain = true
     }
 
     private func persistAgentSettings() {

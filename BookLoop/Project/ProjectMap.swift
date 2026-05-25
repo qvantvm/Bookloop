@@ -4,6 +4,7 @@ enum ProjectFileKind: String, Codable, Equatable {
     case chapter
     case review
     case config
+    case llmsContext
     case stylesheet
     case script
     case other

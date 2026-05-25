@@ -15,6 +15,7 @@ review before apply.
 ```text
 my-book/
   bookloop.yml
+  llms.txt                 ← optional book-wide LLM context (or static/llms.txt)
   docs/
     index.md
     chapters/
@@ -38,6 +39,8 @@ my-book/
 ## Native preview
 
 BookLoop renders `docs/**/*.md` in-app using bundled Markdown and KaTeX assets. No external preview server is required.
+
+Optional `llms.txt` at the book root (or `static/llms.txt`) provides book-wide context for Chapter Chat and the native Agent. BookLoop generates `llms.txt` automatically when it is missing. No `scripts/` folder is required.
 
 Navigation, theme colors, and optional `extra_css` come from a root-level `bookloop.yml` file. BookLoop still reads legacy `nav.yml` or `mkdocs.yml` if `bookloop.yml` is missing.
 

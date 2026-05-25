@@ -52,7 +52,7 @@ final class ChatPanelModel: ObservableObject {
         )
     }
 
-    func sendMessage(webView: WKWebView?, settingsStore: AppSettingsStore) async {
+    func sendMessage(webView: WKWebView?, settingsStore: AppSettingsStore, book: BookConfig?) async {
         let text = draftMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
@@ -70,7 +70,7 @@ final class ChatPanelModel: ObservableObject {
 
         do {
             let pageContent = await WebView.extractPageContent(in: webView)
-            let openAIMessages = buildOpenAIMessages(pageContent: pageContent, latestUserMessage: text)
+            let openAIMessages = buildOpenAIMessages(pageContent: pageContent, latestUserMessage: text, book: book)
             let reply = try await openAIClient.sendChat(
                 apiKey: settingsStore.apiKey,
                 model: settingsStore.openAIModel,
@@ -140,15 +140,20 @@ final class ChatPanelModel: ObservableObject {
         sessions[pageContext.pageKey] = messages
     }
 
-    private func buildOpenAIMessages(pageContent: String, latestUserMessage: String) -> [OpenAIChatMessage] {
+    private func buildOpenAIMessages(pageContent: String, latestUserMessage: String, book: BookConfig?) -> [OpenAIChatMessage] {
+        var systemContent = """
+        You are a reading assistant helping the user understand the current book chapter. \
+        Answer using the provided page content, book-wide llms.txt context when present, and the conversation so far. \
+        If the answer is not in the page, say so clearly.
+        """
+        if let excerpt = book.flatMap({ BookLLMsContext.promptExcerpt(for: $0) }) {
+            systemContent += "\n\nBook-wide context from llms.txt:\n\(excerpt)"
+        }
+
         var result: [OpenAIChatMessage] = [
             OpenAIChatMessage(
                 role: "system",
-                content: """
-                You are a reading assistant helping the user understand the current book chapter. \
-                Answer using the provided page content and the conversation so far. \
-                If the answer is not in the page, say so clearly.
-                """
+                content: systemContent
             ),
             OpenAIChatMessage(
                 role: "user",
@@ -291,7 +296,11 @@ struct ChatPanelView: View {
 
             Button("Send") {
                 Task {
-                    await model.sendMessage(webView: previewModel.webView, settingsStore: settingsStore)
+                    await model.sendMessage(
+                        webView: previewModel.webView,
+                        settingsStore: settingsStore,
+                        book: library.selectedBook
+                    )
                 }
             }
             .disabled(!model.canSendMessage || !settingsStore.hasAPIKey)

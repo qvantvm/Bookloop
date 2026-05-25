@@ -71,7 +71,7 @@ final class BookAgent {
         )
 
         var messages: [OpenAIAssistantMessage] = [
-            OpenAIAssistantMessage(role: "system", content: AgentPromptBuilder.systemPrompt, tool_calls: nil, tool_call_id: nil),
+            OpenAIAssistantMessage(role: "system", content: AgentPromptBuilder.systemPrompt(for: project.book), tool_calls: nil, tool_call_id: nil),
             OpenAIAssistantMessage(role: "user", content: AgentPromptBuilder.taskPrompt(task: task, project: project), tool_calls: nil, tool_call_id: nil)
         ]
 

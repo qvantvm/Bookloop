@@ -13,7 +13,7 @@ final class SearchIndex {
     func rebuild(from map: ProjectMap, book: BookConfig, config: BookProjectConfig) throws {
         let guard_ = pathGuard(book: book, config: config)
         var docs: [IndexedDocument] = []
-        for entry in map.files where entry.kind == .chapter || entry.kind == .review || entry.kind == .config {
+        for entry in map.files where entry.kind == .chapter || entry.kind == .review || entry.kind == .config || entry.kind == .llmsContext {
             if guard_.isProtected(relativePath: entry.relativePath) { continue }
             guard let url = try? guard_.validateRead(entry.relativePath),
                   let text = try? String(contentsOf: url, encoding: .utf8) else { continue }

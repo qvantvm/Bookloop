@@ -7,17 +7,11 @@ enum KeychainStore {
 
     static func saveOpenAIAPIKey(_ key: String) throws {
         let data = Data(key.utf8)
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: openAIKeyAccount
-        ]
+        deleteOpenAIAPIKey()
 
-        SecItemDelete(query as CFDictionary)
-
-        var addQuery = query
+        var addQuery = baseQuery()
         addQuery[kSecValueData as String] = data
-        addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+        addQuery[kSecAttrAccessControl as String] = try makeAccessControl()
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         guard status == errSecSuccess else {
@@ -26,13 +20,10 @@ enum KeychainStore {
     }
 
     static func loadOpenAIAPIKey() -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: openAIKeyAccount,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
+        var query = baseQuery()
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUISkip
 
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
@@ -46,22 +37,42 @@ enum KeychainStore {
     }
 
     static func deleteOpenAIAPIKey() {
-        let query: [String: Any] = [
+        SecItemDelete(baseQuery() as CFDictionary)
+    }
+
+    private static func baseQuery() -> [String: Any] {
+        [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: openAIKeyAccount
         ]
-        SecItemDelete(query as CFDictionary)
+    }
+
+    private static func makeAccessControl() throws -> SecAccessControl {
+        var error: Unmanaged<CFError>?
+        guard let control = SecAccessControlCreateWithFlags(
+            nil,
+            kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            [],
+            &error
+        ) else {
+            let reason = (error?.takeRetainedValue() as Error?)?.localizedDescription ?? "unknown"
+            throw KeychainError.accessControlFailed(reason)
+        }
+        return control
     }
 }
 
 enum KeychainError: LocalizedError {
     case unhandled(OSStatus)
+    case accessControlFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .unhandled(let status):
             return "Keychain error (\(status))."
+        case .accessControlFailed(let reason):
+            return "Keychain access control could not be created (\(reason))."
         }
     }
 }

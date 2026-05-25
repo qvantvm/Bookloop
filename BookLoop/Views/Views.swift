@@ -1496,6 +1496,7 @@ struct BookSettingsView: View {
 struct BookSettingsForm: View {
     @Binding var draft: BookConfig
     @State private var migrationMessage: String?
+    @State private var llmsMessage: String?
 
     var body: some View {
         Form {
@@ -1507,6 +1508,21 @@ struct BookSettingsForm: View {
 
             Section("Paths") {
                 PathField(title: "bookloop.yml", path: $draft.bookloopConfigPath, isDirectory: false)
+                PathField(title: "llms.txt", path: $draft.llmsTxtPath, isDirectory: false)
+                Button(hasLLMsTxt ? "Regenerate llms.txt" : "Generate llms.txt") {
+                    generateLLMsTxt()
+                }
+                .disabled(draft.projectRootPath.isEmpty)
+                if !hasLLMsTxt {
+                    Text("Missing llms.txt. BookLoop can generate one from bookloop.yml nav and chapter frontmatter.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let llmsMessage {
+                    Text(llmsMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if showsBookloopMigrationButton {
                     Button("Create bookloop.yml from mkdocs.yml") {
                         migrateBookloopYAML()
@@ -1551,6 +1567,20 @@ struct BookSettingsForm: View {
         }
         .formStyle(.grouped)
         .padding()
+    }
+
+    private var hasLLMsTxt: Bool {
+        BookLLMsContext.resolvePath(for: draft) != nil
+    }
+
+    private func generateLLMsTxt() {
+        do {
+            let generated = try BookLLMsTxtGenerator.write(for: draft)
+            draft.llmsTxtPath = generated.absolutePath
+            llmsMessage = "Wrote \(generated.relativePath)."
+        } catch {
+            llmsMessage = error.localizedDescription
+        }
     }
 
     private var showsBookloopMigrationButton: Bool {

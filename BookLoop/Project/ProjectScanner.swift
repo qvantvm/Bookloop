@@ -27,14 +27,12 @@ final class ProjectScanner {
             scanDirectory(contentRootURL, rootURL: rootURL, kind: .chapter, into: &entries)
         }
 
-        let navURL = rootURL.appendingPathComponent("bookloop.yml")
-        if fm.fileExists(atPath: navURL.path) {
-            addFile(url: navURL, rootURL: rootURL, kind: .config, into: &entries)
+        if let configPath = BookloopYamlConfig.resolveConfigPath(for: book) {
+            addFile(url: URL(fileURLWithPath: configPath), rootURL: rootURL, kind: .config, into: &entries)
         }
 
-        let scriptsURL = rootURL.appendingPathComponent("scripts")
-        if fm.fileExists(atPath: scriptsURL.path) {
-            scanDirectory(scriptsURL, rootURL: rootURL, kind: .script, into: &entries)
+        if let llmsPath = BookLLMsContext.resolvePath(for: book) {
+            addFile(url: URL(fileURLWithPath: llmsPath), rootURL: rootURL, kind: .llmsContext, into: &entries)
         }
 
         let reviewRootURL = rootURL.appendingPathComponent(config.reviewRoot)

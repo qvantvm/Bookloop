@@ -96,6 +96,7 @@ BookLoop expects a typical book layout with Markdown under `docs/` and a root `b
 ```text
 my-book/
   bookloop.yml
+  llms.txt                 ← optional LLM context (legacy: static/llms.txt)
   docs/
     index.md
     chapters/
@@ -117,7 +118,9 @@ my-book/
       archive/             ← rejected patches moved here
 ```
 
-You do not need every folder on day one. BookLoop can infer or suggest paths when you configure a book.
+You do not need every folder on day one. BookLoop can infer or suggest paths when you configure a book. A `scripts/` folder is **not** required — reviews, tasks, and agent tools are built into BookLoop.
+
+Optional **`llms.txt`** (or legacy `static/llms.txt`) summarizes the book for Chapter Chat and the native Agent. BookLoop loads it automatically when present, or generates `llms.txt` at the book root on first use if it is missing.
 
 If you still have `mkdocs.yml` or `nav.yml` but no `bookloop.yml`, BookLoop reads the legacy file and shows a banner suggesting migration. Use **Create bookloop.yml from mkdocs.yml** in book settings to copy nav, theme, and related settings.
 

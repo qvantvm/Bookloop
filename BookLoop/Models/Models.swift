@@ -6,6 +6,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
     var projectRootPath: String
     var projectRootBookmark: Data?
     var bookloopConfigPath: String?
+    var llmsTxtPath: String?
     var docsPath: String?
     var reviewsPath: String?
     var reviewItemsPath: String?
@@ -33,6 +34,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
             projectRootPath: projectRootPath,
             projectRootBookmark: nil,
             bookloopConfigPath: nil,
+            llmsTxtPath: nil,
             docsPath: nil,
             reviewsPath: nil,
             reviewItemsPath: nil,
@@ -72,6 +74,9 @@ struct BookConfig: Identifiable, Codable, Equatable {
             ?? existing("nav.yaml", directory: false)
             ?? existing("mkdocs.yml", directory: false)
             ?? bookloopConfigPath
+        llmsTxtPath = existing("llms.txt", directory: false)
+            ?? existing("static/llms.txt", directory: false)
+            ?? llmsTxtPath
         docsPath = existing("docs", directory: true) ?? docsPath
         reviewsPath = existing("reviews", directory: true) ?? reviewsPath
         reviewItemsPath = existing("reviews/review_items", directory: true) ?? reviewItemsPath
@@ -119,6 +124,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
     mutating func fillSuggestedPaths() {
         guard !projectRootPath.isEmpty else { return }
         bookloopConfigPath = bookloopConfigPath ?? preferredBookloopConfigPath()
+        llmsTxtPath = llmsTxtPath ?? BookLLMsContext.resolvePath(for: self)
         docsPath = docsPath ?? suggestedPath("docs")
         reviewsPath = reviewsPath ?? suggestedPath("reviews")
         reviewItemsPath = reviewItemsPath ?? suggestedPath("reviews/review_items")
@@ -163,6 +169,7 @@ extension BookConfig {
     enum CodingKeys: String, CodingKey {
         case id, displayName, projectRootPath, projectRootBookmark
         case bookloopConfigPath, navConfigPath
+        case llmsTxtPath
         case docsPath, reviewsPath, reviewItemsPath, cumulativeReviewPath
         case figuresSourcePath, figuresOutputPath, bookloopPath, styleGuidePath
         case figuresRegistryPath, figureGenerationCommand, validationCommand
@@ -177,6 +184,7 @@ extension BookConfig {
         projectRootBookmark = try container.decodeIfPresent(Data.self, forKey: .projectRootBookmark)
         bookloopConfigPath = try container.decodeIfPresent(String.self, forKey: .bookloopConfigPath)
             ?? container.decodeIfPresent(String.self, forKey: .navConfigPath)
+        llmsTxtPath = try container.decodeIfPresent(String.self, forKey: .llmsTxtPath)
         docsPath = try container.decodeIfPresent(String.self, forKey: .docsPath)
         reviewsPath = try container.decodeIfPresent(String.self, forKey: .reviewsPath)
         reviewItemsPath = try container.decodeIfPresent(String.self, forKey: .reviewItemsPath)
@@ -201,6 +209,7 @@ extension BookConfig {
         try container.encode(projectRootPath, forKey: .projectRootPath)
         try container.encodeIfPresent(projectRootBookmark, forKey: .projectRootBookmark)
         try container.encodeIfPresent(bookloopConfigPath, forKey: .bookloopConfigPath)
+        try container.encodeIfPresent(llmsTxtPath, forKey: .llmsTxtPath)
         try container.encodeIfPresent(docsPath, forKey: .docsPath)
         try container.encodeIfPresent(reviewsPath, forKey: .reviewsPath)
         try container.encodeIfPresent(reviewItemsPath, forKey: .reviewItemsPath)
