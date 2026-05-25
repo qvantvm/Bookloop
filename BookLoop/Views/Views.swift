@@ -2,486 +2,6 @@ import AppKit
 import SwiftUI
 import WebKit
 
-struct ContentView: View {
-    @EnvironmentObject private var library: BookLibraryStore
-    @StateObject private var projectStore = ProjectContentStore()
-    @StateObject private var reviewStore = ReviewStore()
-    @StateObject private var figureStore = FigureStore()
-    @StateObject private var taskStore = TaskStore()
-    @StateObject private var patchStore = PatchStore()
-    @StateObject private var webModel = WebViewModel()
-
-    @State private var selectedTab: WorkspaceTab = .preview
-    @State private var previewStatus: LocalAPIStatus = .unknown
-    @State private var feedbackStatus: LocalAPIStatus = .unknown
-    @State private var agentStatus: LocalAPIStatus = .unknown
-    @State private var editingBook: BookConfig?
-
-    var body: some View {
-        NavigationSplitView {
-            SidebarView(
-                selectedTab: $selectedTab,
-                previewStatus: previewStatus,
-                feedbackStatus: feedbackStatus,
-                agentStatus: agentStatus,
-                addBook: addBookFromPanel,
-                editBook: beginEditingSelectedBook,
-                deleteBook: deleteSelectedBook
-            )
-            .environmentObject(library)
-            .environmentObject(projectStore)
-            .environmentObject(reviewStore)
-            .environmentObject(figureStore)
-            .environmentObject(patchStore)
-            .environmentObject(taskStore)
-            .navigationSplitViewColumnWidth(min: 220, ideal: 260)
-        } content: {
-            WorkspaceView(
-                selectedTab: $selectedTab,
-                feedbackStatus: $feedbackStatus,
-                agentStatus: $agentStatus
-            )
-            .environmentObject(library)
-            .environmentObject(projectStore)
-            .environmentObject(reviewStore)
-            .environmentObject(figureStore)
-            .environmentObject(taskStore)
-            .environmentObject(patchStore)
-            .environmentObject(webModel)
-            .navigationSplitViewColumnWidth(min: 620, ideal: 820)
-        } detail: {
-            InspectorView(
-                selectedTab: $selectedTab,
-                previewStatus: $previewStatus,
-                feedbackStatus: $feedbackStatus,
-                agentStatus: $agentStatus,
-                checkPreview: checkPreview,
-                checkFeedbackAPI: checkFeedbackAPI,
-                checkAgentHarness: checkAgentHarness
-            )
-            .environmentObject(library)
-            .environmentObject(reviewStore)
-            .environmentObject(figureStore)
-            .environmentObject(taskStore)
-            .environmentObject(patchStore)
-            .environmentObject(webModel)
-            .environmentObject(projectStore)
-            .navigationSplitViewColumnWidth(min: 280, ideal: 340)
-        }
-        .sheet(item: $editingBook) { book in
-            BookSettingsView(book: book) { updated in
-                var updated = updated
-                updated.refreshProjectRootBookmark()
-                library.updateBook(updated)
-                refreshProjectState()
-                editingBook = nil
-            } onCancel: {
-                editingBook = nil
-            }
-            .frame(width: 760, height: 720)
-        }
-        .onAppear {
-            refreshProjectState()
-        }
-        .onChange(of: library.selectedBookID) {
-            refreshProjectState()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .bookLoopReloadPreview)) { _ in
-            webModel.reload()
-        }
-        .toolbar {
-            ToolbarItemGroup {
-                Button {
-                    refreshProjectState()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
-                }
-                Button {
-                    Task {
-                        await checkPreview()
-                        await checkFeedbackAPI()
-                        await checkAgentHarness()
-                    }
-                } label: {
-                    Label("Check APIs", systemImage: "network")
-                }
-            }
-        }
-    }
-
-    private func refreshProjectState() {
-        let book = library.selectedBook
-        projectStore.refresh(book: book)
-        reviewStore.refresh(book: book)
-        figureStore.refresh(book: book)
-        taskStore.refresh(book: book)
-        patchStore.refresh(book: book)
-        previewStatus = .unknown
-        feedbackStatus = .unknown
-        let hasHarness = book?.agentHarnessBaseURL?.nilIfBlank != nil || book?.cursorCLIHarnessCommand?.nilIfBlank != nil
-        agentStatus = hasHarness ? .unknown : .notConfigured
-    }
-
-    private func addBookFromPanel() {
-        guard let path = PathPicker.pickDirectory(title: "Choose MkDocs Project Root", initialPath: nil) else { return }
-        var book = BookConfig.defaults(projectRootPath: path)
-        book.displayName = URL(fileURLWithPath: path, isDirectory: true).lastPathComponent
-        book.refreshProjectRootBookmark()
-        library.addBook(book)
-        refreshProjectState()
-    }
-
-    private func beginEditingSelectedBook() {
-        editingBook = library.selectedBook
-    }
-
-    private func deleteSelectedBook() {
-        guard let book = library.selectedBook else { return }
-        library.deleteBook(book)
-        refreshProjectState()
-    }
-
-    private func checkPreview() async {
-        guard let book = library.selectedBook else {
-            previewStatus = .notConfigured
-            return
-        }
-        previewStatus = .checking
-        previewStatus = await PreviewHealthChecker().check(previewURL: book.previewURL)
-    }
-
-    private func checkFeedbackAPI() async {
-        guard let book = library.selectedBook else {
-            feedbackStatus = .notConfigured
-            return
-        }
-        feedbackStatus = .checking
-        do {
-            _ = try await FeedbackAPIClient().checkHealth(baseURL: book.feedbackAPIBaseURL)
-            feedbackStatus = .online
-        } catch {
-            feedbackStatus = .offline(error.localizedDescription)
-        }
-    }
-
-    private func checkAgentHarness() async {
-        guard let book = library.selectedBook else {
-            agentStatus = .notConfigured
-            return
-        }
-        if let commandTemplate = book.cursorCLIHarnessCommand?.nilIfBlank {
-            agentStatus = .checking
-            agentStatus = AgentHarnessClient().checkCursorCLI(commandTemplate: commandTemplate, workingDirectory: book.projectRootPath)
-            return
-        }
-        guard let baseURL = book.agentHarnessBaseURL?.nilIfBlank else {
-            agentStatus = .notConfigured
-            return
-        }
-        agentStatus = .checking
-        do {
-            _ = try await AgentHarnessClient().checkHealth(baseURL: baseURL)
-            agentStatus = .online
-        } catch {
-            agentStatus = .offline(error.localizedDescription)
-        }
-    }
-}
-
-struct SidebarView: View {
-    @EnvironmentObject private var library: BookLibraryStore
-    @EnvironmentObject private var projectStore: ProjectContentStore
-    @EnvironmentObject private var reviewStore: ReviewStore
-    @EnvironmentObject private var figureStore: FigureStore
-    @EnvironmentObject private var patchStore: PatchStore
-    @EnvironmentObject private var taskStore: TaskStore
-
-    @Binding var selectedTab: WorkspaceTab
-    let previewStatus: LocalAPIStatus
-    let feedbackStatus: LocalAPIStatus
-    let agentStatus: LocalAPIStatus
-    let addBook: () -> Void
-    let editBook: () -> Void
-    let deleteBook: () -> Void
-
-    var body: some View {
-        List(selection: $library.selectedBookID) {
-            Section("Books") {
-                ForEach(library.books) { book in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(book.displayName)
-                            .fontWeight(.medium)
-                        Text(book.projectRootPath.isEmpty ? "No project root" : book.projectRootPath)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    .tag(book.id)
-                }
-            }
-
-            if library.selectedBook != nil {
-                Section("Workspace") {
-                    ForEach(WorkspaceTab.allCases) { tab in
-                        Button {
-                            selectedTab = tab
-                        } label: {
-                            Label(tab.rawValue, systemImage: icon(for: tab))
-                        }
-                    }
-                }
-
-                Section("Status") {
-                    StatusBadge(title: "MkDocs Preview", status: previewStatus)
-                    StatusBadge(title: "Feedback API", status: feedbackStatus)
-                    StatusBadge(title: "Harness", status: agentStatus)
-                    Label("\(reviewStore.openCount) open reviews", systemImage: "text.badge.checkmark")
-                    Label("\(figureStore.staleCount) stale figures", systemImage: "photo.on.rectangle")
-                    Label("\(patchStore.proposals.count) pending patches", systemImage: "square.and.pencil")
-                    Label("\(taskStore.taskFiles.count) tasks", systemImage: "doc.text")
-                }
-
-                Section("Chapters") {
-                    ForEach(projectStore.chapters.prefix(12)) { chapter in
-                        Text(chapter.title)
-                            .lineLimit(1)
-                    }
-                    if projectStore.chapters.count > 12 {
-                        Text("\(projectStore.chapters.count - 12) more...")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            HStack {
-                Button(action: addBook) {
-                    Label("Add", systemImage: "plus")
-                }
-                Button(action: editBook) {
-                    Label("Edit", systemImage: "slider.horizontal.3")
-                }
-                .disabled(library.selectedBook == nil)
-                Button(role: .destructive, action: deleteBook) {
-                    Label("Delete", systemImage: "trash")
-                }
-                .disabled(library.selectedBook == nil)
-            }
-            .labelStyle(.iconOnly)
-            .padding(8)
-        }
-    }
-
-    private func icon(for tab: WorkspaceTab) -> String {
-        switch tab {
-        case .preview: return "safari"
-        case .reviews: return "quote.bubble"
-        case .figures: return "photo"
-        case .tasks: return "checklist"
-        case .patches: return "doc.text.magnifyingglass"
-        case .settings: return "gearshape"
-        }
-    }
-}
-
-struct WorkspaceView: View {
-    @EnvironmentObject private var library: BookLibraryStore
-    @EnvironmentObject private var projectStore: ProjectContentStore
-    @EnvironmentObject private var reviewStore: ReviewStore
-    @EnvironmentObject private var figureStore: FigureStore
-    @EnvironmentObject private var taskStore: TaskStore
-    @EnvironmentObject private var patchStore: PatchStore
-    @EnvironmentObject private var webModel: WebViewModel
-
-    @Binding var selectedTab: WorkspaceTab
-    @Binding var feedbackStatus: LocalAPIStatus
-    @Binding var agentStatus: LocalAPIStatus
-
-    var body: some View {
-        if let book = library.selectedBook {
-            TabView(selection: $selectedTab) {
-                PreviewView(book: book)
-                    .environmentObject(webModel)
-                    .tabItem { Text("Preview") }
-                    .tag(WorkspaceTab.preview)
-                ReviewBrowserView(book: book)
-                    .environmentObject(reviewStore)
-                    .environmentObject(taskStore)
-                    .environmentObject(webModel)
-                    .tabItem { Text("Reviews") }
-                    .tag(WorkspaceTab.reviews)
-                FigureBrowserView(book: book)
-                    .environmentObject(figureStore)
-                    .environmentObject(taskStore)
-                    .tabItem { Text("Figures") }
-                    .tag(WorkspaceTab.figures)
-                TaskBrowserView(book: book)
-                    .environmentObject(taskStore)
-                    .environmentObject(reviewStore)
-                    .environmentObject(webModel)
-                    .tabItem { Text("Tasks") }
-                    .tag(WorkspaceTab.tasks)
-                PatchReviewView(book: book)
-                    .environmentObject(patchStore)
-                    .tabItem { Text("Patches") }
-                    .tag(WorkspaceTab.patches)
-                BookSettingsTab(book: book)
-                    .environmentObject(library)
-                    .tabItem { Text("Settings") }
-                    .tag(WorkspaceTab.settings)
-            }
-            .padding(.top, 8)
-        } else {
-            EmptyStateView(
-                title: "No Books Configured",
-                message: "Add a local MkDocs project to start reading, reviewing, and generating revision tasks.",
-                systemImage: "books.vertical"
-            )
-        }
-    }
-}
-
-struct InspectorView: View {
-    @EnvironmentObject private var library: BookLibraryStore
-    @EnvironmentObject private var reviewStore: ReviewStore
-    @EnvironmentObject private var figureStore: FigureStore
-    @EnvironmentObject private var taskStore: TaskStore
-    @EnvironmentObject private var patchStore: PatchStore
-    @EnvironmentObject private var webModel: WebViewModel
-
-    @Binding var selectedTab: WorkspaceTab
-    @Binding var previewStatus: LocalAPIStatus
-    @Binding var feedbackStatus: LocalAPIStatus
-    @Binding var agentStatus: LocalAPIStatus
-    let checkPreview: () async -> Void
-    let checkFeedbackAPI: () async -> Void
-    let checkAgentHarness: () async -> Void
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let book = library.selectedBook {
-                    DashboardView(book: book, previewStatus: previewStatus, feedbackStatus: feedbackStatus, agentStatus: agentStatus)
-                        .environmentObject(reviewStore)
-                        .environmentObject(figureStore)
-                        .environmentObject(taskStore)
-                        .environmentObject(patchStore)
-
-                    Button("Check MkDocs Preview") {
-                        Task { await checkPreview() }
-                    }
-
-                    Divider()
-
-                    FeedbackPanelView(
-                        book: book,
-                        feedbackStatus: $feedbackStatus,
-                        checkFeedbackAPI: checkFeedbackAPI
-                    )
-                    .environmentObject(webModel)
-                    .environmentObject(reviewStore)
-
-                    Divider()
-
-                    AgentHarnessPanel(book: book, agentStatus: $agentStatus, checkAgentHarness: checkAgentHarness)
-                        .environmentObject(reviewStore)
-                } else {
-                    EmptyStateView(title: "Inspector", message: "Select or add a book to see workflow controls.", systemImage: "sidebar.right")
-                }
-            }
-            .padding()
-        }
-    }
-}
-
-struct DashboardView: View {
-    @EnvironmentObject private var reviewStore: ReviewStore
-    @EnvironmentObject private var figureStore: FigureStore
-    @EnvironmentObject private var taskStore: TaskStore
-    @EnvironmentObject private var patchStore: PatchStore
-
-    let book: BookConfig
-    let previewStatus: LocalAPIStatus
-    let feedbackStatus: LocalAPIStatus
-    let agentStatus: LocalAPIStatus
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Dashboard")
-                .font(.headline)
-            StatusBadge(title: "MkDocs Preview", status: previewStatus)
-            StatusBadge(title: "Feedback API", status: feedbackStatus)
-            StatusBadge(title: "Cursor CLI Harness", status: agentStatus)
-            LabeledContent("Review Items", value: "\(reviewStore.openCount) open")
-            LabeledContent("Critical Reviews", value: "\(reviewStore.criticalCount)")
-            LabeledContent("Figures", value: "\(figureStore.okCount) ok, \(figureStore.staleCount) stale, \(figureStore.missingCount) missing")
-            LabeledContent("Patches", value: "\(patchStore.proposals.count) pending")
-            LabeledContent("Tasks", value: "\(taskStore.taskFiles.count) generated")
-        }
-    }
-}
-
-struct PreviewView: View {
-    @EnvironmentObject private var webModel: WebViewModel
-    @EnvironmentObject private var projectStore: ProjectContentStore
-    let book: BookConfig
-
-    private var previewURL: URL? {
-        let value = book.previewURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let url = URL(string: value), url.scheme != nil {
-            return url
-        }
-        return URL(fileURLWithPath: value).validFileURL
-    }
-
-    private var currentChapter: Chapter? {
-        guard let detected = webModel.detectedChapterID?.nilIfBlank else { return nil }
-        return projectStore.chapters.first { chapter in
-            chapter.id == detected || chapter.urlSlug == detected || chapter.relativePath.replacingOccurrences(of: ".md", with: "") == detected
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button { webModel.goBack() } label: { Image(systemName: "chevron.left") }
-                    .disabled(!webModel.canGoBack)
-                Button { webModel.goForward() } label: { Image(systemName: "chevron.right") }
-                    .disabled(!webModel.canGoForward)
-                Button { webModel.reload() } label: { Image(systemName: "arrow.clockwise") }
-                Text(webModel.currentURL?.absoluteString ?? book.previewURL)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Spacer()
-                if let chapter = currentChapter {
-                    Button("Open Chapter") {
-                        FileHelpers.openFile(path: chapter.markdownPath)
-                    }
-                    Button("Show Chapter") {
-                        FileHelpers.openInFinder(path: chapter.markdownPath)
-                    }
-                }
-                if let url = webModel.currentURL ?? URL(string: book.previewURL) {
-                    Button("Open in Browser") {
-                        FileHelpers.openExternal(url: url)
-                    }
-                }
-            }
-            .padding(8)
-
-            Divider()
-
-            if let url = previewURL {
-                WebView(url: url, model: webModel)
-            } else {
-                EmptyStateView(title: "Invalid Preview URL", message: "Check the selected book's preview URL in Settings.", systemImage: "exclamationmark.triangle")
-            }
-        }
-    }
-}
-
 struct FeedbackPanelView: View {
     @EnvironmentObject private var webModel: WebViewModel
     @EnvironmentObject private var reviewStore: ReviewStore
@@ -797,10 +317,14 @@ struct ReviewBrowserView: View {
     @EnvironmentObject private var reviewStore: ReviewStore
     @EnvironmentObject private var taskStore: TaskStore
     @EnvironmentObject private var webModel: WebViewModel
+    @EnvironmentObject private var projectStore: ProjectContentStore
 
     let book: BookConfig
+    @Binding var feedbackStatus: LocalAPIStatus
+    let checkFeedbackAPI: () async -> Void
     @State private var selectedDetailID: String?
     @State private var grouping: ReviewGrouping = .chapter
+    @State private var showsFeedbackForm = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -825,10 +349,28 @@ struct ReviewBrowserView: View {
                 Picker("Sort", selection: $reviewStore.sortMode) {
                     ForEach(ReviewStore.SortMode.allCases) { Text($0.rawValue).tag($0) }
                 }
+                Button(showsFeedbackForm ? "Hide Submit Review" : "Submit Review") {
+                    showsFeedbackForm.toggle()
+                }
             }
             .padding(8)
 
-            Divider()
+            if showsFeedbackForm {
+                Divider()
+                ScrollView {
+                    FeedbackPanelView(
+                        book: book,
+                        feedbackStatus: $feedbackStatus,
+                        checkFeedbackAPI: checkFeedbackAPI
+                    )
+                    .environmentObject(webModel)
+                    .environmentObject(reviewStore)
+                    .environmentObject(projectStore)
+                    .padding()
+                }
+                .frame(maxHeight: 340)
+                Divider()
+            }
 
             TabView {
                 reviewItemsPane
@@ -1224,82 +766,100 @@ struct TaskBrowserView: View {
     @EnvironmentObject private var webModel: WebViewModel
 
     let book: BookConfig
+    @Binding var agentStatus: LocalAPIStatus
+    let checkAgentHarness: () async -> Void
     @State private var selectedURL: URL?
     @State private var validationOutput: String?
     @State private var confirmingValidation = false
     @State private var isRunningValidation = false
+    @State private var showsHarnessPanel = false
 
     var body: some View {
-        HSplitView {
-            VStack {
-                HStack {
-                    Button("Current Chapter Task") {
-                        taskStore.generate(book: book, mode: .proposePatchOnly, chapterID: webModel.detectedChapterID, reviewItems: [], selectedText: webModel.selectedText)
-                    }
-                    Button("Validation Task") {
-                        taskStore.generate(book: book, mode: .validateBook, chapterID: nil, reviewItems: [], selectedText: nil)
-                    }
-                    Button(isRunningValidation ? "Running Validation..." : "Run Validation Command") {
-                        confirmingValidation = true
-                    }
-                    .disabled(isRunningValidation || !book.allowShellCommands || book.validationCommand?.nilIfBlank == nil)
-                    Button("Refresh") {
-                        taskStore.refresh(book: book)
-                    }
-                }
-                .padding(8)
-                List(selection: $selectedURL) {
-                    ForEach(taskStore.taskFiles, id: \.self) { url in
-                        VStack(alignment: .leading) {
-                            Text(url.lastPathComponent)
-                            Text(url.path)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        .tag(url)
-                    }
-                }
-            }
-            .frame(minWidth: 320)
-
-            VStack(alignment: .leading, spacing: 10) {
-                if let selectedURL {
-                    Text(selectedURL.lastPathComponent)
-                        .font(.headline)
-                    ScrollView {
-                        Text((try? String(contentsOf: selectedURL, encoding: .utf8)) ?? "")
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
-                    }
+        VStack(spacing: 0) {
+            HSplitView {
+                VStack {
                     HStack {
-                        Button("Open Task in Finder") { FileHelpers.openInFinder(path: selectedURL.path) }
-                        Button("Copy Task Text") {
-                            FileHelpers.copyToPasteboard((try? String(contentsOf: selectedURL, encoding: .utf8)) ?? "")
+                        Button("Current Chapter Task") {
+                            taskStore.generate(book: book, mode: .proposePatchOnly, chapterID: webModel.detectedChapterID, reviewItems: [], selectedText: webModel.selectedText)
+                        }
+                        Button("Validation Task") {
+                            taskStore.generate(book: book, mode: .validateBook, chapterID: nil, reviewItems: [], selectedText: nil)
+                        }
+                        Button(isRunningValidation ? "Running Validation..." : "Run Validation Command") {
+                            confirmingValidation = true
+                        }
+                        .disabled(isRunningValidation || !book.allowShellCommands || book.validationCommand?.nilIfBlank == nil)
+                        Button("Refresh") {
+                            taskStore.refresh(book: book)
+                        }
+                        Button(showsHarnessPanel ? "Hide Harness" : "Agent Harness") {
+                            showsHarnessPanel.toggle()
                         }
                     }
-                    .padding([.horizontal, .bottom])
-                    if let validationOutput {
-                        Divider()
-                        Text("Validation Output")
+                    .padding(8)
+                    List(selection: $selectedURL) {
+                        ForEach(taskStore.taskFiles, id: \.self) { url in
+                            VStack(alignment: .leading) {
+                                Text(url.lastPathComponent)
+                                Text(url.path)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            .tag(url)
+                        }
+                    }
+                }
+                .frame(minWidth: 320)
+
+                VStack(alignment: .leading, spacing: 10) {
+                    if let selectedURL {
+                        Text(selectedURL.lastPathComponent)
                             .font(.headline)
-                            .padding(.horizontal)
                         ScrollView {
-                            Text(validationOutput)
-                                .font(.system(.caption, design: .monospaced))
+                            Text((try? String(contentsOf: selectedURL, encoding: .utf8)) ?? "")
+                                .font(.system(.body, design: .monospaced))
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding()
                         }
-                        .frame(maxHeight: 180)
+                        HStack {
+                            Button("Open Task in Finder") { FileHelpers.openInFinder(path: selectedURL.path) }
+                            Button("Copy Task Text") {
+                                FileHelpers.copyToPasteboard((try? String(contentsOf: selectedURL, encoding: .utf8)) ?? "")
+                            }
+                        }
+                        .padding([.horizontal, .bottom])
+                        if let validationOutput {
+                            Divider()
+                            Text("Validation Output")
+                                .font(.headline)
+                                .padding(.horizontal)
+                            ScrollView {
+                                Text(validationOutput)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding()
+                            }
+                            .frame(maxHeight: 180)
+                        }
+                    } else {
+                        EmptyStateView(title: "No Task Selected", message: "Generate or select a Cursor-ready task file.", systemImage: "checklist")
                     }
-                } else {
-                    EmptyStateView(title: "No Task Selected", message: "Generate or select a Cursor-ready task file.", systemImage: "checklist")
                 }
+                .frame(minWidth: 420)
             }
-            .frame(minWidth: 420)
+
+            if showsHarnessPanel {
+                Divider()
+                ScrollView {
+                    AgentHarnessPanel(book: book, agentStatus: $agentStatus, checkAgentHarness: checkAgentHarness)
+                        .environmentObject(reviewStore)
+                        .padding()
+                }
+                .frame(maxHeight: 220)
+            }
         }
         .onAppear {
             taskStore.refresh(book: book)

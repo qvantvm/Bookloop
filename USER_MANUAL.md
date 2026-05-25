@@ -1,6 +1,6 @@
 # BookLoop User Manual
 
-BookLoop is a native macOS app for working on MkDocs books. It helps you read the rendered book, capture structured feedback, browse review items, manage figures, generate Cursor-ready revision tasks, and review or apply agent-produced patches—all locally, with no external LLM calls from the app itself.
+BookLoop is a native macOS app for working on MkDocs books. It helps you read the rendered book, ask questions about the current chapter (optional OpenAI chat), capture structured feedback, browse review items, manage figures, generate Cursor-ready revision tasks, and review or apply agent-produced patches—all locally except for optional Chapter Chat.
 
 This manual describes how to install BookLoop, set up a book project, and use each part of the interface.
 
@@ -15,16 +15,18 @@ This manual describes how to install BookLoop, set up a book project, and use ea
 5. [Add and configure a book](#5-add-and-configure-a-book)
 6. [Start local services](#6-start-local-services)
 7. [The end-to-end workflow](#7-the-end-to-end-workflow)
-8. [Preview tab](#8-preview-tab)
-9. [Reviews tab](#9-reviews-tab)
-10. [Figures tab](#10-figures-tab)
-11. [Tasks tab](#11-tasks-tab)
-12. [Patches tab](#12-patches-tab)
-13. [Settings tab](#13-settings-tab)
-14. [Inspector panel (right column)](#14-inspector-panel-right-column)
-15. [Safety and permissions](#15-safety-and-permissions)
-16. [Keyboard shortcuts](#16-keyboard-shortcuts)
-17. [Troubleshooting](#17-troubleshooting)
+8. [Reading mode (preview)](#8-reading-mode-preview)
+9. [Chapter Chat (right column)](#9-chapter-chat-right-column)
+10. [Tools mode (Reviews, Figures, Tasks, Patches, Settings)](#10-tools-mode-reviews-figures-tasks-patches-settings)
+11. [Reviews tool](#11-reviews-tool)
+12. [Figures tool](#12-figures-tool)
+13. [Tasks tool](#13-tasks-tool)
+14. [Patches tool](#14-patches-tool)
+15. [Settings tool](#15-settings-tool)
+16. [App settings (OpenAI)](#16-app-settings-openai)
+17. [Safety and permissions](#17-safety-and-permissions)
+18. [Keyboard shortcuts](#18-keyboard-shortcuts)
+19. [Troubleshooting](#19-troubleshooting)
 
 ---
 
@@ -33,14 +35,15 @@ This manual describes how to install BookLoop, set up a book project, and use ea
 - **macOS 14 or newer**
 - **Xcode** (to build and run BookLoop from source)
 - An **MkDocs book project** on disk
+- Optionally, an **OpenAI API key** for Chapter Chat (stored in the macOS Keychain)
 - Optionally, a terminal for running local services:
   - **MkDocs preview** (`mkdocs serve`)
   - **Feedback API** (`python scripts/feedback_api.py …`)
   - **Cursor CLI harness** (optional, command or HTTP integration)
 
-BookLoop does **not**:
+BookLoop does **not** (unless you enable Chapter Chat):
 
-- Call external LLM APIs
+- Call external LLM APIs by default — Chapter Chat is optional and requires your OpenAI key
 - Write review Markdown files directly (feedback goes through the Feedback API)
 - Silently rewrite book files or force-apply patches
 
@@ -64,13 +67,23 @@ BookLoop stores your library here:
 
 ## 3. Understand the interface
 
-BookLoop uses a three-column layout:
+BookLoop uses a three-column layout optimized for reading:
 
 | Column | Purpose |
 |--------|---------|
-| **Sidebar (left)** | Book list, workspace tabs, status summary, Add/Edit/Delete |
-| **Workspace (center)** | Main content for the selected tab (Preview, Reviews, Figures, etc.) |
-| **Inspector (right)** | Dashboard, feedback form, and cursor harness controls |
+| **Library sidebar (left)** | Books, clickable chapter tree, compact status, Tools launcher, Add/Edit/Delete |
+| **Center** | **Reading mode** — MkDocs preview (default), or **Tools mode** — Reviews, Figures, Tasks, Patches, or Settings |
+| **Chapter Chat (right)** | OpenAI-powered chat about the current page; **Send as Feedback** submits the transcript to the Feedback API |
+
+### Reading vs Tools mode
+
+- **Reading mode** (default): the center column shows the book preview. Use the sidebar chapter tree or preview navigation to move between pages.
+- **Tools mode**: choose **Reviews**, **Figures**, **Tasks**, **Patches**, or **Settings** under **Tools** in the sidebar. The center column switches to that tool. Click **Back to Reading** to return to the preview at the same URL.
+
+### Hide panels
+
+- Preview toolbar: **Hide Panel** / **Show Panel** (sidebar), **Hide Chat** / **Show Chat**
+- Sidebar header: collapse icon to hide the library panel
 
 The toolbar provides:
 
@@ -130,7 +143,7 @@ Default URLs:
 ### Edit book settings
 
 1. Select a book in the sidebar.
-2. Click **Edit** (slider icon), or open the **Settings** tab in the workspace.
+2. Click **Edit** (slider icon), open **Tools → Settings**, or use the book settings sheet from **Edit** in the sidebar.
 3. Adjust paths, commands, and safety toggles.
 4. Click **Save Settings** (⌘S in the Settings tab).
 
@@ -157,7 +170,7 @@ From the book root:
 mkdocs serve
 ```
 
-BookLoop loads the preview URL (default `http://127.0.0.1:8000`) in the **Preview** tab.
+BookLoop loads the preview URL (default `http://127.0.0.1:8000`) in the center **Reading** column.
 
 ### Feedback API
 
@@ -167,7 +180,7 @@ From the book root:
 python scripts/feedback_api.py --host 127.0.0.1 --port 8765
 ```
 
-When you click **Save Review** in the inspector, BookLoop POSTs to:
+When you submit feedback (Reviews tool **Save Review** or Chapter Chat **Send as Feedback**), BookLoop POSTs to:
 
 ```text
 http://127.0.0.1:8765/api/review
@@ -194,28 +207,35 @@ BookLoop is designed around this loop:
 Read → Save Review → Generate Task → Agent/Cursor Creates Patch → Review Patch → Apply → Rebuild
 ```
 
-1. **Read** the rendered book in Preview.
-2. **Save Review** via the Feedback API when you notice an issue.
+1. **Read** the rendered book in the center preview (Reading mode).
+2. **Save Review** via Chapter Chat, the Reviews tool feedback form, or both.
 3. **Generate Task** (Markdown files in `bookloop/tasks/`) for Cursor or another agent.
 4. Let the agent produce a **patch** in `bookloop/patches/`.
-5. **Review** the patch block-by-block in the Patches tab.
+5. **Review** the patch block-by-block in **Tools → Patches**.
 6. **Apply** accepted changes (with confirmation and `git apply --check` first).
 7. Rebuild or re-serve MkDocs and continue reading.
 
 ---
 
-## 8. Preview tab
+## 8. Reading mode (preview)
 
-The Preview tab embeds your MkDocs site in a web view.
+The center column embeds your MkDocs site in a web view. MkDocs side navigation is hidden so the chapter uses the full width.
 
-### Navigation bar
+### Sidebar chapter tree
+
+- Click a chapter in the sidebar **Chapters** section to navigate the preview.
+- After the preview loads, BookLoop extracts the MkDocs nav tree from the page. Until then, a fallback list from your project’s chapter scan is shown.
+
+### Preview toolbar
 
 | Control | Action |
 |---------|--------|
+| **Hide Panel** / **Show Panel** | Toggle the library sidebar |
+| **Hide Chat** / **Show Chat** | Toggle Chapter Chat |
 | ← / → | Back and forward in preview history |
 | ↻ | Reload preview |
+| **Auto Refresh** | Toggle automatic reload (when enabled) |
 | **Open Chapter** | Opens the detected chapter’s Markdown in your default editor |
-| **Show Chapter** | Reveals the chapter file in Finder |
 | **Open in Browser** | Opens the current page in your system browser |
 
 ### Chapter detection
@@ -225,22 +245,71 @@ BookLoop tries to detect the current chapter from:
 1. `<meta name="chapter-id" content="…">` in the HTML page
 2. The URL or file slug as a fallback
 
-The detected chapter ID is used to pre-fill the feedback form and task generation.
+The detected chapter ID is used for Chapter Chat context, feedback forms, and task generation.
 
 ### Selected text
 
-Select text in the preview, then in the inspector click **Use Selected Text**. BookLoop appends the selection to your feedback body as a quoted passage—useful for pointing at specific wording.
+Select text in the preview, then in **Tools → Reviews → Submit Review** click **Use Selected Text**. BookLoop appends the selection to your feedback body as a quoted passage.
 
 ### Reload preview
 
-- Use the in-tab reload button, or
+- Use the preview toolbar reload button, or
 - **BookLoop menu → Reload Preview** (⌘R)
 
 ---
 
-## 9. Reviews tab
+## 9. Chapter Chat (right column)
+
+Chapter Chat lets you ask questions about the page you are reading. It is optional and requires an OpenAI API key (see [App settings](#16-app-settings-openai)).
+
+### Setup
+
+1. Click the **gear** icon in the sidebar header.
+2. Enter your OpenAI API key and preferred model (default `gpt-4.1`).
+3. Click **Save**.
+
+### Using chat
+
+- Each page keeps its own in-memory chat session. Switch chapters and return later — your messages for that page are restored.
+- **Send** — asks OpenAI using the current page text plus chat history.
+- **Send as Feedback** — saves the full conversation as a review item via the Feedback API (requires Feedback API online).
+- **Clear Chat** — clears the current page’s messages.
+- **Check API** — verifies the Feedback API (needed for **Send as Feedback**).
+
+The chat header shows the page title and detected chapter ID when available.
+
+---
+
+## 10. Tools mode (Reviews, Figures, Tasks, Patches, Settings)
+
+Open a tool from **Tools** in the sidebar. The center column switches from preview to that tool. Click **Back to Reading** to restore the preview at the same URL.
+
+| Tool | Purpose |
+|------|---------|
+| **Reviews** | Browse review items; submit structured feedback |
+| **Figures** | Scan and manage figures |
+| **Tasks** | Generate and view Cursor task files; optional harness |
+| **Patches** | Review and apply agent patches |
+| **Settings** | Per-book configuration |
+
+---
+
+## 11. Reviews tool
 
 Browse structured review items scanned from `reviews/review_items/`.
+
+Click **Submit Review** in the toolbar to show the manual feedback form (moved from the old inspector panel).
+
+### Feedback form fields
+
+| Field | Description |
+|-------|-------------|
+| Chapter ID | Auto-filled from preview when possible (use frontmatter id, not `docs/` path) |
+| Type / Severity | Review classification |
+| Title / Body | Required for **Save Review** |
+| Suggested Fix | Optional |
+
+Use **Use Selected Text**, **Check API**, **Save Review** (⌘Return), and **Clear Form** as before.
 
 ### Filters and organization
 
@@ -270,7 +339,7 @@ Select items in the list to include them in task generation. The detail pane sho
 
 ---
 
-## 10. Figures tab
+## 12. Figures tool
 
 BookLoop scans Markdown image references, output assets under `docs/assets/figures/`, source scripts, and `bookloop/figures.json`.
 
@@ -294,9 +363,9 @@ Click a figure in the left list to inspect it. Status values include **ok**, **m
 
 ---
 
-## 11. Tasks tab
+## 13. Tasks tool
 
-Shows Markdown task files in `bookloop/tasks/`.
+Shows Markdown task files in `bookloop/tasks/`. Click **Agent Harness** to show harness controls (moved from the old inspector panel).
 
 ### Generate tasks
 
@@ -310,11 +379,16 @@ Select a task file to view its contents. Use **Open Task in Finder** or **Copy T
 
 ### Run validation command
 
-If a **validation command** is configured (default suggestion: `mkdocs build`) and **Allow shell commands** is enabled, you can run validation from this tab. BookLoop shows a confirmation dialog before executing anything.
+If a **validation command** is configured (default suggestion: `mkdocs build`) and **Allow shell commands** is enabled, you can run validation from this tool. BookLoop shows a confirmation dialog before executing anything.
+
+### Agent harness panel
+
+- **Check Harness** — health check
+- **Fix Reviews** / other harness actions — submit tasks using the configured cursor_cli command or HTTP harness (optional)
 
 ---
 
-## 12. Patches tab
+## 14. Patches tool
 
 Review and apply unified-diff patches from `bookloop/patches/*.patch` and `*.diff`.
 
@@ -354,7 +428,7 @@ Patch application always runs `git apply --check` before `git apply`. BookLoop n
 
 ---
 
-## 13. Settings tab
+## 15. Settings tool
 
 Full book configuration in one form. Sections:
 
@@ -390,80 +464,62 @@ Free-form notes stored with the book configuration.
 
 ---
 
-## 14. Inspector panel (right column)
+## 16. App settings (OpenAI)
 
-Always visible when a book is selected.
+Global app settings (not per-book) are opened from the **gear** icon in the sidebar header.
 
-### Dashboard
+| Setting | Description |
+|---------|-------------|
+| **OpenAI Model** | Model slug sent to the Chat Completions API (default `gpt-4.1`) |
+| **OpenAI API Key** | Stored in the macOS Keychain; required for Chapter Chat |
 
-Status badges for MkDocs preview, Feedback API, and Cursor CLI Harness, plus counts for open reviews, figures, patches, and tasks.
-
-Click **Check MkDocs Preview** to verify the preview URL responds.
-
-### Feedback form
-
-| Field | Description |
-|-------|-------------|
-| Chapter ID | Auto-filled from preview when possible |
-| Type | Question, Confusion, Missing Example, Figure Needed, etc. |
-| Severity | Low, Medium, High, Critical |
-| Section | Optional section within the chapter |
-| Title | Short summary |
-| Observation / Body | Detailed notes |
-| Suggested Fix | Optional proposed correction |
-
-| Button | Action |
-|--------|--------|
-| **Use Selected Text** | Append preview selection to the body |
-| **Check API** | Verify Feedback API is reachable |
-| **Save Review** | Submit to Feedback API (⌘Return) |
-| **Clear Form** | Reset all fields |
-
-### Cursor CLI harness panel
-
-- **Check Harness** — health check
-- **Send Task to Harness** — submit selected review items using configured cursor_cli command or HTTP harness (optional; task files remain the default path)
+Use **Remove Key** to delete the saved key. Chapter Chat sends the current page text and conversation to OpenAI when you click **Send**.
 
 ---
 
-## 15. Safety and permissions
+## 17. Safety and permissions
 
 BookLoop is built around explicit, human-visible actions:
 
-- No external LLM API calls from the app
-- No direct writes to review Markdown files
+- **Chapter Chat** calls OpenAI only when you send a message and an API key is configured
+- No direct writes to review Markdown files (Feedback API writes them)
 - No automatic shell execution unless toggles are on and you confirm
 - No silent patch application—always confirm, and run `git apply --check` first
 - Figure regeneration requires both **Allow shell commands** and **Allow figure regeneration**
 
-When in doubt, leave safety toggles off and use BookLoop only for reading, feedback submission, and task file generation.
+When in doubt, leave safety toggles off and omit your OpenAI key if you only want reading, feedback submission, and task file generation.
 
 ---
 
-## 16. Keyboard shortcuts
+## 18. Keyboard shortcuts
 
 | Shortcut | Action |
 |----------|--------|
 | ⌘R | Reload preview (BookLoop menu) |
 | ⌘Return | Save Review (feedback form) |
-| ⌘S | Save Settings (Settings tab) |
+| ⌘S | Save Settings (Settings tool) |
 | ⌘Return | Save (book settings sheet) |
 
 ---
 
-## 17. Troubleshooting
+## 19. Troubleshooting
 
 ### Preview shows blank or error
 
 - Confirm `mkdocs serve` is running.
-- Check the preview URL in Settings (default `http://127.0.0.1:8000`).
-- Click **Check MkDocs Preview** in the inspector.
+- Check the preview URL in **Tools → Settings** (default `http://127.0.0.1:8000`).
+- Use toolbar **Check APIs**.
 
 ### Save Review fails / Feedback API offline
 
 - Start the feedback server from the book root.
-- Verify the Feedback API URL in Settings.
-- Click **Check API** in the feedback panel.
+- Verify the Feedback API URL in book settings.
+- Click **Check API** in Chapter Chat or the Reviews feedback form.
+
+### Chapter Chat does not respond
+
+- Open app settings (sidebar gear) and confirm your OpenAI API key is saved.
+- Check your network connection and model name.
 
 ### No review items appear
 
@@ -491,7 +547,7 @@ When in doubt, leave safety toggles off and use BookLoop only for reading, feedb
 ### Chapter not detected in preview
 
 - Add `<meta name="chapter-id" content="your-chapter-id">` to your MkDocs theme or chapter templates.
-- Or enter the chapter ID manually in the feedback form.
+- Or enter the chapter ID manually in the Reviews feedback form.
 
 ---
 

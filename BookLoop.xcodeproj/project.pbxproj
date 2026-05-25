@@ -14,17 +14,39 @@
 		101000000000000000000005 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000005 /* Views.swift */; };
 		101000000000000000000006 /* WebView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000006 /* WebView.swift */; };
 		101000000000000000000007 /* Utilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000007 /* Utilities.swift */; };
+		101000000000000000000008 /* ChapterNavModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000009 /* ChapterNavModels.swift */; };
+		101000000000000000000009 /* ChatModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000000A /* ChatModels.swift */; };
+		10100000000000000000000A /* AppSettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000000B /* AppSettingsStore.swift */; };
+		10100000000000000000000B /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000000C /* KeychainStore.swift */; };
+		10100000000000000000000C /* OpenAIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000000D /* OpenAIClient.swift */; };
+		10100000000000000000000D /* URLHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000000E /* URLHelpers.swift */; };
+		10100000000000000000000E /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000000F /* ContentView.swift */; };
+		10100000000000000000000F /* LibrarySidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000010 /* LibrarySidebarView.swift */; };
+		101000000000000000000010 /* BookPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000011 /* BookPreviewView.swift */; };
+		101000000000000000000011 /* ChatPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000012 /* ChatPanelView.swift */; };
+		101000000000000000000012 /* AppSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000013 /* AppSettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		102000000000000000000001 /* BookLoopApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookLoopApp.swift; sourceTree = "<group>"; };
-		102000000000000000000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models/Models.swift; sourceTree = "<group>"; };
-		102000000000000000000003 /* Stores.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Stores/Stores.swift; sourceTree = "<group>"; };
-		102000000000000000000004 /* Services.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services/Services.swift; sourceTree = "<group>"; };
-		102000000000000000000005 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/Views.swift; sourceTree = "<group>"; };
-		102000000000000000000006 /* WebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Web/WebView.swift; sourceTree = "<group>"; };
-		102000000000000000000007 /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities/Utilities.swift; sourceTree = "<group>"; };
+		102000000000000000000002 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		102000000000000000000003 /* Stores.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Stores.swift; sourceTree = "<group>"; };
+		102000000000000000000004 /* Services.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Services.swift; sourceTree = "<group>"; };
+		102000000000000000000005 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
+		102000000000000000000006 /* WebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebView.swift; sourceTree = "<group>"; };
+		102000000000000000000007 /* Utilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utilities.swift; sourceTree = "<group>"; };
 		102000000000000000000008 /* BookLoop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = BookLoop.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		102000000000000000000009 /* ChapterNavModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChapterNavModels.swift; sourceTree = "<group>"; };
+		10200000000000000000000A /* ChatModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatModels.swift; sourceTree = "<group>"; };
+		10200000000000000000000B /* AppSettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsStore.swift; sourceTree = "<group>"; };
+		10200000000000000000000C /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
+		10200000000000000000000D /* OpenAIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIClient.swift; sourceTree = "<group>"; };
+		10200000000000000000000E /* URLHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLHelpers.swift; sourceTree = "<group>"; };
+		10200000000000000000000F /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		102000000000000000000010 /* LibrarySidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibrarySidebarView.swift; sourceTree = "<group>"; };
+		102000000000000000000011 /* BookPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookPreviewView.swift; sourceTree = "<group>"; };
+		102000000000000000000012 /* ChatPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPanelView.swift; sourceTree = "<group>"; };
+		102000000000000000000013 /* AppSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -58,14 +80,73 @@
 			isa = PBXGroup;
 			children = (
 				102000000000000000000001 /* BookLoopApp.swift */,
-				102000000000000000000002 /* Models.swift */,
-				102000000000000000000003 /* Stores.swift */,
-				102000000000000000000004 /* Services.swift */,
-				102000000000000000000005 /* Views.swift */,
-				102000000000000000000006 /* WebView.swift */,
-				102000000000000000000007 /* Utilities.swift */,
+				104000000000000000000004 /* Models */,
+				104000000000000000000005 /* Stores */,
+				104000000000000000000006 /* Services */,
+				104000000000000000000007 /* Views */,
+				104000000000000000000008 /* Web */,
+				104000000000000000000009 /* Utilities */,
 			);
 			path = BookLoop;
+			sourceTree = "<group>";
+		};
+		104000000000000000000004 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				102000000000000000000002 /* Models.swift */,
+				102000000000000000000009 /* ChapterNavModels.swift */,
+				10200000000000000000000A /* ChatModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		104000000000000000000005 /* Stores */ = {
+			isa = PBXGroup;
+			children = (
+				102000000000000000000003 /* Stores.swift */,
+				10200000000000000000000B /* AppSettingsStore.swift */,
+			);
+			path = Stores;
+			sourceTree = "<group>";
+		};
+		104000000000000000000006 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				102000000000000000000004 /* Services.swift */,
+				10200000000000000000000C /* KeychainStore.swift */,
+				10200000000000000000000D /* OpenAIClient.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		104000000000000000000007 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				10200000000000000000000F /* ContentView.swift */,
+				102000000000000000000010 /* LibrarySidebarView.swift */,
+				102000000000000000000011 /* BookPreviewView.swift */,
+				102000000000000000000012 /* ChatPanelView.swift */,
+				102000000000000000000013 /* AppSettingsView.swift */,
+				102000000000000000000005 /* Views.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		104000000000000000000008 /* Web */ = {
+			isa = PBXGroup;
+			children = (
+				102000000000000000000006 /* WebView.swift */,
+			);
+			path = Web;
+			sourceTree = "<group>";
+		};
+		104000000000000000000009 /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				102000000000000000000007 /* Utilities.swift */,
+				10200000000000000000000E /* URLHelpers.swift */,
+			);
+			path = Utilities;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -143,6 +224,17 @@
 				101000000000000000000005 /* Views.swift in Sources */,
 				101000000000000000000006 /* WebView.swift in Sources */,
 				101000000000000000000007 /* Utilities.swift in Sources */,
+				101000000000000000000008 /* ChapterNavModels.swift in Sources */,
+				101000000000000000000009 /* ChatModels.swift in Sources */,
+				10100000000000000000000A /* AppSettingsStore.swift in Sources */,
+				10100000000000000000000B /* KeychainStore.swift in Sources */,
+				10100000000000000000000C /* OpenAIClient.swift in Sources */,
+				10100000000000000000000D /* URLHelpers.swift in Sources */,
+				10100000000000000000000E /* ContentView.swift in Sources */,
+				10100000000000000000000F /* LibrarySidebarView.swift in Sources */,
+				101000000000000000000010 /* BookPreviewView.swift in Sources */,
+				101000000000000000000011 /* ChatPanelView.swift in Sources */,
+				101000000000000000000012 /* AppSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
