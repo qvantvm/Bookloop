@@ -55,6 +55,41 @@ enum FileHelpers {
     }
 }
 
+/// Ensures book-repo `.gitignore` excludes ephemeral BookLoop tooling files.
+enum BookLoopGitignore {
+    static let marker = "# BookLoop generated ignores"
+
+    static let recommendedLines = [
+        ".bookloop/sessions/",
+        "bookloop/patches/archive/",
+        "bookloop/patches/activity.json",
+        "bookloop/patches/reviewed-*.patch"
+    ]
+
+    @discardableResult
+    static func ensureEntries(in projectRoot: String) throws -> Bool {
+        let gitignoreURL = URL(fileURLWithPath: projectRoot, isDirectory: true).appendingPathComponent(".gitignore")
+        let existing = (try? String(contentsOf: gitignoreURL, encoding: .utf8)) ?? ""
+        let missing = recommendedLines.filter { line in
+            !existing.split(separator: "\n").contains(where: { $0.trimmingCharacters(in: .whitespaces) == line })
+        }
+        guard !missing.isEmpty else { return false }
+
+        var newBlock = marker + "\n"
+        newBlock += missing.map { $0 + "\n" }.joined()
+
+        let combined: String
+        if existing.isEmpty {
+            combined = newBlock
+        } else {
+            let separator = existing.hasSuffix("\n") ? "\n" : "\n\n"
+            combined = existing + separator + newBlock
+        }
+        try combined.write(to: gitignoreURL, atomically: true, encoding: .utf8)
+        return true
+    }
+}
+
 extension String {
     var nilIfBlank: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)

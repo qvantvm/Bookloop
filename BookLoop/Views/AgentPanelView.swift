@@ -8,6 +8,7 @@ final class AgentPanelModel: ObservableObject {
     @Published var liveToolLog: [AgentToolLogEntry] = []
     @Published var result: AgentResult?
     @Published var errorMessage: String?
+    @Published var infoMessage: String?
 
     private let agent = BookAgent()
     private var shouldCancel = false
@@ -31,13 +32,19 @@ final class AgentPanelModel: ObservableObject {
             return
         }
 
+        let instruction = customInstruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        if type == .custom && instruction.isEmpty {
+            errorMessage = "Enter a custom task instruction first."
+            return
+        }
+
         shouldCancel = false
         isRunning = true
         errorMessage = nil
         liveToolLog = []
         result = nil
 
-        let task = AgentTask(type: type, instruction: customInstruction.trimmingCharacters(in: .whitespacesAndNewlines))
+        let task = AgentTask(type: type, instruction: instruction)
 
         do {
             let agentResult = try await agent.run(
@@ -58,6 +65,9 @@ final class AgentPanelModel: ObservableObject {
             liveToolLog = agentResult.toolLog
             projectStore.refresh(book: project.book, currentChapterID: project.currentChapterID)
             patchStore.refresh(book: project.book)
+            if (try? projectStore.ensureGitignore(for: project.book)) == true {
+                infoMessage = "Added BookLoop ignores to .gitignore (session logs will not appear in git)."
+            }
         } catch is CancellationError {
             errorMessage = "Agent run cancelled."
         } catch {
@@ -100,14 +110,44 @@ final class AgentPanelModel: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
+
+    func ensureGitignore(projectStore: BookProjectStore) {
+        guard let book = projectStore.project?.book else { return }
+        do {
+            let added = try projectStore.ensureGitignore(for: book)
+            errorMessage = nil
+            infoMessage = added
+                ? "Updated .gitignore with BookLoop ignores (.bookloop/sessions/, patch archive, etc.)."
+                : ".gitignore already includes BookLoop ignores."
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
 }
 
 struct AgentPanelView: View {
-    @EnvironmentObject private var projectStore: BookProjectStore
+    @EnvironmentObject private var library: BookLibraryStore
     @EnvironmentObject private var patchStore: PatchStore
-    @EnvironmentObject private var settingsStore: AppSettingsStore
+    @ObservedObject var projectStore: BookProjectStore
+    @ObservedObject var settingsStore: AppSettingsStore
     @ObservedObject var model: AgentPanelModel
     @Binding var workspaceMode: WorkspaceMode
+    @Binding var showingAppSettings: Bool
+
+    private var canRunPresetTasks: Bool {
+        !model.isRunning && projectStore.project != nil && settingsStore.hasAPIKey
+    }
+
+    private var canRunCustomTask: Bool {
+        canRunPresetTasks && !model.customInstruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var agentDisabledReason: String? {
+        if model.isRunning { return "Agent is running. Click Cancel to stop the current run." }
+        if projectStore.project == nil { return "Select a book in the sidebar first." }
+        if !settingsStore.hasAPIKey { return "Add your OpenAI API key in App Settings (gear icon in the sidebar)." }
+        return nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -122,6 +162,9 @@ struct AgentPanelView: View {
                     }
                     if let error = model.errorMessage ?? projectStore.lastError {
                         Text(error).font(.caption).foregroundStyle(.red)
+                    }
+                    if let info = model.infoMessage {
+                        Text(info).font(.caption).foregroundStyle(.secondary)
                     }
                     if !model.liveToolLog.isEmpty {
                         toolLogSection
@@ -143,6 +186,10 @@ struct AgentPanelView: View {
                 .padding()
             }
         }
+        .onAppear {
+            settingsStore.load()
+            projectStore.refresh(book: library.selectedBook, currentChapterID: projectStore.project?.currentChapterID)
+        }
     }
 
     private var controls: some View {
@@ -159,16 +206,34 @@ struct AgentPanelView: View {
                             )
                         }
                     }
-                    .disabled(model.isRunning || projectStore.project == nil || !settingsStore.hasAPIKey)
+                    .disabled(!canRunPresetTasks)
                 }
                 if model.isRunning {
                     Button("Cancel", role: .destructive) { model.cancel() }
                 }
             }
 
-            TextField("Optional instruction for custom tasks", text: $model.customInstruction, axis: .vertical)
+            if let reason = agentDisabledReason {
+                HStack(spacing: 8) {
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if !settingsStore.hasAPIKey {
+                        Button("Open App Settings") { showingAppSettings = true }
+                            .font(.caption)
+                    }
+                }
+            }
+
+            TextField("Custom task instruction (required)", text: $model.customInstruction, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...3)
+
+            if canRunPresetTasks && !canRunCustomTask {
+                Text("Enter a custom task instruction above.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             HStack {
                 Button("Run Custom Task") {
@@ -181,7 +246,7 @@ struct AgentPanelView: View {
                         )
                     }
                 }
-                .disabled(model.isRunning || projectStore.project == nil || !settingsStore.hasAPIKey)
+                .disabled(!canRunCustomTask)
 
                 if model.result?.patchProposalPath != nil {
                     Button("Delete Proposal Patch", role: .destructive) {
@@ -222,6 +287,11 @@ struct AgentPanelView: View {
                 .textSelection(.enabled)
             Button("Repair Write Permissions") { model.repairWriteGlobs(projectStore: projectStore) }
                 .font(.caption)
+            Button("Ensure Gitignore") { model.ensureGitignore(projectStore: projectStore) }
+                .font(.caption)
+            Text("Do not commit `.bookloop/sessions/` — agent debug logs. Commit only `docs/` after Patches → Commit.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
         .padding(8)
         .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))

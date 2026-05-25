@@ -12,7 +12,6 @@ struct LibrarySidebarView: View {
     @Binding var showingAppSettings: Bool
     @Binding var isSidebarVisible: Bool
     let previewStatus: LocalAPIStatus
-    let feedbackStatus: LocalAPIStatus
     let chapterItems: [ChapterNavItem]
     let currentURL: URL?
     let addBook: () -> Void
@@ -60,7 +59,6 @@ struct LibrarySidebarView: View {
                     Section("Status") {
                         CompactStatusRow(
                             previewStatus: previewStatus,
-                            feedbackStatus: feedbackStatus,
                             openReviewCount: reviewStore.openCount
                         )
                     }
@@ -137,13 +135,11 @@ struct LibrarySidebarView: View {
 
 private struct CompactStatusRow: View {
     let previewStatus: LocalAPIStatus
-    let feedbackStatus: LocalAPIStatus
     let openReviewCount: Int
 
     var body: some View {
         HStack(spacing: 8) {
             statusDot(title: "Preview", status: previewStatus)
-            statusDot(title: "Feedback", status: feedbackStatus)
             Spacer()
             Text("\(openReviewCount) open")
                 .font(.caption)

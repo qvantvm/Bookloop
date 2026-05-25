@@ -81,8 +81,15 @@ final class BookProjectStore: ObservableObject {
         let config = BookProjectConfig.defaults(for: book)
         try book.withSecurityScopedProjectRoot {
             try BookProjectConfig.save(config, book: book)
+            _ = try BookLoopGitignore.ensureEntries(in: book.projectRootPath)
         }
         refresh(book: book, currentChapterID: project?.currentChapterID)
+    }
+
+    func ensureGitignore(for book: BookConfig) throws -> Bool {
+        try book.withSecurityScopedProjectRoot {
+            try BookLoopGitignore.ensureEntries(in: book.projectRootPath)
+        }
     }
 
     func repairWriteGlobs(for book: BookConfig) throws {

@@ -8,8 +8,6 @@ struct FeedbackPanelView: View {
     @EnvironmentObject private var projectStore: ProjectContentStore
 
     let book: BookConfig
-    @Binding var feedbackStatus: LocalAPIStatus
-    let checkFeedbackAPI: () async -> Void
 
     @State private var chapter = ""
     @State private var type: FeedbackType = .confusion
@@ -23,15 +21,11 @@ struct FeedbackPanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Feedback")
-                    .font(.headline)
-                Spacer()
-                StatusBadge(title: "API", status: feedbackStatus)
-            }
+            Text("Feedback")
+                .font(.headline)
 
             TextField("Chapter ID", text: $chapter)
-            Text("Use the chapter id from frontmatter (for example home), not a docs/ path. The API saves to docs/{id}.md.")
+            Text("Use the chapter id from frontmatter (for example home), not a docs/ path. Reviews save locally under reviews/review_items/.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             Picker("Type", selection: $type) {
@@ -57,9 +51,6 @@ struct FeedbackPanelView: View {
             HStack {
                 Button("Use Selected Text") {
                     Task { await appendSelectedText() }
-                }
-                Button("Check API") {
-                    Task { await checkFeedbackAPI() }
                 }
             }
 
@@ -135,8 +126,8 @@ struct FeedbackPanelView: View {
                 section: section.nilIfBlank,
                 suggested_fix: suggestedFix.nilIfBlank
             )
-            let response = try await FeedbackAPIClient().submitReview(baseURL: book.feedbackAPIBaseURL, request: request)
-            message = response.ok ? "Review created: \(response.file)" : "The feedback API did not confirm success."
+            let response = try ReviewItemWriter().write(request: request, book: book)
+            message = response.ok ? "Review saved: \(response.file)" : "Could not save review."
             title = ""
             bodyText = ""
             suggestedFix = ""
@@ -150,7 +141,6 @@ struct FeedbackPanelView: View {
         if chapter.nilIfBlank == nil { return "Chapter ID is required." }
         if title.nilIfBlank == nil { return "Title is required." }
         if bodyText.nilIfBlank == nil { return "Body is required." }
-        if feedbackStatus != .online { return "Feedback API must be online. Use Check API first." }
         let resolvedChapter = ChapterResolver.feedbackAPIChapterID(
             chapter.trimmingCharacters(in: .whitespacesAndNewlines),
             book: book,
@@ -196,8 +186,6 @@ struct ReviewBrowserView: View {
     @EnvironmentObject private var projectStore: ProjectContentStore
 
     let book: BookConfig
-    @Binding var feedbackStatus: LocalAPIStatus
-    let checkFeedbackAPI: () async -> Void
     @State private var selectedDetailID: String?
     @State private var grouping: ReviewGrouping = .chapter
     @State private var showsFeedbackForm = false
@@ -234,12 +222,8 @@ struct ReviewBrowserView: View {
             if showsFeedbackForm {
                 Divider()
                 ScrollView {
-                    FeedbackPanelView(
-                        book: book,
-                        feedbackStatus: $feedbackStatus,
-                        checkFeedbackAPI: checkFeedbackAPI
-                    )
-                    .environmentObject(webModel)
+                    FeedbackPanelView(book: book)
+                        .environmentObject(webModel)
                     .environmentObject(reviewStore)
                     .environmentObject(projectStore)
                     .padding()
@@ -1519,7 +1503,6 @@ struct BookSettingsForm: View {
                 PathField(title: "Project Root", path: $draft.projectRootPath, isDirectory: true)
                 LabeledContent("Folder Access", value: draft.projectRootBookmark == nil ? "Bookmark will be captured on save" : "Security-scoped bookmark saved")
                 TextField("Preview URL", text: $draft.previewURL)
-                TextField("Feedback API Base URL", text: $draft.feedbackAPIBaseURL)
             }
 
             Section("Paths") {
@@ -1537,7 +1520,6 @@ struct BookSettingsForm: View {
 
             Section("Commands") {
                 OptionalTextField("MkDocs serve command", text: $draft.mkdocsServeCommand)
-                OptionalTextField("Feedback API command", text: $draft.feedbackAPICommand)
                 OptionalTextField("Figure generation command", text: $draft.figureGenerationCommand)
                 OptionalTextField("Validation command", text: $draft.validationCommand)
             }

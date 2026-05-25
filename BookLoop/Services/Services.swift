@@ -1,12 +1,97 @@
 import Foundation
 
-final class FeedbackAPIClient {
-    func checkHealth(baseURL: String) async throws -> HealthResponse {
-        try await LocalHTTPClient().get(baseURL: baseURL, path: "/api/health")
+enum ReviewItemWriterError: LocalizedError {
+    case chapterNotFound(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .chapterNotFound(let chapter):
+            return "Chapter not found: docs/\(chapter).md. Use the chapter id from frontmatter, or open the page in Preview to auto-detect it."
+        }
+    }
+}
+
+final class ReviewItemWriter {
+    func write(request: ReviewRequest, book: BookConfig) throws -> ReviewResponse {
+        guard ChapterResolver.feedbackAPIChapterExists(request.chapter, book: book) else {
+            throw ReviewItemWriterError.chapterNotFound(request.chapter)
+        }
+
+        return try book.withSecurityScopedProjectRoot {
+            let directoryPath = book.reviewItemsPath ?? book.suggestedPath("reviews/review_items")
+            try FileHelpers.ensureDirectory(directoryPath)
+
+            let createdAt = Date()
+            let timestamp = DateFormatting.taskFilename.string(from: createdAt)
+            let titleSlug = request.title.slugified()
+            let idSuffix = titleSlug.isEmpty ? "review" : titleSlug
+            let id = "\(timestamp)-\(idSuffix)"
+            let filename = "\(id).md"
+            let fileURL = URL(fileURLWithPath: directoryPath).appendingPathComponent(filename)
+
+            let rootPath = URL(fileURLWithPath: book.projectRootPath, isDirectory: true).standardizedFileURL.path
+            let standardizedFile = fileURL.standardizedFileURL.path
+            let relativeFile: String
+            if standardizedFile.hasPrefix(rootPath) {
+                relativeFile = String(standardizedFile.dropFirst(rootPath.count))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            } else {
+                relativeFile = filename
+            }
+
+            let markdown = buildMarkdown(request: request, id: id, createdAt: createdAt)
+            try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+
+            return ReviewResponse(ok: true, id: id, file: relativeFile)
+        }
     }
 
-    func submitReview(baseURL: String, request: ReviewRequest) async throws -> ReviewResponse {
-        try await LocalHTTPClient().post(baseURL: baseURL, path: "/api/review", body: request)
+    private func buildMarkdown(request: ReviewRequest, id: String, createdAt: Date) -> String {
+        var frontmatterLines = [
+            "---",
+            "id: \(id)",
+            "title: \(yamlEscape(request.title))",
+            "status: open",
+            "created_at: \(ISO8601DateFormatter().string(from: createdAt))",
+            "chapter: \(request.chapter)",
+            "type: \(request.type)",
+            "severity: \(request.severity)",
+            "source_file: docs/\(request.chapter).md"
+        ]
+        if let section = request.section?.nilIfBlank {
+            frontmatterLines.append("section: \(yamlEscape(section))")
+        }
+        frontmatterLines.append("---")
+
+        var bodyLines = ["", "# \(request.title)", ""]
+        if let conversationBody = conversationSection(from: request.body) {
+            bodyLines.append(conversationBody)
+        } else {
+            bodyLines.append("## Observation")
+            bodyLines.append("")
+            bodyLines.append(request.body)
+        }
+
+        if let suggestedFix = request.suggested_fix?.nilIfBlank {
+            bodyLines.append("")
+            bodyLines.append("## Suggested fix")
+            bodyLines.append("")
+            bodyLines.append(suggestedFix)
+        }
+
+        return (frontmatterLines + bodyLines).joined(separator: "\n") + "\n"
+    }
+
+    private func conversationSection(from body: String) -> String? {
+        guard let range = body.range(of: "## Conversation") else { return nil }
+        return String(body[range.lowerBound...]).trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+    }
+
+    private func yamlEscape(_ value: String) -> String {
+        if value.contains(":") || value.contains("\"") || value.contains("\n") {
+            return "\"\(value.replacingOccurrences(of: "\"", with: "\\\""))\""
+        }
+        return value
     }
 }
 
@@ -34,62 +119,6 @@ final class PreviewHealthChecker {
             return (200..<500).contains(http.statusCode) ? .online : .offline("Preview returned HTTP \(http.statusCode).")
         } catch {
             return .offline("MkDocs preview appears offline. Start it from the book root with `mkdocs serve`.")
-        }
-    }
-}
-
-private final class LocalHTTPClient {
-    private let session: URLSession
-
-    init() {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 8
-        configuration.timeoutIntervalForResource = 20
-        session = URLSession(configuration: configuration)
-    }
-
-    func get<T: Decodable>(baseURL: String, path: String) async throws -> T {
-        let url = try endpoint(baseURL: baseURL, path: path)
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        return try await perform(request)
-    }
-
-    func post<B: Encodable, T: Decodable>(baseURL: String, path: String, body: B) async throws -> T {
-        let url = try endpoint(baseURL: baseURL, path: path)
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder.pretty.encode(body)
-        return try await perform(request)
-    }
-
-    private func endpoint(baseURL: String, path: String) throws -> URL {
-        let trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines).trimmingTrailingSlashes()
-        guard let base = URL(string: trimmed), base.scheme != nil, base.host != nil else {
-            throw FeedbackAPIError.invalidBaseURL
-        }
-        return base.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
-    }
-
-    private func perform<T: Decodable>(_ request: URLRequest) async throws -> T {
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                throw FeedbackAPIError.invalidResponse
-            }
-            guard (200..<300).contains(http.statusCode) else {
-                throw FeedbackAPIError.httpError(statusCode: http.statusCode, body: String(data: data, encoding: .utf8))
-            }
-            do {
-                return try JSONDecoder.flexibleDates.decode(T.self, from: data)
-            } catch {
-                throw FeedbackAPIError.decodingFailed(error.localizedDescription)
-            }
-        } catch let apiError as FeedbackAPIError {
-            throw apiError
-        } catch {
-            throw FeedbackAPIError.transportError(error.localizedDescription)
         }
     }
 }
@@ -200,7 +229,7 @@ final class MkDocsProjectScanner {
 }
 
 enum ChapterResolver {
-    /// Chapter id for `POST /api/review`. The feedback API resolves this to `docs/{id}.md`.
+    /// Chapter id for feedback submission. Maps to `docs/{id}.md`.
     static func feedbackAPIChapterID(_ raw: String, book: BookConfig, chapters: [Chapter], currentURL: URL? = nil) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return trimmed }

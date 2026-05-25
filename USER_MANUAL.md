@@ -37,14 +37,11 @@ This manual describes how to install BookLoop, set up a book project, and use ea
 - **Xcode** (to build and run BookLoop from source)
 - An **MkDocs book project** on disk
 - Optionally, an **OpenAI API key** for Chapter Chat and the built-in **Native Agent** (stored in the macOS Keychain)
-- Optionally, a terminal for running local services:
-  - **MkDocs preview** (`mkdocs serve`)
-  - **Feedback API** (`python scripts/feedback_api.py …`)
+- Optionally, a terminal for running **MkDocs preview** (`mkdocs serve`)
 
 BookLoop does **not** (unless you enable OpenAI features):
 
 - Call external LLM APIs by default — Chapter Chat and the Native Agent are optional and require your OpenAI key
-- Write review Markdown files directly (feedback goes through the Feedback API)
 - Silently rewrite book files or force-apply patches
 
 ---
@@ -73,7 +70,7 @@ BookLoop uses a three-column layout optimized for reading:
 |--------|---------|
 | **Library sidebar (left)** | Books, clickable chapter tree, compact status, Tools launcher, Add/Edit/Delete |
 | **Center** | **Reading mode** — MkDocs preview (default), or **Tools mode** — Reviews, Figures, Tasks, Patches, Agent, or Settings |
-| **Chapter Chat (right)** | OpenAI-powered chat about the current page; **Send as Feedback** submits the transcript to the Feedback API |
+| **Chapter Chat (right)** | OpenAI-powered chat about the current page; **Send as Feedback** saves the transcript to `reviews/review_items/` |
 
 ### Reading vs Tools mode
 
@@ -88,7 +85,7 @@ BookLoop uses a three-column layout optimized for reading:
 The toolbar provides:
 
 - **Refresh** — reloads chapters, reviews, figures, tasks, and patches for the selected book
-- **Check APIs** — checks MkDocs preview and Feedback API connectivity
+- **Check Preview** — checks MkDocs preview connectivity
 
 ---
 
@@ -118,11 +115,24 @@ my-book/
     tasks/                 ← generated Cursor tasks
     patches/               ← .patch / .diff files from agents
       archive/             ← rejected patches moved here
-  scripts/
-    feedback_api.py        ← local feedback server (your book may vary)
 ```
 
 You do not need every folder on day one. BookLoop can infer or suggest paths when you configure a book.
+
+### Git hygiene (book repo)
+
+BookLoop writes **two different kinds of output**:
+
+| Location | Purpose | Commit to git? |
+|----------|---------|----------------|
+| `reviews/` | Human/editor feedback (Markdown review items); BookLoop writes here on Save Review / Send as Feedback | Usually **yes** — this is editorial input |
+| `bookloop/patches/agent-*.patch` | Patch proposals for the Patches tool | **No** until you apply; then commit **`docs/`** changes |
+| `.bookloop/sessions/` | Agent run logs (tool log, diff staging, snapshots) | **No** — ephemeral debug artifacts |
+| `bookloop/patches/archive/` | Applied/rejected patch copies | **No** |
+
+Click **Tools → Agent → Ensure Gitignore** (or **Initialize Config**) to append recommended ignores to your book’s `.gitignore`. After that, session folders disappear from git status.
+
+What you **should** commit after a successful patch workflow: the modified chapter files under `docs/` (Step 3: Commit to git in Patches), not the agent session JSON or `diff-staging/` temp files.
 
 ---
 
@@ -139,7 +149,7 @@ Default URLs:
 | Setting | Default |
 |---------|---------|
 | Preview URL | `http://127.0.0.1:8000` |
-| Feedback API | `http://127.0.0.1:8765` |
+| Review items | `reviews/review_items/` (under project root) |
 
 ### Edit book settings
 
@@ -161,7 +171,7 @@ Select the book and click **Delete** (trash icon). This removes the entry from B
 
 ## 6. Start local services
 
-BookLoop connects to services you run separately in Terminal.
+BookLoop connects to MkDocs preview separately in Terminal.
 
 ### MkDocs preview
 
@@ -173,21 +183,7 @@ mkdocs serve
 
 BookLoop loads the preview URL (default `http://127.0.0.1:8000`) in the center **Reading** column.
 
-### Feedback API
-
-From the book root:
-
-```bash
-python scripts/feedback_api.py --host 127.0.0.1 --port 8765
-```
-
-When you submit feedback (Reviews tool **Save Review** or Chapter Chat **Send as Feedback**), BookLoop POSTs to:
-
-```text
-http://127.0.0.1:8765/api/review
-```
-
-The API is responsible for writing review files under `reviews/review_items/`. BookLoop never writes those files itself.
+Feedback (**Save Review** and **Send as Feedback**) is written directly to `reviews/review_items/` in your book project. No separate server is required.
 
 ---
 
@@ -264,9 +260,8 @@ Chapter Chat lets you ask questions about the page you are reading. It is option
 
 - Each page keeps its own in-memory chat session. Switch chapters and return later — your messages for that page are restored.
 - **Send** — asks OpenAI using the current page text plus chat history.
-- **Send as Feedback** — saves the full conversation as a review item via the Feedback API (requires Feedback API online).
+- **Send as Feedback** — saves the full conversation as a review Markdown file under `reviews/review_items/`.
 - **Clear Chat** — clears the current page’s messages.
-- **Check API** — verifies the Feedback API (needed for **Send as Feedback**).
 
 The chat header shows the page title and detected chapter ID when available.
 
@@ -302,7 +297,7 @@ Click **Submit Review** in the toolbar to show the manual feedback form (moved f
 | Title / Body | Required for **Save Review** |
 | Suggested Fix | Optional |
 
-Use **Use Selected Text**, **Check API**, **Save Review** (⌘Return), and **Clear Form** as before.
+Use **Use Selected Text**, **Save Review** (⌘Return), and **Clear Form**.
 
 ### Filters and organization
 
@@ -404,9 +399,13 @@ The native Agent **does not modify book files on disk**. Each `apply_patch` call
 
 ### Session artifacts
 
-- Each run writes a session folder under `.bookloop/sessions/` (including `proposal.patch`).
+- Each run writes a session folder under **`.bookloop/sessions/<uuid>/`** — tool log JSON, diff staging temp files, and a copy of the proposal patch. These are **debug/audit logs**, not review content.
+- The human-facing patch for **Tools → Patches** is written to **`bookloop/patches/agent-*.patch`**.
+- **Do not commit** `.bookloop/sessions/`. Use **Ensure Gitignore** on the Agent panel to add it to your book’s `.gitignore`.
 - **Delete Proposal Patch** removes the exported proposal from `bookloop/patches/` without changing book content.
 - Staging is limited to paths allowed in `.bookloop/config.json`; protected paths (`.git`, `.bookloop`, etc.) cannot be modified.
+
+**Why not `reviews/`?** The `reviews/` folder holds editor feedback (input). Agent session logs are machine-generated tooling output (like build cache). Keeping them under hidden `.bookloop/` avoids cluttering editorial folders.
 
 Agent settings (max iterations, build timeout, review edits) are in app settings under **Native Agent**.
 
@@ -472,7 +471,7 @@ Full book configuration in one form. Sections:
 
 ### Book
 
-Display name, project root, preview URL, and feedback API URL.
+Display name, project root, and preview URL.
 
 ### Paths
 
@@ -483,7 +482,6 @@ Paths to `mkdocs.yml`, `docs/`, review folders, figure folders, `bookloop/`, sty
 Optional shell commands (reference only unless execution is explicitly allowed):
 
 - MkDocs serve
-- Feedback API
 - Figure generation (supports `<figure-id>` placeholder)
 - Validation
 
@@ -526,7 +524,7 @@ BookLoop is built around explicit, human-visible actions:
 
 - **Chapter Chat** and the **Native Agent** call OpenAI only when you run them and an API key is configured
 - Agent file writes are path-guarded and exported as patch proposals for Patches-tab review before apply
-- No direct writes to review Markdown files (Feedback API writes them)
+- Feedback is written directly to `reviews/review_items/` as Markdown review files
 - No automatic shell execution unless toggles are on and you confirm
 - No silent patch application—always confirm, and run `git apply --check` first
 - Figure regeneration requires both **Allow shell commands** and **Allow figure regeneration**
@@ -552,13 +550,13 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 
 - Confirm `mkdocs serve` is running.
 - Check the preview URL in **Tools → Settings** (default `http://127.0.0.1:8000`).
-- Use toolbar **Check APIs**.
+- Use toolbar **Check Preview**.
 
-### Save Review fails / Feedback API offline
+### Save Review fails
 
-- Start the feedback server from the book root.
-- Verify the Feedback API URL in book settings.
-- Click **Check API** in Chapter Chat or the Reviews feedback form.
+- Confirm the chapter ID matches a file under `docs/` (for example `home` → `docs/home.md`).
+- Ensure BookLoop has folder access to the book project (re-save the book in **Edit** if needed).
+- Check the **review_items** path in Settings and that the folder exists or can be created.
 
 ### Chapter Chat does not respond
 
@@ -594,6 +592,15 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 - Select a book and click **Initialize Config** if `.bookloop/config.json` is missing.
 - Check the tool log and error message in **Tools → Agent**.
 
+### `.bookloop/sessions/` files show as uncommitted in git
+
+These files (`changed_files.json`, `diff.patch`, `project_snapshot.json`, `diff-staging/`, etc.) are **agent session logs**, not book content or reviews.
+
+- **Do not commit them.** They change on every agent run and would clutter git history.
+- In **Tools → Agent**, click **Ensure Gitignore** (or add `.bookloop/sessions/` to your book’s `.gitignore` manually).
+- After that, git will ignore future session folders. Remove any already-tracked session files with `git rm -r --cached .bookloop/sessions/` if you committed them by mistake.
+- What **should** be committed after a successful patch apply is **`docs/`** (and any other manuscript paths you changed), via **Patches → Step 3: Commit to git**.
+
 ### Chapter not detected in preview
 
 - Add `<meta name="chapter-id" content="your-chapter-id">` to your MkDocs theme or chapter templates.
@@ -606,7 +613,6 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 | Service | Default URL |
 |---------|-------------|
 | MkDocs preview | `http://127.0.0.1:8000` |
-| Feedback API | `http://127.0.0.1:8765` |
 
 ---
 

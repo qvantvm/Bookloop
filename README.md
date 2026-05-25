@@ -6,9 +6,9 @@ structured feedback, generate Cursor-ready revision tasks, inspect proposed
 patches, and apply approved diffs safely.
 
 BookLoop does not call external LLM APIs unless you configure an OpenAI key for
-Chapter Chat or the built-in Native Agent. Feedback is submitted through the local
-feedback API, and agent-created changes must pass through human-visible patch
-review (or session revert for in-app agent edits).
+Chapter Chat or the built-in Native Agent. Feedback is saved directly as Markdown
+under `reviews/review_items/`, and agent-created changes must pass through human-visible patch
+review before apply.
 
 ## Expected book structure
 
@@ -49,21 +49,15 @@ BookLoop defaults the preview URL to:
 http://127.0.0.1:8000
 ```
 
-## Start the Feedback API
+## Save feedback locally
 
-From the book root:
-
-```bash
-python scripts/feedback_api.py --host 127.0.0.1 --port 8765
-```
-
-BookLoop submits structured reviews to:
+**Save Review** (Reviews tool) and **Send as Feedback** (Chapter Chat) write Markdown files directly to:
 
 ```text
-http://127.0.0.1:8765/api/review
+reviews/review_items/
 ```
 
-It never writes review Markdown files directly.
+No external feedback server is required.
 
 ## Native Agent (optional)
 
@@ -92,7 +86,7 @@ Use the sidebar Add button and select the MkDocs project root. Defaults:
 
 ```text
 Preview URL: http://127.0.0.1:8000
-Feedback API: http://127.0.0.1:8765
+Review items: reviews/review_items/
 ```
 
 Book settings persist in:
@@ -160,7 +154,7 @@ scheme.
 3. **Target platform and technology**: Swift, SwiftUI, WKWebView, URLSession, Codable, async/await, FileManager, and guarded Process usage; no external packages.
 4. **App name**: Xcode product, bundle display name, target, and window title use `BookLoop`.
 5. **High-level architecture**: Book library, preview, feedback client, review browser, figure manager, task generator, patch manager, and native OpenAI agent with Swift tools are implemented.
-6. **Important local APIs**: Feedback API health checks; optional OpenAI for Chapter Chat and Native Agent.
+6. **Important local APIs**: MkDocs preview health check; optional OpenAI for Chapter Chat and Native Agent.
 7. **Book configuration**: `BookConfig` includes the requested paths, commands, notes, defaults, existing-path inference, and suggested-path filling.
 8. **Persistence**: Book library and selected book ID persist to `~/Library/Application Support/BookLoop/books.json` with auto-save on store updates.
 9. **Main app layout**: Native three-pane `NavigationSplitView` with sidebar, tabbed workspace, and workflow inspector.
@@ -169,8 +163,8 @@ scheme.
 12. **Chapter ID detection**: Detects `meta[name="chapter-id"]`, falls back to URL/file slug, and supports manual override in the feedback panel.
 13. **Selected text capture**: `Use Selected Text` reads `window.getSelection()?.toString()` and appends it to feedback/task context.
 14. **Feedback models**: Requested feedback enums and Codable request/response models are implemented with `suggested_fix`.
-15. **Feedback API client**: URL trimming, async URLSession calls, decoding, HTTP body errors, and offline help text are implemented.
-16. **Feedback panel**: Inspector form supports validation, API check, selected text, save review, clear form, success, and failure states.
+15. **Local feedback writer**: Saves structured review Markdown under `reviews/review_items/` with frontmatter matching the review parser.
+16. **Feedback panel**: Inspector form supports validation, selected text, save review, clear form, success, and failure states.
 17. **Review item browser**: Scans Markdown review items, parses frontmatter/best-effort Markdown, filters, searches, sorts, groups, and displays cumulative/index files.
 18. **Task generation**: Generates Cursor-ready Markdown tasks under `bookloop/tasks/` for reviews, chapters, figures, and validation.
 19. **Native Agent**: OpenAI tool-calling loop with list/read/search/stage-patch/build/git tools; exports proposals to `bookloop/patches/`; `.bookloop/config.json` and session logging.
@@ -180,13 +174,13 @@ scheme.
 23. **Figure management**: Scans Markdown references, output assets, source scripts, and `bookloop/figures.json`; detects missing, stale, unreferenced, and registered figures.
 24. **Figure proposal workflow**: Figure tasks request reproducible sources, output assets, captions, insertion patches, and validation.
 25. **Validation**: Generates validation tasks and can run a configured validation command asynchronously only when shell commands are enabled and confirmed.
-26. **Status dashboard**: Sidebar shows preview, feedback API, reviews, figures, patches, and task counts.
+26. **Status dashboard**: Sidebar shows preview status and open review count.
 27. **Settings UI**: Settings form includes paths, commands, security-scoped bookmarks, safety toggles, and notes; app settings cover OpenAI and native agent limits.
-28. **Safety rules**: No OpenAI calls without a key, no direct feedback-file writes, guarded agent writes with backups, no automatic shell execution, no silent patch application, and explicit confirmations for commands.
+28. **Safety rules**: No OpenAI calls without a key, guarded agent writes exported as patch proposals, no automatic shell execution, no silent patch application, and explicit confirmations for commands.
 29. **Suggested file organization**: Source is organized into the requested top-level folders; several related small types are consolidated into shared Swift files for this v1 scaffold.
 30. **Implementation order**: The branch was built in the requested sequence: shell, library, preview, feedback, chapter detection, reviews, tasks, figures, patches, and polish.
 31. **UI details**: Uses native sidebar sections, toolbar actions, status badges, inspector panels, tabs, empty states, and restrained styling.
 32. **Error handling**: Missing folders, offline APIs, invalid URLs, bad patches, permission issues, and command failures are surfaced as empty states or messages.
-33. **README**: This README documents expected structure, MkDocs/feedback startup, BookLoop setup, workflow, patch safety, and build instructions.
+33. **README**: This README documents expected structure, MkDocs startup, local feedback, BookLoop setup, workflow, patch safety, and build instructions.
 34. **Acceptance criteria**: The app covers all listed v1 acceptance criteria in source; macOS runtime verification requires Xcode on macOS 14+.
 35. **Non-goals for v1**: Rich Markdown editing, collaboration, automatic AI rewriting without review, and a custom MkDocs renderer are intentionally excluded. External Cursor CLI harness is replaced by the native agent.

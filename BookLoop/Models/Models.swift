@@ -6,7 +6,6 @@ struct BookConfig: Identifiable, Codable, Equatable {
     var projectRootPath: String
     var projectRootBookmark: Data?
     var previewURL: String
-    var feedbackAPIBaseURL: String
     var mkdocsConfigPath: String?
     var docsPath: String?
     var reviewsPath: String?
@@ -18,7 +17,6 @@ struct BookConfig: Identifiable, Codable, Equatable {
     var styleGuidePath: String?
     var figuresRegistryPath: String?
     var mkdocsServeCommand: String?
-    var feedbackAPICommand: String?
     var figureGenerationCommand: String?
     var validationCommand: String?
     var allowShellCommands: Bool
@@ -37,7 +35,6 @@ struct BookConfig: Identifiable, Codable, Equatable {
             projectRootPath: projectRootPath,
             projectRootBookmark: nil,
             previewURL: "http://127.0.0.1:8000",
-            feedbackAPIBaseURL: "http://127.0.0.1:8765",
             mkdocsConfigPath: nil,
             docsPath: nil,
             reviewsPath: nil,
@@ -49,7 +46,6 @@ struct BookConfig: Identifiable, Codable, Equatable {
             styleGuidePath: nil,
             figuresRegistryPath: nil,
             mkdocsServeCommand: "mkdocs serve",
-            feedbackAPICommand: "python scripts/feedback_api.py --host 127.0.0.1 --port 8765",
             figureGenerationCommand: nil,
             validationCommand: "mkdocs build",
             allowShellCommands: false,
@@ -229,11 +225,6 @@ struct ReviewResponse: Codable {
     let file: String
 }
 
-struct HealthResponse: Codable, Equatable {
-    let status: String
-    let service: String
-}
-
 enum LocalAPIStatus: Equatable {
     case unknown
     case checking
@@ -248,41 +239,6 @@ enum LocalAPIStatus: Equatable {
         case .online: return "Online"
         case .offline: return "Offline"
         case .notConfigured: return "Not Configured"
-        }
-    }
-}
-
-enum FeedbackAPIError: LocalizedError {
-    case invalidBaseURL
-    case invalidResponse
-    case httpError(statusCode: Int, body: String?)
-    case decodingFailed(String)
-    case transportError(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidBaseURL:
-            return "The API base URL is invalid."
-        case .invalidResponse:
-            return "The API returned an invalid response."
-        case let .httpError(statusCode, body):
-            if let body, !body.isEmpty {
-                return "The API returned HTTP \(statusCode): \(body)"
-            }
-            return "The API returned HTTP \(statusCode)."
-        case let .decodingFailed(message):
-            return "Could not decode the API response: \(message)"
-        case let .transportError(message):
-            if message.localizedCaseInsensitiveContains("refused") || message.localizedCaseInsensitiveContains("could not connect") {
-                return """
-                Feedback API is offline.
-
-                Start it from the book root:
-
-                python scripts/feedback_api.py --host 127.0.0.1 --port 8765
-                """
-            }
-            return message
         }
     }
 }

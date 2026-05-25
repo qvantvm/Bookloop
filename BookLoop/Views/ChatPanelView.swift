@@ -6,7 +6,6 @@ final class ChatPanelModel: ObservableObject {
     @Published private(set) var messages: [ChatMessage] = []
     @Published var draftMessage = ""
     @Published var pageContext = PageChatContext(pageKey: "unknown", chapterID: "")
-    @Published var healthStatus: LocalAPIStatus = .unknown
     @Published var submissionMessage: String?
     @Published var submissionIsError = false
     @Published var chatError: String?
@@ -15,7 +14,6 @@ final class ChatPanelModel: ObservableObject {
 
     private var sessions: [String: [ChatMessage]] = [:]
     private let openAIClient = OpenAIClient()
-    private let feedbackClient = FeedbackAPIClient()
 
     var canSendMessage: Bool {
         !draftMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isSending
@@ -24,7 +22,6 @@ final class ChatPanelModel: ObservableObject {
     var canSubmitFeedback: Bool {
         !messages.isEmpty
             && !pageContext.chapterID.isEmpty
-            && healthStatus == .online
             && !isSubmittingFeedback
     }
 
@@ -32,7 +29,6 @@ final class ChatPanelModel: ObservableObject {
         messages = []
         draftMessage = ""
         pageContext = PageChatContext(pageKey: "unknown", chapterID: "")
-        healthStatus = .unknown
         submissionMessage = nil
         submissionIsError = false
         chatError = nil
@@ -54,20 +50,6 @@ final class ChatPanelModel: ObservableObject {
             pageTitle: pageTitle,
             pageURL: pageURL?.absoluteString
         )
-    }
-
-    func checkHealth(baseURL: String) async {
-        guard !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            healthStatus = .notConfigured
-            return
-        }
-        healthStatus = .checking
-        do {
-            let response = try await feedbackClient.checkHealth(baseURL: baseURL)
-            healthStatus = response.status == "ok" ? .online : .offline(nil)
-        } catch {
-            healthStatus = .offline(error.localizedDescription)
-        }
     }
 
     func sendMessage(webView: WKWebView?, settingsStore: AppSettingsStore) async {
@@ -102,7 +84,7 @@ final class ChatPanelModel: ObservableObject {
         isSending = false
     }
 
-    func submitFeedback(book: BookConfig, chapters: [Chapter], currentURL: URL?) async {
+    func submitFeedback(book: BookConfig, chapters: [Chapter], currentURL: URL?, reviewStore: ReviewStore) async {
         guard canSubmitFeedback else { return }
 
         isSubmittingFeedback = true
@@ -133,9 +115,10 @@ final class ChatPanelModel: ObservableObject {
         )
 
         do {
-            let response = try await feedbackClient.submitReview(baseURL: book.feedbackAPIBaseURL, request: request)
-            submissionMessage = response.ok ? "Saved review: \(response.file)" : "The feedback API did not confirm success."
+            let response = try ReviewItemWriter().write(request: request, book: book)
+            submissionMessage = response.ok ? "Saved review: \(response.file)" : "Could not save review."
             submissionIsError = false
+            reviewStore.refresh(book: book)
         } catch {
             submissionMessage = error.localizedDescription
             submissionIsError = true
@@ -222,7 +205,6 @@ struct ChatPanelView: View {
     @EnvironmentObject private var reviewStore: ReviewStore
     @ObservedObject var model: ChatPanelModel
     @ObservedObject var previewModel: BookPreviewModel
-    @Binding var feedbackStatus: LocalAPIStatus
 
     var body: some View {
         VStack(spacing: 0) {
@@ -244,20 +226,12 @@ struct ChatPanelView: View {
             composer
             footer
         }
-        .onAppear {
-            guard let book = library.selectedBook else { return }
-            Task { await model.checkHealth(baseURL: book.feedbackAPIBaseURL) }
-        }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label("Chapter Chat", systemImage: "bubble.left.and.text.bubble.right.fill")
-                    .font(.headline)
-                Spacer()
-                StatusBadge(title: "Feedback API", status: model.healthStatus)
-            }
+            Label("Chapter Chat", systemImage: "bubble.left.and.text.bubble.right.fill")
+                .font(.headline)
 
             if let pageTitle = model.pageContext.pageTitle {
                 Text(pageTitle)
@@ -334,11 +308,9 @@ struct ChatPanelView: View {
                         await model.submitFeedback(
                             book: book,
                             chapters: projectStore.chapters,
-                            currentURL: previewModel.currentURL
+                            currentURL: previewModel.currentURL,
+                            reviewStore: reviewStore
                         )
-                        if !model.submissionIsError {
-                            reviewStore.refresh(book: book)
-                        }
                     }
                 }
                 .disabled(!model.canSubmitFeedback || library.selectedBook == nil)
@@ -347,15 +319,11 @@ struct ChatPanelView: View {
                     .disabled(model.messages.isEmpty)
 
                 Spacer()
-
-                Button("Check API") {
-                    guard let book = library.selectedBook else { return }
-                    Task {
-                        await model.checkHealth(baseURL: book.feedbackAPIBaseURL)
-                        feedbackStatus = model.healthStatus
-                    }
-                }
             }
+
+            Text("Send as Feedback saves the conversation to reviews/review_items/ in your book project.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
 
             if let chatError = model.chatError {
                 Text(chatError)
@@ -368,12 +336,6 @@ struct ChatPanelView: View {
                     .font(.caption)
                     .foregroundStyle(model.submissionIsError ? .red : .green)
                     .textSelection(.enabled)
-            }
-
-            if case .offline = model.healthStatus {
-                Text("Feedback API is offline. Start it with:\npython scripts/feedback_api.py --host 127.0.0.1 --port 8765")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .padding([.horizontal, .bottom])

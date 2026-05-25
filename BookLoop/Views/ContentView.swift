@@ -17,7 +17,6 @@ struct ContentView: View {
 
     @State private var workspaceMode: WorkspaceMode = .reading
     @State private var previewStatus: LocalAPIStatus = .unknown
-    @State private var feedbackStatus: LocalAPIStatus = .unknown
     @State private var editingBook: BookConfig?
     @State private var showingAppSettings = false
     @State private var isSidebarVisible = true
@@ -78,11 +77,9 @@ struct ContentView: View {
                 Button {
                     Task {
                         await checkPreview()
-                        await checkFeedbackAPI()
-                        await chatModel.checkHealth(baseURL: library.selectedBook?.feedbackAPIBaseURL ?? "")
                     }
                 } label: {
-                    Label("Check APIs", systemImage: "network")
+                    Label("Check Preview", systemImage: "network")
                 }
             }
         }
@@ -94,7 +91,6 @@ struct ContentView: View {
             showingAppSettings: $showingAppSettings,
             isSidebarVisible: $isSidebarVisible,
             previewStatus: previewStatus,
-            feedbackStatus: feedbackStatus,
             chapterItems: effectiveChapterNav,
             currentURL: previewModel.currentURL ?? previewModel.previewURL,
             addBook: addBookFromPanel,
@@ -130,10 +126,9 @@ struct ContentView: View {
             ToolWorkspaceView(
                 workspaceMode: $workspaceMode,
                 tool: tab,
-                feedbackStatus: $feedbackStatus,
-                checkFeedbackAPI: checkFeedbackAPI,
                 isSidebarVisible: $isSidebarVisible,
-                isChatVisible: $isChatVisible
+                isChatVisible: $isChatVisible,
+                showingAppSettings: $showingAppSettings
             )
             .environmentObject(library)
             .environmentObject(projectStore)
@@ -152,8 +147,7 @@ struct ContentView: View {
     private var chatColumn: some View {
         ChatPanelView(
             model: chatModel,
-            previewModel: previewModel,
-            feedbackStatus: $feedbackStatus
+            previewModel: previewModel
         )
         .environmentObject(library)
         .environmentObject(settingsStore)
@@ -188,7 +182,6 @@ struct ContentView: View {
         patchStore.refresh(book: book)
         bookProjectStore.refresh(book: book, currentChapterID: previewModel.detectedChapterID)
         previewStatus = .unknown
-        feedbackStatus = .unknown
 
         guard let book else {
             previewModel.reset()
@@ -196,10 +189,6 @@ struct ContentView: View {
             return
         }
         previewModel.load(book: book)
-        Task {
-            await checkFeedbackAPI()
-            await chatModel.checkHealth(baseURL: book.feedbackAPIBaseURL)
-        }
     }
 
     private func addBookFromPanel() {
@@ -229,21 +218,6 @@ struct ContentView: View {
         previewStatus = .checking
         previewStatus = await PreviewHealthChecker().check(previewURL: book.previewURL)
     }
-
-    private func checkFeedbackAPI() async {
-        guard let book = library.selectedBook else {
-            feedbackStatus = .notConfigured
-            return
-        }
-        feedbackStatus = .checking
-        do {
-            _ = try await FeedbackAPIClient().checkHealth(baseURL: book.feedbackAPIBaseURL)
-            feedbackStatus = .online
-        } catch {
-            feedbackStatus = .offline(error.localizedDescription)
-        }
-        await chatModel.checkHealth(baseURL: book.feedbackAPIBaseURL)
-    }
 }
 
 struct ToolWorkspaceView: View {
@@ -260,10 +234,9 @@ struct ToolWorkspaceView: View {
 
     @Binding var workspaceMode: WorkspaceMode
     let tool: WorkspaceTab
-    @Binding var feedbackStatus: LocalAPIStatus
-    let checkFeedbackAPI: () async -> Void
     @Binding var isSidebarVisible: Bool
     @Binding var isChatVisible: Bool
+    @Binding var showingAppSettings: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -316,20 +289,21 @@ struct ToolWorkspaceView: View {
         case .preview:
             EmptyStateView(title: "Preview", message: "Use Back to Reading to return to the book preview.", systemImage: "safari")
         case .agent:
-            AgentPanelView(model: agentPanelModel, workspaceMode: $workspaceMode)
-                .environmentObject(bookProjectStore)
-                .environmentObject(patchStore)
-                .environmentObject(settingsStore)
-        case .reviews:
-            ReviewBrowserView(
-                book: book,
-                feedbackStatus: $feedbackStatus,
-                checkFeedbackAPI: checkFeedbackAPI
+            AgentPanelView(
+                projectStore: bookProjectStore,
+                settingsStore: settingsStore,
+                model: agentPanelModel,
+                workspaceMode: $workspaceMode,
+                showingAppSettings: $showingAppSettings
             )
-            .environmentObject(reviewStore)
-            .environmentObject(taskStore)
-            .environmentObject(projectStore)
-            .environmentObject(previewModel)
+                .environmentObject(library)
+                .environmentObject(patchStore)
+        case .reviews:
+            ReviewBrowserView(book: book)
+                .environmentObject(reviewStore)
+                .environmentObject(taskStore)
+                .environmentObject(projectStore)
+                .environmentObject(previewModel)
         case .figures:
             FigureBrowserView(book: book)
                 .environmentObject(figureStore)
