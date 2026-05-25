@@ -10,97 +10,6 @@ final class FeedbackAPIClient {
     }
 }
 
-final class AgentHarnessClient {
-    private let healthPaths = ["/api/health", "/health", "/status"]
-    private let taskPaths = ["/api/tasks/fix_reviews", "/tasks/fix_reviews", "/api/tasks", "/tasks"]
-
-    func checkHealth(baseURL: String) async throws -> HealthResponse {
-        var lastError: Error?
-        for path in healthPaths {
-            do {
-                return try await LocalHTTPClient().get(baseURL: baseURL, path: path)
-            } catch {
-                lastError = error
-            }
-        }
-        throw lastError ?? FeedbackAPIError.invalidResponse
-    }
-
-    func submitFixReviewsTask(baseURL: String, request: AgentTaskRequest) async throws -> AgentTaskResponse {
-        var lastError: Error?
-        for path in taskPaths {
-            do {
-                return try await LocalHTTPClient().post(baseURL: baseURL, path: path, body: request)
-            } catch {
-                lastError = error
-            }
-        }
-        throw lastError ?? FeedbackAPIError.invalidResponse
-    }
-
-    func checkCursorCLI(commandTemplate: String, workingDirectory: String) -> LocalAPIStatus {
-        guard let executable = firstCommandToken(in: commandTemplate) else {
-            return .offline("Cursor CLI harness command is empty.")
-        }
-        do {
-            let result = try ShellCommandRunner().run(
-                command: "command -v \(shellQuoted(executable))",
-                workingDirectory: workingDirectory
-            )
-            return result.exitCode == 0 ? .online : .offline("Could not find `\(executable)` in PATH.")
-        } catch {
-            return .offline(error.localizedDescription)
-        }
-    }
-
-    func submitFixReviewsTaskToCursorCLI(
-        commandTemplate: String,
-        workingDirectory: String,
-        taskText: String,
-        taskFilePath: String
-    ) throws -> ShellCommandResult {
-        var command = commandTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty else {
-            throw FeedbackAPIError.transportError("Cursor CLI harness command is empty.")
-        }
-
-        let supportsPlaceholders = command.contains("<task-file>") || command.contains("<task-text>")
-        command = command.replacingOccurrences(of: "<task-file>", with: shellQuoted(taskFilePath))
-        command = command.replacingOccurrences(of: "<task-text>", with: shellQuoted(taskText))
-
-        if !supportsPlaceholders {
-            command += " " + shellQuoted(taskText)
-        }
-
-        return try ShellCommandRunner().run(command: command, workingDirectory: workingDirectory)
-    }
-
-    private func firstCommandToken(in commandTemplate: String) -> String? {
-        let trimmed = commandTemplate.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let tokens = trimmed.split(whereSeparator: \.isWhitespace).map(String.init)
-        for token in tokens {
-            if token.contains("="), !token.hasPrefix("/"), !token.contains("/") {
-                continue
-            }
-            return token.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-        }
-        return nil
-    }
-
-    private func shellQuoted(_ value: String) -> String {
-        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
-    }
-
-    func submitProposeFigureTask(baseURL: String, request: AgentTaskRequest) async throws -> AgentTaskResponse {
-        try await LocalHTTPClient().post(baseURL: baseURL, path: "/api/tasks/propose_figure", body: request)
-    }
-
-    func submitValidationTask(baseURL: String, request: AgentTaskRequest) async throws -> AgentTaskResponse {
-        try await LocalHTTPClient().post(baseURL: baseURL, path: "/api/tasks/run_validation", body: request)
-    }
-}
-
 final class PreviewHealthChecker {
     func check(previewURL: String) async -> LocalAPIStatus {
         let value = previewURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -498,11 +407,36 @@ final class ReviewItemParser {
             severity: frontmatter["severity"],
             section: frontmatter["section"],
             title: title,
-            body: section(named: ["body", "observation", "review", "details"], content: content) ?? bodyWithoutFrontmatterAndTitle(content),
+            body: feedbackBody(from: content),
             suggestedFix: value(frontmatter, keys: ["suggested_fix", "suggestedFix"]) ?? section(named: ["suggested fix", "suggested_fix"], content: content),
+            sourceFile: value(frontmatter, keys: ["source_file", "sourceFile"]),
             status: status,
             createdAt: createdAt
         )
+    }
+
+    private func feedbackBody(from content: String) -> String? {
+        let sections = [
+            section(named: ["observation"], content: content),
+            section(named: ["conversation"], content: content),
+            section(named: ["why this matters"], content: content),
+            section(named: ["body", "review", "details"], content: content)
+        ].compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank }
+
+        if !sections.isEmpty {
+            return sections.joined(separator: "\n\n")
+        }
+        return bodyWithoutFrontmatterAndTitle(content)
+    }
+
+    func conversationSection(from content: String) -> String? {
+        section(named: ["conversation"], content: content)
+    }
+
+    private func isLevel2MarkdownHeading(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("##") else { return false }
+        return !trimmed.dropFirst(2).hasPrefix("#")
     }
 
     private func parseFrontmatter(_ content: String) -> [String: String] {
@@ -539,11 +473,11 @@ final class ReviewItemParser {
 
     private func section(named names: [String], content: String) -> String? {
         let lines = content.components(separatedBy: .newlines)
-        for (index, line) in lines.enumerated() where line.hasPrefix("##") {
+        for (index, line) in lines.enumerated() where isLevel2MarkdownHeading(line) {
             let heading = line.replacingOccurrences(of: "#", with: "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard names.contains(heading) else { continue }
             let rest = lines.dropFirst(index + 1)
-            let sectionLines = rest.prefix { !$0.hasPrefix("##") }
+            let sectionLines = rest.prefix { !isLevel2MarkdownHeading($0) }
             return sectionLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
         }
         return nil
@@ -1115,13 +1049,67 @@ final class MarkdownHTMLRenderer {
     }
 }
 
+enum PatchFileHelpers {
+    static func rootPatchStem(from filename: String) -> String {
+        var stem = URL(fileURLWithPath: filename).deletingPathExtension().lastPathComponent
+        while stem.hasPrefix("reviewed-") {
+            guard let regex = try? NSRegularExpression(pattern: "^reviewed-\\d{8}-\\d{6}-"),
+                  let match = regex.firstMatch(in: stem, range: NSRange(stem.startIndex..., in: stem)),
+                  let range = Range(match.range, in: stem) else { break }
+            stem = String(stem[range.upperBound...])
+        }
+        return stem
+    }
+
+    static func isReviewedCopy(filename: String) -> Bool {
+        filename.hasPrefix("reviewed-")
+    }
+
+    @discardableResult
+    static func archivePatch(at path: String, patchDirectory: String) throws -> String {
+        let source = URL(fileURLWithPath: path)
+        let archiveDirectory = URL(fileURLWithPath: patchDirectory, isDirectory: true)
+            .appendingPathComponent("archive", isDirectory: true)
+        try FileManager.default.createDirectory(at: archiveDirectory, withIntermediateDirectories: true, attributes: nil)
+        var destination = archiveDirectory.appendingPathComponent(source.lastPathComponent)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            let timestamp = DateFormatting.taskFilename.string(from: Date())
+            destination = archiveDirectory.appendingPathComponent(
+                "\(source.deletingPathExtension().lastPathComponent)-\(timestamp).\(source.pathExtension)"
+            )
+        }
+        try FileManager.default.moveItem(at: source, to: destination)
+        return destination.path
+    }
+}
+
 final class PatchParser {
     func scanPatchDirectory(path: String) -> [PatchProposal] {
         let directory = URL(fileURLWithPath: path, isDirectory: true)
         guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey]) else { return [] }
-        return files
+        let all = files
             .filter { ["patch", "diff"].contains($0.pathExtension.lowercased()) }
             .compactMap(parsePatch(url:))
+        return deduplicateVisibleProposals(all)
+    }
+
+    private func deduplicateVisibleProposals(_ all: [PatchProposal]) -> [PatchProposal] {
+        let agents = all.filter { !$0.isReviewedCopy }
+        let agentRoots = Set(agents.map(\.rootStem))
+
+        var latestReviewedByRoot: [String: PatchProposal] = [:]
+        for proposal in all where proposal.isReviewedCopy {
+            guard !agentRoots.contains(proposal.rootStem) else { continue }
+            if let existing = latestReviewedByRoot[proposal.rootStem] {
+                if (proposal.createdAt ?? .distantPast) > (existing.createdAt ?? .distantPast) {
+                    latestReviewedByRoot[proposal.rootStem] = proposal
+                }
+            } else {
+                latestReviewedByRoot[proposal.rootStem] = proposal
+            }
+        }
+
+        return (agents + Array(latestReviewedByRoot.values))
             .sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
     }
 
@@ -1243,8 +1231,8 @@ final class PatchParser {
     }
 
     func reviewedPatchFilename(for proposal: PatchProposal) -> String {
-        let basename = URL(fileURLWithPath: proposal.filePath).deletingPathExtension().lastPathComponent.slugified()
-        return "reviewed-\(DateFormatting.taskFilename.string(from: Date()))-\(basename).patch"
+        let root = proposal.rootStem.slugified()
+        return "reviewed-\(DateFormatting.taskFilename.string(from: Date()))-\(root).patch"
     }
 
     private func markdownPair(for hunk: DiffHunk) -> (before: String, after: String) {
@@ -1413,6 +1401,46 @@ final class PatchApplier {
 
     func gitStatus(book: BookConfig) async throws -> ShellCommandResult {
         try await ShellCommandRunner().runAsync(command: "git status --short", book: book)
+    }
+
+    func gitCommit(message: String, changedPaths: [String], book: BookConfig) async throws -> ShellCommandResult {
+        guard book.allowShellCommands else {
+            throw PatchReviewError.shellCommandsDisabled
+        }
+        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedMessage.isEmpty else {
+            throw PatchReviewError.emptyCommitMessage
+        }
+
+        let addCommand: String
+        let normalizedPaths = changedPaths.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if normalizedPaths.isEmpty {
+            addCommand = "git add -u"
+        } else {
+            addCommand = "git add " + normalizedPaths.map(shellQuoted).joined(separator: " ")
+        }
+
+        let addResult = try await ShellCommandRunner().runAsync(command: addCommand, book: book)
+        guard addResult.exitCode == 0 else { return addResult }
+
+        return try await ShellCommandRunner().runAsync(
+            command: "git commit -m \(shellQuoted(trimmedMessage))",
+            book: book
+        )
+    }
+
+    static func suggestedCommitCommand(message: String, changedPaths: [String], book: BookConfig) -> String {
+        let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let escapedMessage = trimmedMessage.replacingOccurrences(of: "'", with: "'\\''")
+        let normalizedPaths = changedPaths.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let addCommand = normalizedPaths.isEmpty
+            ? "git add -u"
+            : "git add " + normalizedPaths.map { "'\($0.replacingOccurrences(of: "'", with: "'\\''"))'" }.joined(separator: " ")
+        return """
+        cd '\(book.projectRootPath.replacingOccurrences(of: "'", with: "'\\''"))'
+        \(addCommand)
+        git commit -m '\(escapedMessage)'
+        """
     }
 
     private func shellQuoted(_ path: String) -> String {

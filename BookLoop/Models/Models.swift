@@ -7,8 +7,6 @@ struct BookConfig: Identifiable, Codable, Equatable {
     var projectRootBookmark: Data?
     var previewURL: String
     var feedbackAPIBaseURL: String
-    var agentHarnessBaseURL: String?
-    var cursorCLIHarnessCommand: String?
     var mkdocsConfigPath: String?
     var docsPath: String?
     var reviewsPath: String?
@@ -36,8 +34,6 @@ struct BookConfig: Identifiable, Codable, Equatable {
             projectRootBookmark: nil,
             previewURL: "http://127.0.0.1:8000",
             feedbackAPIBaseURL: "http://127.0.0.1:8765",
-            agentHarnessBaseURL: "http://127.0.0.1:8770",
-            cursorCLIHarnessCommand: nil,
             mkdocsConfigPath: nil,
             docsPath: nil,
             reviewsPath: nil,
@@ -297,6 +293,7 @@ struct ReviewItem: Identifiable, Codable, Equatable {
     var title: String
     var body: String?
     var suggestedFix: String?
+    var sourceFile: String?
     var status: ReviewStatus
     var createdAt: Date?
 }
@@ -341,23 +338,6 @@ enum RevisionTaskMode: String, Codable, CaseIterable, Identifiable {
         case .validateBook: return "Validate Book"
         }
     }
-}
-
-struct AgentTaskRequest: Codable {
-    var bookRoot: String
-    var chapterID: String?
-    var reviewItemIDs: [String]
-    var mode: String
-    var constraints: [String]
-}
-
-struct AgentTaskResponse: Codable {
-    var taskID: String
-    var status: String
-    var summary: String?
-    var patchFile: String?
-    var changedFiles: [String]?
-    var validation: [String: String]?
 }
 
 struct FigureItem: Identifiable, Codable, Equatable {
@@ -405,6 +385,11 @@ struct PatchProposal: Identifiable, Codable, Equatable {
     var createdAt: Date?
     var changedFiles: [String]
     var rawPatch: String
+
+    var rootStem: String { PatchFileHelpers.rootPatchStem(from: title) }
+    var isReviewedCopy: Bool { PatchFileHelpers.isReviewedCopy(filename: title) }
+    var displayTitle: String { rootStem }
+    var kindLabel: String { isReviewedCopy ? "Reviewed copy" : "Agent proposal" }
 }
 
 struct DiffFile: Identifiable, Equatable {
@@ -470,6 +455,7 @@ struct RenderedPatchBlock: Identifiable, Equatable {
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {
     case preview = "Preview"
+    case agent = "Agent"
     case reviews = "Reviews"
     case figures = "Figures"
     case tasks = "Tasks"

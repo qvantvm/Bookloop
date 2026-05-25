@@ -44,3 +44,6 @@ fastlane/test_output
 *.log
 *.tmp
 *~
+
+# BookLoop agent session logs (config.json is committable)
+**/.bookloop/sessions/

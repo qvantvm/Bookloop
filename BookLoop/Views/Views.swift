@@ -175,130 +175,6 @@ struct FeedbackPanelView: View {
     }
 }
 
-struct AgentHarnessPanel: View {
-    @EnvironmentObject private var reviewStore: ReviewStore
-    let book: BookConfig
-    @Binding var agentStatus: LocalAPIStatus
-    let checkAgentHarness: () async -> Void
-    @State private var message: String?
-    @State private var isSubmittingHarnessTask = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Cursor CLI Harness")
-                    .font(.headline)
-                Spacer()
-                StatusBadge(title: "Harness", status: agentStatus)
-            }
-            Text("Task-file generation is still the default. Optional submission can use either a local cursor_cli command or an HTTP harness endpoint.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack {
-                Button("Check Harness") {
-                    Task { await checkAgentHarness() }
-                }
-                Button(isSubmittingHarnessTask ? "Sending..." : "Fix Reviews") {
-                    Task { await sendTask(mode: .fixReviews) }
-                }
-                .disabled(isSubmittingHarnessTask || agentStatus != .online)
-                Button("Propose Figure") {
-                    Task { await sendTask(mode: .proposeFigure) }
-                }
-                .disabled(isSubmittingHarnessTask || agentStatus != .online)
-                Button("Run Validation") {
-                    Task { await sendTask(mode: .validateBook) }
-                }
-                .disabled(isSubmittingHarnessTask || agentStatus != .online)
-            }
-            if let command = book.cursorCLIHarnessCommand?.nilIfBlank {
-                Text("cursor_cli command: \(command)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            } else if let baseURL = book.agentHarnessBaseURL?.nilIfBlank {
-                Text("HTTP endpoint: \(baseURL)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-            if let message {
-                Text(message)
-                    .font(.caption)
-                    .textSelection(.enabled)
-            }
-        }
-    }
-
-    private func sendTask(mode: RevisionTaskMode) async {
-        isSubmittingHarnessTask = true
-        defer { isSubmittingHarnessTask = false }
-
-        let selected = reviewStore.items.filter { reviewStore.selectedIDs.contains($0.id) }
-        if mode == .fixReviews && selected.isEmpty {
-            message = "Select at least one review item before sending a harness task."
-            return
-        }
-
-        if let commandTemplate = book.cursorCLIHarnessCommand?.nilIfBlank {
-            do {
-                let generatedTask = try TaskGenerator().generateTask(
-                    book: book,
-                    mode: mode,
-                    chapterID: selected.compactMap(\.chapter).first,
-                    reviewItems: selected,
-                    selectedText: nil
-                )
-                let result = try AgentHarnessClient().submitFixReviewsTaskToCursorCLI(
-                    commandTemplate: commandTemplate,
-                    workingDirectory: book.projectRootPath,
-                    taskText: generatedTask.text,
-                    taskFilePath: generatedTask.url.path
-                )
-                let output = result.combinedOutput.trimmingCharacters(in: .whitespacesAndNewlines)
-                let summary = output.isEmpty ? "No output returned." : String(output.prefix(1200))
-                message = """
-                cursor_cli command finished with exit code \(result.exitCode).
-                Task file: \(generatedTask.url.lastPathComponent)
-
-                \(summary)
-                """
-            } catch {
-                message = error.localizedDescription
-            }
-            return
-        }
-
-        guard let baseURL = book.agentHarnessBaseURL?.nilIfBlank else {
-            message = "Cursor CLI harness is not configured."
-            return
-        }
-
-        let request = AgentTaskRequest(
-            bookRoot: book.projectRootPath,
-            chapterID: selected.compactMap(\.chapter).first,
-            reviewItemIDs: selected.map(\.id),
-            mode: mode.rawValue,
-            constraints: ["Return a unified diff.", "Do not apply changes directly.", "BookLoop must review any patch before it is applied."]
-        )
-        do {
-            let client = AgentHarnessClient()
-            let response: AgentTaskResponse
-            switch mode {
-            case .proposeFigure:
-                response = try await client.submitProposeFigureTask(baseURL: baseURL, request: request)
-            case .validateBook:
-                response = try await client.submitValidationTask(baseURL: baseURL, request: request)
-            default:
-                response = try await client.submitFixReviewsTask(baseURL: baseURL, request: request)
-            }
-            message = "Harness \(mode.displayName) task \(response.taskID): \(response.status)"
-        } catch {
-            message = error.localizedDescription
-        }
-    }
-}
-
 enum ReviewGrouping: String, CaseIterable, Identifiable {
     case none = "None"
     case chapter = "Chapter"
@@ -766,100 +642,82 @@ struct TaskBrowserView: View {
     @EnvironmentObject private var webModel: WebViewModel
 
     let book: BookConfig
-    @Binding var agentStatus: LocalAPIStatus
-    let checkAgentHarness: () async -> Void
     @State private var selectedURL: URL?
     @State private var validationOutput: String?
     @State private var confirmingValidation = false
     @State private var isRunningValidation = false
-    @State private var showsHarnessPanel = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            HSplitView {
-                VStack {
-                    HStack {
-                        Button("Current Chapter Task") {
-                            taskStore.generate(book: book, mode: .proposePatchOnly, chapterID: webModel.detectedChapterID, reviewItems: [], selectedText: webModel.selectedText)
-                        }
-                        Button("Validation Task") {
-                            taskStore.generate(book: book, mode: .validateBook, chapterID: nil, reviewItems: [], selectedText: nil)
-                        }
-                        Button(isRunningValidation ? "Running Validation..." : "Run Validation Command") {
-                            confirmingValidation = true
-                        }
-                        .disabled(isRunningValidation || !book.allowShellCommands || book.validationCommand?.nilIfBlank == nil)
-                        Button("Refresh") {
-                            taskStore.refresh(book: book)
-                        }
-                        Button(showsHarnessPanel ? "Hide Harness" : "Agent Harness") {
-                            showsHarnessPanel.toggle()
-                        }
+        HSplitView {
+            VStack {
+                HStack {
+                    Button("Current Chapter Task") {
+                        taskStore.generate(book: book, mode: .proposePatchOnly, chapterID: webModel.detectedChapterID, reviewItems: [], selectedText: webModel.selectedText)
                     }
-                    .padding(8)
-                    List(selection: $selectedURL) {
-                        ForEach(taskStore.taskFiles, id: \.self) { url in
-                            VStack(alignment: .leading) {
-                                Text(url.lastPathComponent)
-                                Text(url.path)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
-                            }
-                            .tag(url)
-                        }
+                    Button("Validation Task") {
+                        taskStore.generate(book: book, mode: .validateBook, chapterID: nil, reviewItems: [], selectedText: nil)
+                    }
+                    Button(isRunningValidation ? "Running Validation..." : "Run Validation Command") {
+                        confirmingValidation = true
+                    }
+                    .disabled(isRunningValidation || !book.allowShellCommands || book.validationCommand?.nilIfBlank == nil)
+                    Button("Refresh") {
+                        taskStore.refresh(book: book)
                     }
                 }
-                .frame(minWidth: 320)
+                .padding(8)
+                List(selection: $selectedURL) {
+                    ForEach(taskStore.taskFiles, id: \.self) { url in
+                        VStack(alignment: .leading) {
+                            Text(url.lastPathComponent)
+                            Text(url.path)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        .tag(url)
+                    }
+                }
+            }
+            .frame(minWidth: 320)
 
-                VStack(alignment: .leading, spacing: 10) {
-                    if let selectedURL {
-                        Text(selectedURL.lastPathComponent)
+            VStack(alignment: .leading, spacing: 10) {
+                if let selectedURL {
+                    Text(selectedURL.lastPathComponent)
+                        .font(.headline)
+                    ScrollView {
+                        Text((try? String(contentsOf: selectedURL, encoding: .utf8)) ?? "")
+                            .font(.system(.body, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding()
+                    }
+                    HStack {
+                        Button("Open Task in Finder") { FileHelpers.openInFinder(path: selectedURL.path) }
+                        Button("Copy Task Text") {
+                            FileHelpers.copyToPasteboard((try? String(contentsOf: selectedURL, encoding: .utf8)) ?? "")
+                        }
+                    }
+                    .padding([.horizontal, .bottom])
+                    if let validationOutput {
+                        Divider()
+                        Text("Validation Output")
                             .font(.headline)
+                            .padding(.horizontal)
                         ScrollView {
-                            Text((try? String(contentsOf: selectedURL, encoding: .utf8)) ?? "")
-                                .font(.system(.body, design: .monospaced))
+                            Text(validationOutput)
+                                .font(.system(.caption, design: .monospaced))
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding()
                         }
-                        HStack {
-                            Button("Open Task in Finder") { FileHelpers.openInFinder(path: selectedURL.path) }
-                            Button("Copy Task Text") {
-                                FileHelpers.copyToPasteboard((try? String(contentsOf: selectedURL, encoding: .utf8)) ?? "")
-                            }
-                        }
-                        .padding([.horizontal, .bottom])
-                        if let validationOutput {
-                            Divider()
-                            Text("Validation Output")
-                                .font(.headline)
-                                .padding(.horizontal)
-                            ScrollView {
-                                Text(validationOutput)
-                                    .font(.system(.caption, design: .monospaced))
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding()
-                            }
-                            .frame(maxHeight: 180)
-                        }
-                    } else {
-                        EmptyStateView(title: "No Task Selected", message: "Generate or select a Cursor-ready task file.", systemImage: "checklist")
+                        .frame(maxHeight: 180)
                     }
+                } else {
+                    EmptyStateView(title: "No Task Selected", message: "Generate or select a Cursor-ready task file.", systemImage: "checklist")
                 }
-                .frame(minWidth: 420)
             }
-
-            if showsHarnessPanel {
-                Divider()
-                ScrollView {
-                    AgentHarnessPanel(book: book, agentStatus: $agentStatus, checkAgentHarness: checkAgentHarness)
-                        .environmentObject(reviewStore)
-                        .padding()
-                }
-                .frame(maxHeight: 220)
-            }
+            .frame(minWidth: 420)
         }
         .onAppear {
             taskStore.refresh(book: book)
@@ -890,16 +748,28 @@ struct TaskBrowserView: View {
     }
 }
 
+enum PatchApplicabilityStatus: Equatable {
+    case unknown
+    case checking
+    case applicable
+    case alreadyApplied(String)
+    case checkFailed(String)
+}
+
 enum PatchReviewError: LocalizedError {
     case noSelectedPatch
     case noAcceptedBlocks
     case emptyReviewedPatch
+    case shellCommandsDisabled
+    case emptyCommitMessage
 
     var errorDescription: String? {
         switch self {
         case .noSelectedPatch: return "No patch proposal is selected."
         case .noAcceptedBlocks: return "Accept at least one rendered block before generating a reviewed patch."
         case .emptyReviewedPatch: return "The reviewed patch is empty."
+        case .shellCommandsDisabled: return "Shell commands are disabled for this book. Enable Allow shell commands in Settings, or copy the git commit command and run it in Terminal."
+        case .emptyCommitMessage: return "Enter a commit message before committing."
         }
     }
 }
@@ -914,6 +784,10 @@ struct PatchReviewView: View {
     @State private var isRunningPatchCommand = false
     @State private var confirmingApplyFullPatch = false
     @State private var confirmingApplyAcceptedBlocks = false
+    @State private var confirmingCommit = false
+    @State private var commitMessage = ""
+    @State private var commitOutput: String?
+    @State private var patchApplicabilityStatus: PatchApplicabilityStatus = .unknown
     @State private var blockDecisions: [String: PatchBlockDecision] = [:]
 
     private var renderedBlocks: [RenderedPatchBlock] {
@@ -942,14 +816,20 @@ struct PatchReviewView: View {
                 saveOutput: $saveOutput,
                 preflightOutput: $preflightOutput,
                 gitStatusOutput: $gitStatusOutput,
+                patchApplicabilityStatus: patchApplicabilityStatus,
                 isRunningPatchCommand: isRunningPatchCommand,
                 confirmingApplyFullPatch: $confirmingApplyFullPatch,
                 confirmingApplyAcceptedBlocks: $confirmingApplyAcceptedBlocks,
+                confirmingCommit: $confirmingCommit,
+                commitMessage: $commitMessage,
+                commitOutput: $commitOutput,
                 copyAcceptedPatch: copyAcceptedPatch,
                 saveAcceptedPatch: saveAcceptedPatch,
                 checkOriginalPatch: checkOriginalPatch,
                 checkAcceptedBlocksPatch: checkAcceptedBlocksPatch,
-                refreshGitStatus: refreshGitStatus
+                refreshGitStatus: refreshGitStatus,
+                copyCommitCommand: copyCommitCommand,
+                commitAppliedChanges: { confirmingCommit = true }
             )
             .frame(minWidth: 280)
         }
@@ -959,6 +839,16 @@ struct PatchReviewView: View {
             saveOutput = nil
             preflightOutput = nil
             gitStatusOutput = nil
+            commitOutput = nil
+            commitMessage = defaultCommitMessage(for: patchStore.selectedProposal)
+            patchApplicabilityStatus = .unknown
+            Task { await checkSelectedPatchApplicability() }
+        }
+        .onAppear {
+            if commitMessage.isEmpty {
+                commitMessage = defaultCommitMessage(for: patchStore.selectedProposal)
+            }
+            Task { await checkSelectedPatchApplicability() }
         }
         .alert("Apply full patch?", isPresented: $confirmingApplyFullPatch) {
             Button("Cancel", role: .cancel) {}
@@ -976,6 +866,19 @@ struct PatchReviewView: View {
         } message: {
             Text("BookLoop will write a reviewed patch containing only accepted rendered blocks, run git apply --check, then apply it if the check succeeds.")
         }
+        .alert("Commit applied changes?", isPresented: $confirmingCommit) {
+            Button("Cancel", role: .cancel) {}
+            Button("Commit", role: .destructive) {
+                Task { await commitAppliedChanges() }
+            }
+        } message: {
+            Text("BookLoop will run git add on the patch's changed files, then git commit with your message. Commit only after Apply Accepted Blocks or Apply Full Original Patch has succeeded.")
+        }
+    }
+
+    private func defaultCommitMessage(for proposal: PatchProposal?) -> String {
+        guard let proposal else { return "Apply BookLoop patch" }
+        return "Apply BookLoop patch: \(proposal.rootStem)"
     }
 
     private var patchListPane: some View {
@@ -991,12 +894,19 @@ struct PatchReviewView: View {
             .padding(8)
 
             List(patchStore.proposals, selection: $patchStore.selectedProposalID) { proposal in
-                VStack(alignment: .leading) {
-                    Text(proposal.title)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(proposal.displayTitle)
                         .fontWeight(.medium)
-                    Text("\(proposal.changedFiles.count) changed file(s)")
+                        .lineLimit(2)
+                    Text("\(proposal.kindLabel) • \(proposal.changedFiles.count) changed file(s)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if proposal.title != proposal.displayTitle {
+                        Text(proposal.title)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
                 }
                 .tag(proposal.id)
             }
@@ -1141,7 +1051,14 @@ struct PatchReviewView: View {
             let result = try await PatchApplier().applyAsync(patch: proposal, book: book)
             let status = try await PatchApplier().gitStatus(book: book)
             let statusBody = status.combinedOutput.nilIfBlank ?? "Working tree clean."
-            applyOutput = "Full patch exit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status after apply:\n\(statusBody)"
+            if result.exitCode == 0 {
+                archiveAppliedPatches(sourcePath: proposal.filePath, appliedReviewedPath: nil)
+                applyOutput = "Full patch applied successfully.\nExit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status after apply:\n\(statusBody)\n\nPatch archived. Next: Commit Applied Changes, or copy the git commit command."
+            } else {
+                applyOutput = "Full patch exit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status:\n\(statusBody)\n\nIf this patch was already applied, the Before preview is a static snapshot — git apply cannot re-apply the same change."
+            }
+            refreshGitStatus()
+            await checkSelectedPatchApplicability()
         } catch {
             applyOutput = error.localizedDescription
         }
@@ -1156,14 +1073,98 @@ struct PatchReviewView: View {
         applyOutput = "Applying accepted rendered blocks..."
         defer { isRunningPatchCommand = false }
         do {
+            guard let sourceProposal = patchStore.selectedProposal else { throw PatchReviewError.noSelectedPatch }
+            let sourcePath = sourceProposal.filePath
             let reviewedPatchPath = try writeAcceptedPatchToDisk()
             let result = try await PatchApplier().applyPatchFileAsync(path: reviewedPatchPath, book: book)
             let status = try await PatchApplier().gitStatus(book: book)
             let statusBody = status.combinedOutput.nilIfBlank ?? "Working tree clean."
-            applyOutput = "Accepted-block patch: \(reviewedPatchPath)\nExit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status after apply:\n\(statusBody)"
+            if result.exitCode == 0 {
+                archiveAppliedPatches(sourcePath: sourcePath, appliedReviewedPath: reviewedPatchPath)
+                applyOutput = "Accepted blocks applied successfully.\nPatch: \(reviewedPatchPath)\nExit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status after apply:\n\(statusBody)\n\nPatches archived. Next: Commit Applied Changes, or copy the git commit command."
+            } else {
+                applyOutput = "Accepted-block patch: \(reviewedPatchPath)\nExit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status:\n\(statusBody)\n\nIf this patch was already applied, the Before preview is a static snapshot — git apply cannot re-apply the same change."
+            }
             patchStore.refresh(book: book)
+            refreshGitStatus()
+            await checkSelectedPatchApplicability()
         } catch {
             applyOutput = error.localizedDescription
+        }
+    }
+
+    private func archiveAppliedPatches(sourcePath: String, appliedReviewedPath: String?) {
+        var archivedNames: [String] = []
+        if let appliedReviewedPath {
+            if let destination = try? PatchFileHelpers.archivePatch(at: appliedReviewedPath, patchDirectory: book.patchDirectoryPath) {
+                archivedNames.append(URL(fileURLWithPath: destination).lastPathComponent)
+            }
+        }
+        if sourcePath != appliedReviewedPath {
+            if let destination = try? PatchFileHelpers.archivePatch(at: sourcePath, patchDirectory: book.patchDirectoryPath) {
+                archivedNames.append(URL(fileURLWithPath: destination).lastPathComponent)
+            }
+        }
+        patchStore.refresh(book: book)
+        if !archivedNames.isEmpty {
+            applyOutput = (applyOutput ?? "") + "\n\nArchived: \(archivedNames.joined(separator: ", "))"
+        }
+    }
+
+    private func checkSelectedPatchApplicability() async {
+        guard let proposal = patchStore.selectedProposal else {
+            patchApplicabilityStatus = .unknown
+            return
+        }
+        patchApplicabilityStatus = .checking
+        do {
+            let check = try await PatchApplier().checkPatchFileAsync(path: proposal.filePath, book: book)
+            if check.exitCode == 0 {
+                patchApplicabilityStatus = .applicable
+            } else {
+                let message = check.combinedOutput.nilIfBlank ?? "Patch check failed."
+                if message.localizedCaseInsensitiveContains("already exists")
+                    || message.localizedCaseInsensitiveContains("patch does not apply")
+                    || message.localizedCaseInsensitiveContains("conflict") {
+                    patchApplicabilityStatus = .alreadyApplied(message)
+                } else {
+                    patchApplicabilityStatus = .checkFailed(message)
+                }
+            }
+        } catch {
+            patchApplicabilityStatus = .checkFailed(error.localizedDescription)
+        }
+    }
+
+    private func copyCommitCommand() {
+        let paths = patchStore.selectedProposal?.changedFiles ?? []
+        let command = PatchApplier.suggestedCommitCommand(
+            message: commitMessage.nilIfBlank ?? defaultCommitMessage(for: patchStore.selectedProposal),
+            changedPaths: paths,
+            book: book
+        )
+        FileHelpers.copyToPasteboard(command)
+        commitOutput = "Copied git commit command to the clipboard."
+    }
+
+    private func commitAppliedChanges() async {
+        guard book.allowShellCommands else {
+            commitOutput = PatchReviewError.shellCommandsDisabled.localizedDescription
+            return
+        }
+        isRunningPatchCommand = true
+        commitOutput = "Running git add and git commit..."
+        defer { isRunningPatchCommand = false }
+        do {
+            let paths = patchStore.selectedProposal?.changedFiles ?? []
+            let message = commitMessage.nilIfBlank ?? defaultCommitMessage(for: patchStore.selectedProposal)
+            let result = try await PatchApplier().gitCommit(message: message, changedPaths: paths, book: book)
+            let status = try await PatchApplier().gitStatus(book: book)
+            let statusBody = status.combinedOutput.nilIfBlank ?? "Working tree clean."
+            commitOutput = "git commit exit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status after commit:\n\(statusBody)"
+            refreshGitStatus()
+        } catch {
+            commitOutput = error.localizedDescription
         }
     }
 }
@@ -1295,14 +1296,20 @@ struct PatchActionPanel: View {
     @Binding var saveOutput: String?
     @Binding var preflightOutput: String?
     @Binding var gitStatusOutput: String?
+    let patchApplicabilityStatus: PatchApplicabilityStatus
     let isRunningPatchCommand: Bool
     @Binding var confirmingApplyFullPatch: Bool
     @Binding var confirmingApplyAcceptedBlocks: Bool
+    @Binding var confirmingCommit: Bool
+    @Binding var commitMessage: String
+    @Binding var commitOutput: String?
     let copyAcceptedPatch: () -> Void
     let saveAcceptedPatch: () -> Void
     let checkOriginalPatch: () -> Void
     let checkAcceptedBlocksPatch: () -> Void
     let refreshGitStatus: () -> Void
+    let copyCommitCommand: () -> Void
+    let commitAppliedChanges: () -> Void
     @State private var confirmingArchive = false
     @State private var archiveOutput: String?
 
@@ -1310,18 +1317,66 @@ struct PatchActionPanel: View {
     private var rejectedCount: Int { decisions.values.filter { $0 == .rejected }.count }
     private var pendingCount: Int { blocks.count - acceptedCount - rejectedCount }
 
+    private var isAlreadyApplied: Bool {
+        if case .alreadyApplied = patchApplicabilityStatus { return true }
+        return false
+    }
+
+    @ViewBuilder
+    private var patchApplicabilityLabel: some View {
+        switch patchApplicabilityStatus {
+        case .unknown:
+            Text("Select a patch to check whether it can still be applied.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .checking:
+            Text("Checking git apply --check…")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .applicable:
+            Label("Ready to apply", systemImage: "checkmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.green)
+        case .alreadyApplied:
+            Label("Likely already applied — re-applying the same patch will fail", systemImage: "exclamationmark.triangle.fill")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        case .checkFailed(let message):
+            Label("Patch check failed", systemImage: "xmark.circle.fill")
+                .font(.caption)
+                .foregroundStyle(.red)
+            Text(message)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Rendered Patch Review")
                 .font(.headline)
             if let proposal {
-                Text(proposal.title)
+                Text(proposal.displayTitle)
                     .fontWeight(.medium)
+                Text(proposal.kindLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 if let summary = proposal.summary {
                     Text(summary)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
+                }
+
+                GroupBox("Patch Status") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        patchApplicabilityLabel
+                        Text("Before/After previews are a static snapshot from the patch file. They still show TBD text even after a successful apply.")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
                 }
 
                 GroupBox("Block Decisions") {
@@ -1359,7 +1414,27 @@ struct PatchActionPanel: View {
                 Button(isRunningPatchCommand ? "Patch Command Running..." : "Apply Accepted Blocks", role: .destructive) {
                     confirmingApplyAcceptedBlocks = true
                 }
-                .disabled(isRunningPatchCommand || !book.allowPatchApply || acceptedCount == 0)
+                .disabled(isRunningPatchCommand || !book.allowPatchApply || acceptedCount == 0 || isAlreadyApplied)
+
+                GroupBox("Commit After Apply") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Accept blocks → Apply Accepted Blocks writes files to disk. Then commit here (or copy the command for Terminal).")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        TextField("Commit message", text: $commitMessage)
+                        Button("Copy Git Commit Command") { copyCommitCommand() }
+                        Button(isRunningPatchCommand ? "Patch Command Running..." : "Commit Applied Changes") {
+                            commitAppliedChanges()
+                        }
+                        .disabled(isRunningPatchCommand || !book.allowShellCommands || commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        if !book.allowShellCommands {
+                            Text("Enable Allow shell commands in book Settings to commit from BookLoop.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
 
                 Divider()
 
@@ -1370,7 +1445,7 @@ struct PatchActionPanel: View {
                 Button(isRunningPatchCommand ? "Patch Command Running..." : "Apply Full Original Patch", role: .destructive) {
                     confirmingApplyFullPatch = true
                 }
-                .disabled(isRunningPatchCommand || !book.allowPatchApply)
+                .disabled(isRunningPatchCommand || !book.allowPatchApply || isAlreadyApplied)
                 Button("Reject / Archive Original Patch") {
                     confirmingArchive = true
                 }
@@ -1400,6 +1475,11 @@ struct PatchActionPanel: View {
                         .font(.caption)
                         .textSelection(.enabled)
                 }
+                if let commitOutput {
+                    Text(commitOutput)
+                        .font(.caption)
+                        .textSelection(.enabled)
+                }
             } else {
                 Text("Select a patch proposal to review rendered before/after blocks.")
                     .foregroundStyle(.secondary)
@@ -1422,16 +1502,8 @@ struct PatchActionPanel: View {
     private func archivePatch() {
         guard let proposal else { return }
         do {
-            let source = URL(fileURLWithPath: proposal.filePath)
-            let archiveDirectory = URL(fileURLWithPath: book.patchDirectoryPath, isDirectory: true).appendingPathComponent("archive", isDirectory: true)
-            try FileManager.default.createDirectory(at: archiveDirectory, withIntermediateDirectories: true, attributes: nil)
-            var destination = archiveDirectory.appendingPathComponent(source.lastPathComponent)
-            if FileManager.default.fileExists(atPath: destination.path) {
-                let timestamp = DateFormatting.taskFilename.string(from: Date())
-                destination = archiveDirectory.appendingPathComponent("\(source.deletingPathExtension().lastPathComponent)-\(timestamp).\(source.pathExtension)")
-            }
-            try FileManager.default.moveItem(at: source, to: destination)
-            archiveOutput = "Archived to \(destination.path). Refresh patches to update the list."
+            let destination = try PatchFileHelpers.archivePatch(at: proposal.filePath, patchDirectory: book.patchDirectoryPath)
+            archiveOutput = "Archived to \(destination). Refresh patches to update the list."
         } catch {
             archiveOutput = error.localizedDescription
         }
@@ -1520,7 +1592,6 @@ struct BookSettingsForm: View {
                 LabeledContent("Folder Access", value: draft.projectRootBookmark == nil ? "Bookmark will be captured on save" : "Security-scoped bookmark saved")
                 TextField("Preview URL", text: $draft.previewURL)
                 TextField("Feedback API Base URL", text: $draft.feedbackAPIBaseURL)
-                OptionalTextField("Cursor CLI Harness Base URL", text: $draft.agentHarnessBaseURL)
             }
 
             Section("Paths") {
@@ -1539,7 +1610,6 @@ struct BookSettingsForm: View {
             Section("Commands") {
                 OptionalTextField("MkDocs serve command", text: $draft.mkdocsServeCommand)
                 OptionalTextField("Feedback API command", text: $draft.feedbackAPICommand)
-                OptionalTextField("Cursor CLI harness command", text: $draft.cursorCLIHarnessCommand)
                 OptionalTextField("Figure generation command", text: $draft.figureGenerationCommand)
                 OptionalTextField("Validation command", text: $draft.validationCommand)
             }

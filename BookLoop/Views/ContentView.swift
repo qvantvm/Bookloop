@@ -6,17 +6,18 @@ struct ContentView: View {
     @EnvironmentObject private var settingsStore: AppSettingsStore
 
     @StateObject private var projectStore = ProjectContentStore()
+    @StateObject private var bookProjectStore = BookProjectStore()
     @StateObject private var reviewStore = ReviewStore()
     @StateObject private var figureStore = FigureStore()
     @StateObject private var taskStore = TaskStore()
     @StateObject private var patchStore = PatchStore()
     @StateObject private var previewModel = BookPreviewModel()
     @StateObject private var chatModel = ChatPanelModel()
+    @StateObject private var agentPanelModel = AgentPanelModel()
 
     @State private var workspaceMode: WorkspaceMode = .reading
     @State private var previewStatus: LocalAPIStatus = .unknown
     @State private var feedbackStatus: LocalAPIStatus = .unknown
-    @State private var agentStatus: LocalAPIStatus = .unknown
     @State private var editingBook: BookConfig?
     @State private var showingAppSettings = false
     @State private var isSidebarVisible = true
@@ -29,11 +30,13 @@ struct ContentView: View {
             chatColumn
         }
         .environmentObject(projectStore)
+        .environmentObject(bookProjectStore)
         .environmentObject(reviewStore)
         .environmentObject(figureStore)
         .environmentObject(taskStore)
         .environmentObject(patchStore)
         .environmentObject(previewModel)
+        .environmentObject(agentPanelModel)
         .sheet(item: $editingBook) { book in
             BookSettingsView(book: book) { updated in
                 var updated = updated
@@ -49,7 +52,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingAppSettings) {
             AppSettingsView()
                 .environmentObject(settingsStore)
-                .frame(width: 480)
+                .frame(width: 520)
         }
         .onAppear {
             settingsStore.load()
@@ -58,6 +61,9 @@ struct ContentView: View {
         .onChange(of: library.selectedBookID) {
             workspaceMode = .reading
             refreshProjectState()
+        }
+        .onChange(of: previewModel.detectedChapterID) { _, newValue in
+            bookProjectStore.refresh(book: library.selectedBook, currentChapterID: newValue)
         }
         .onReceive(NotificationCenter.default.publisher(for: .bookLoopReloadPreview)) { _ in
             previewModel.reload()
@@ -73,7 +79,6 @@ struct ContentView: View {
                     Task {
                         await checkPreview()
                         await checkFeedbackAPI()
-                        await checkAgentHarness()
                         await chatModel.checkHealth(baseURL: library.selectedBook?.feedbackAPIBaseURL ?? "")
                     }
                 } label: {
@@ -90,7 +95,6 @@ struct ContentView: View {
             isSidebarVisible: $isSidebarVisible,
             previewStatus: previewStatus,
             feedbackStatus: feedbackStatus,
-            agentStatus: agentStatus,
             chapterItems: effectiveChapterNav,
             currentURL: previewModel.currentURL ?? previewModel.previewURL,
             addBook: addBookFromPanel,
@@ -127,17 +131,18 @@ struct ContentView: View {
                 workspaceMode: $workspaceMode,
                 tool: tab,
                 feedbackStatus: $feedbackStatus,
-                agentStatus: $agentStatus,
-                checkFeedbackAPI: checkFeedbackAPI,
-                checkAgentHarness: checkAgentHarness
+                checkFeedbackAPI: checkFeedbackAPI
             )
             .environmentObject(library)
             .environmentObject(projectStore)
+            .environmentObject(bookProjectStore)
             .environmentObject(reviewStore)
             .environmentObject(figureStore)
             .environmentObject(taskStore)
             .environmentObject(patchStore)
             .environmentObject(previewModel)
+            .environmentObject(settingsStore)
+            .environmentObject(agentPanelModel)
             .frame(minWidth: 500)
         }
     }
@@ -179,10 +184,9 @@ struct ContentView: View {
         figureStore.refresh(book: book)
         taskStore.refresh(book: book)
         patchStore.refresh(book: book)
+        bookProjectStore.refresh(book: book, currentChapterID: previewModel.detectedChapterID)
         previewStatus = .unknown
         feedbackStatus = .unknown
-        let hasHarness = book?.agentHarnessBaseURL?.nilIfBlank != nil || book?.cursorCLIHarnessCommand?.nilIfBlank != nil
-        agentStatus = hasHarness ? .unknown : .notConfigured
 
         guard let book else {
             previewModel.reset()
@@ -238,46 +242,24 @@ struct ContentView: View {
         }
         await chatModel.checkHealth(baseURL: book.feedbackAPIBaseURL)
     }
-
-    private func checkAgentHarness() async {
-        guard let book = library.selectedBook else {
-            agentStatus = .notConfigured
-            return
-        }
-        if let commandTemplate = book.cursorCLIHarnessCommand?.nilIfBlank {
-            agentStatus = .checking
-            agentStatus = AgentHarnessClient().checkCursorCLI(commandTemplate: commandTemplate, workingDirectory: book.projectRootPath)
-            return
-        }
-        guard let baseURL = book.agentHarnessBaseURL?.nilIfBlank else {
-            agentStatus = .notConfigured
-            return
-        }
-        agentStatus = .checking
-        do {
-            _ = try await AgentHarnessClient().checkHealth(baseURL: baseURL)
-            agentStatus = .online
-        } catch {
-            agentStatus = .offline(error.localizedDescription)
-        }
-    }
 }
 
 struct ToolWorkspaceView: View {
     @EnvironmentObject private var library: BookLibraryStore
     @EnvironmentObject private var projectStore: ProjectContentStore
+    @EnvironmentObject private var bookProjectStore: BookProjectStore
     @EnvironmentObject private var reviewStore: ReviewStore
     @EnvironmentObject private var figureStore: FigureStore
     @EnvironmentObject private var taskStore: TaskStore
     @EnvironmentObject private var patchStore: PatchStore
     @EnvironmentObject private var previewModel: BookPreviewModel
+    @EnvironmentObject private var settingsStore: AppSettingsStore
+    @EnvironmentObject private var agentPanelModel: AgentPanelModel
 
     @Binding var workspaceMode: WorkspaceMode
     let tool: WorkspaceTab
     @Binding var feedbackStatus: LocalAPIStatus
-    @Binding var agentStatus: LocalAPIStatus
     let checkFeedbackAPI: () async -> Void
-    let checkAgentHarness: () async -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -312,6 +294,11 @@ struct ToolWorkspaceView: View {
         switch tool {
         case .preview:
             EmptyStateView(title: "Preview", message: "Use Back to Reading to return to the book preview.", systemImage: "safari")
+        case .agent:
+            AgentPanelView(model: agentPanelModel, workspaceMode: $workspaceMode)
+                .environmentObject(bookProjectStore)
+                .environmentObject(patchStore)
+                .environmentObject(settingsStore)
         case .reviews:
             ReviewBrowserView(
                 book: book,
@@ -327,14 +314,10 @@ struct ToolWorkspaceView: View {
                 .environmentObject(figureStore)
                 .environmentObject(taskStore)
         case .tasks:
-            TaskBrowserView(
-                book: book,
-                agentStatus: $agentStatus,
-                checkAgentHarness: checkAgentHarness
-            )
-            .environmentObject(taskStore)
-            .environmentObject(reviewStore)
-            .environmentObject(previewModel)
+            TaskBrowserView(book: book)
+                .environmentObject(taskStore)
+                .environmentObject(reviewStore)
+                .environmentObject(previewModel)
         case .patches:
             PatchReviewView(book: book)
                 .environmentObject(patchStore)

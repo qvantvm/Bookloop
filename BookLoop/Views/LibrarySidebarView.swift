@@ -13,7 +13,6 @@ struct LibrarySidebarView: View {
     @Binding var isSidebarVisible: Bool
     let previewStatus: LocalAPIStatus
     let feedbackStatus: LocalAPIStatus
-    let agentStatus: LocalAPIStatus
     let chapterItems: [ChapterNavItem]
     let currentURL: URL?
     let addBook: () -> Void
@@ -62,7 +61,6 @@ struct LibrarySidebarView: View {
                         CompactStatusRow(
                             previewStatus: previewStatus,
                             feedbackStatus: feedbackStatus,
-                            agentStatus: agentStatus,
                             openReviewCount: reviewStore.openCount
                         )
                     }
@@ -120,6 +118,7 @@ struct LibrarySidebarView: View {
     private func icon(for tab: WorkspaceTab) -> String {
         switch tab {
         case .preview: return "safari"
+        case .agent: return "cpu"
         case .reviews: return "quote.bubble"
         case .figures: return "photo"
         case .tasks: return "checklist"
@@ -139,14 +138,12 @@ struct LibrarySidebarView: View {
 private struct CompactStatusRow: View {
     let previewStatus: LocalAPIStatus
     let feedbackStatus: LocalAPIStatus
-    let agentStatus: LocalAPIStatus
     let openReviewCount: Int
 
     var body: some View {
         HStack(spacing: 8) {
             statusDot(title: "Preview", status: previewStatus)
             statusDot(title: "Feedback", status: feedbackStatus)
-            statusDot(title: "Harness", status: agentStatus)
             Spacer()
             Text("\(openReviewCount) open")
                 .font(.caption)

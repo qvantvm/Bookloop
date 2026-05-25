@@ -17,7 +17,15 @@ struct AppSettingsView: View {
             Form {
                 TextField("OpenAI Model", text: $draftModel)
                 SecureField(settingsStore.hasAPIKey ? "OpenAI API Key (saved)" : "OpenAI API Key", text: $draftAPIKey)
-                Text("Default model: gpt-4.1. Enter the model slug your account supports.")
+
+                Section("Native Agent") {
+                    Stepper("Max tool iterations: \(settingsStore.maxAgentIterations)", value: $settingsStore.maxAgentIterations, in: 1...40)
+                    Stepper("Build timeout (seconds): \(settingsStore.buildTimeoutSeconds)", value: $settingsStore.buildTimeoutSeconds, in: 30...600, step: 30)
+                    Toggle("Allow agent to edit review items", isOn: $settingsStore.allowAgentReviewEdits)
+                    Toggle("Auto-run build after patch apply", isOn: $settingsStore.autoRunBuildAfterAgent)
+                }
+
+                Text("Default model: gpt-4.1 (change to any OpenAI chat model you have access to). No web search — the agent only reads your book repo via local tools. For long reviews, raise max iterations (default 20) or run Apply Review Feedback again after applying the first patch.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -55,6 +63,7 @@ struct AppSettingsView: View {
     private func saveSettings() {
         do {
             try settingsStore.save(openAIModel: draftModel, apiKey: draftAPIKey)
+            settingsStore.saveAgentSettings()
             draftAPIKey = ""
             saveMessage = "Settings saved."
             saveIsError = false

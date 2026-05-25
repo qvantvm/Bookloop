@@ -25,6 +25,19 @@
 		101000000000000000000010 /* BookPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000011 /* BookPreviewView.swift */; };
 		101000000000000000000011 /* ChatPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000012 /* ChatPanelView.swift */; };
 		101000000000000000000012 /* AppSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000013 /* AppSettingsView.swift */; };
+		101000000000000000000013 /* BookProjectConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000014 /* BookProjectConfig.swift */; };
+		101000000000000000000014 /* ProjectMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000015 /* ProjectMap.swift */; };
+		101000000000000000000015 /* ProjectPathGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000016 /* ProjectPathGuard.swift */; };
+		101000000000000000000016 /* ProjectScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000017 /* ProjectScanner.swift */; };
+		101000000000000000000017 /* SearchIndex.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000018 /* SearchIndex.swift */; };
+		101000000000000000000018 /* BookProject.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000019 /* BookProject.swift */; };
+		101000000000000000000019 /* ProcessRunner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001A /* ProcessRunner.swift */; };
+		10100000000000000000001A /* AgentTools.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001B /* AgentTools.swift */; };
+		10100000000000000000001B /* OpenAIToolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001C /* OpenAIToolModels.swift */; };
+		10100000000000000000001C /* AgentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001D /* AgentModels.swift */; };
+		10100000000000000000001D /* BookAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001E /* BookAgent.swift */; };
+		10100000000000000000001E /* AgentPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001F /* AgentPanelView.swift */; };
+		10100000000000000000001F /* AgentPatchExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000020 /* AgentPatchExporter.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -47,6 +60,19 @@
 		102000000000000000000011 /* BookPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookPreviewView.swift; sourceTree = "<group>"; };
 		102000000000000000000012 /* ChatPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatPanelView.swift; sourceTree = "<group>"; };
 		102000000000000000000013 /* AppSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsView.swift; sourceTree = "<group>"; };
+		102000000000000000000014 /* BookProjectConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookProjectConfig.swift; sourceTree = "<group>"; };
+		102000000000000000000015 /* ProjectMap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectMap.swift; sourceTree = "<group>"; };
+		102000000000000000000016 /* ProjectPathGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectPathGuard.swift; sourceTree = "<group>"; };
+		102000000000000000000017 /* ProjectScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProjectScanner.swift; sourceTree = "<group>"; };
+		102000000000000000000018 /* SearchIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchIndex.swift; sourceTree = "<group>"; };
+		102000000000000000000019 /* BookProject.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookProject.swift; sourceTree = "<group>"; };
+		10200000000000000000001A /* ProcessRunner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProcessRunner.swift; sourceTree = "<group>"; };
+		10200000000000000000001B /* AgentTools.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTools.swift; sourceTree = "<group>"; };
+		10200000000000000000001C /* OpenAIToolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIToolModels.swift; sourceTree = "<group>"; };
+		10200000000000000000001D /* AgentModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentModels.swift; sourceTree = "<group>"; };
+		10200000000000000000001E /* BookAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookAgent.swift; sourceTree = "<group>"; };
+		10200000000000000000001F /* AgentPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPanelView.swift; sourceTree = "<group>"; };
+		102000000000000000000020 /* AgentPatchExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPatchExporter.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -83,6 +109,10 @@
 				104000000000000000000004 /* Models */,
 				104000000000000000000005 /* Stores */,
 				104000000000000000000006 /* Services */,
+				10400000000000000000000A /* Project */,
+				10400000000000000000000B /* Agent */,
+				10400000000000000000000C /* Tools */,
+				10400000000000000000000D /* OpenAI */,
 				104000000000000000000007 /* Views */,
 				104000000000000000000008 /* Web */,
 				104000000000000000000009 /* Utilities */,
@@ -127,6 +157,7 @@
 				102000000000000000000011 /* BookPreviewView.swift */,
 				102000000000000000000012 /* ChatPanelView.swift */,
 				102000000000000000000013 /* AppSettingsView.swift */,
+				10200000000000000000001F /* AgentPanelView.swift */,
 				102000000000000000000005 /* Views.swift */,
 			);
 			path = Views;
@@ -147,6 +178,46 @@
 				10200000000000000000000E /* URLHelpers.swift */,
 			);
 			path = Utilities;
+			sourceTree = "<group>";
+		};
+		10400000000000000000000A /* Project */ = {
+			isa = PBXGroup;
+			children = (
+				102000000000000000000014 /* BookProjectConfig.swift */,
+				102000000000000000000015 /* ProjectMap.swift */,
+				102000000000000000000016 /* ProjectPathGuard.swift */,
+				102000000000000000000017 /* ProjectScanner.swift */,
+				102000000000000000000018 /* SearchIndex.swift */,
+				102000000000000000000019 /* BookProject.swift */,
+			);
+			path = Project;
+			sourceTree = "<group>";
+		};
+		10400000000000000000000B /* Agent */ = {
+			isa = PBXGroup;
+			children = (
+				10200000000000000000001D /* AgentModels.swift */,
+				10200000000000000000001E /* BookAgent.swift */,
+				102000000000000000000020 /* AgentPatchExporter.swift */,
+			);
+			path = Agent;
+			sourceTree = "<group>";
+		};
+		10400000000000000000000C /* Tools */ = {
+			isa = PBXGroup;
+			children = (
+				10200000000000000000001A /* ProcessRunner.swift */,
+				10200000000000000000001B /* AgentTools.swift */,
+			);
+			path = Tools;
+			sourceTree = "<group>";
+		};
+		10400000000000000000000D /* OpenAI */ = {
+			isa = PBXGroup;
+			children = (
+				10200000000000000000001C /* OpenAIToolModels.swift */,
+			);
+			path = OpenAI;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -235,6 +306,19 @@
 				101000000000000000000010 /* BookPreviewView.swift in Sources */,
 				101000000000000000000011 /* ChatPanelView.swift in Sources */,
 				101000000000000000000012 /* AppSettingsView.swift in Sources */,
+				101000000000000000000013 /* BookProjectConfig.swift in Sources */,
+				101000000000000000000014 /* ProjectMap.swift in Sources */,
+				101000000000000000000015 /* ProjectPathGuard.swift in Sources */,
+				101000000000000000000016 /* ProjectScanner.swift in Sources */,
+				101000000000000000000017 /* SearchIndex.swift in Sources */,
+				101000000000000000000018 /* BookProject.swift in Sources */,
+				101000000000000000000019 /* ProcessRunner.swift in Sources */,
+				10100000000000000000001A /* AgentTools.swift in Sources */,
+				10100000000000000000001B /* OpenAIToolModels.swift in Sources */,
+				10100000000000000000001C /* AgentModels.swift in Sources */,
+				10100000000000000000001D /* BookAgent.swift in Sources */,
+				10100000000000000000001E /* AgentPanelView.swift in Sources */,
+				10100000000000000000001F /* AgentPatchExporter.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

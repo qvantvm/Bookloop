@@ -1,6 +1,6 @@
 # BookLoop User Manual
 
-BookLoop is a native macOS app for working on MkDocs books. It helps you read the rendered book, ask questions about the current chapter (optional OpenAI chat), capture structured feedback, browse review items, manage figures, generate Cursor-ready revision tasks, and review or apply agent-produced patches—all locally except for optional Chapter Chat.
+BookLoop is a native macOS app for working on MkDocs books. It helps you read the rendered book, ask questions about the current chapter (optional OpenAI chat), run a built-in native agent, capture structured feedback, browse review items, manage figures, generate Cursor-ready revision tasks, and review or apply agent-produced patches.
 
 This manual describes how to install BookLoop, set up a book project, and use each part of the interface.
 
@@ -17,16 +17,17 @@ This manual describes how to install BookLoop, set up a book project, and use ea
 7. [The end-to-end workflow](#7-the-end-to-end-workflow)
 8. [Reading mode (preview)](#8-reading-mode-preview)
 9. [Chapter Chat (right column)](#9-chapter-chat-right-column)
-10. [Tools mode (Reviews, Figures, Tasks, Patches, Settings)](#10-tools-mode-reviews-figures-tasks-patches-settings)
+10. [Tools mode (Reviews, Figures, Tasks, Patches, Agent, Settings)](#10-tools-mode-reviews-figures-tasks-patches-agent-settings)
 11. [Reviews tool](#11-reviews-tool)
 12. [Figures tool](#12-figures-tool)
 13. [Tasks tool](#13-tasks-tool)
-14. [Patches tool](#14-patches-tool)
-15. [Settings tool](#15-settings-tool)
-16. [App settings (OpenAI)](#16-app-settings-openai)
-17. [Safety and permissions](#17-safety-and-permissions)
-18. [Keyboard shortcuts](#18-keyboard-shortcuts)
-19. [Troubleshooting](#19-troubleshooting)
+14. [Agent tool](#14-agent-tool)
+15. [Patches tool](#15-patches-tool)
+16. [Settings tool](#16-settings-tool)
+17. [App settings (OpenAI & native agent)](#17-app-settings-openai--native-agent)
+18. [Safety and permissions](#18-safety-and-permissions)
+19. [Keyboard shortcuts](#19-keyboard-shortcuts)
+20. [Troubleshooting](#20-troubleshooting)
 
 ---
 
@@ -35,15 +36,14 @@ This manual describes how to install BookLoop, set up a book project, and use ea
 - **macOS 14 or newer**
 - **Xcode** (to build and run BookLoop from source)
 - An **MkDocs book project** on disk
-- Optionally, an **OpenAI API key** for Chapter Chat (stored in the macOS Keychain)
+- Optionally, an **OpenAI API key** for Chapter Chat and the built-in **Native Agent** (stored in the macOS Keychain)
 - Optionally, a terminal for running local services:
   - **MkDocs preview** (`mkdocs serve`)
   - **Feedback API** (`python scripts/feedback_api.py …`)
-  - **Cursor CLI harness** (optional, command or HTTP integration)
 
-BookLoop does **not** (unless you enable Chapter Chat):
+BookLoop does **not** (unless you enable OpenAI features):
 
-- Call external LLM APIs by default — Chapter Chat is optional and requires your OpenAI key
+- Call external LLM APIs by default — Chapter Chat and the Native Agent are optional and require your OpenAI key
 - Write review Markdown files directly (feedback goes through the Feedback API)
 - Silently rewrite book files or force-apply patches
 
@@ -72,13 +72,13 @@ BookLoop uses a three-column layout optimized for reading:
 | Column | Purpose |
 |--------|---------|
 | **Library sidebar (left)** | Books, clickable chapter tree, compact status, Tools launcher, Add/Edit/Delete |
-| **Center** | **Reading mode** — MkDocs preview (default), or **Tools mode** — Reviews, Figures, Tasks, Patches, or Settings |
+| **Center** | **Reading mode** — MkDocs preview (default), or **Tools mode** — Reviews, Figures, Tasks, Patches, Agent, or Settings |
 | **Chapter Chat (right)** | OpenAI-powered chat about the current page; **Send as Feedback** submits the transcript to the Feedback API |
 
 ### Reading vs Tools mode
 
 - **Reading mode** (default): the center column shows the book preview. Use the sidebar chapter tree or preview navigation to move between pages.
-- **Tools mode**: choose **Reviews**, **Figures**, **Tasks**, **Patches**, or **Settings** under **Tools** in the sidebar. The center column switches to that tool. Click **Back to Reading** to return to the preview at the same URL.
+- **Tools mode**: choose **Reviews**, **Figures**, **Tasks**, **Patches**, **Agent**, or **Settings** under **Tools** in the sidebar. The center column switches to that tool. Click **Back to Reading** to return to the preview at the same URL.
 
 ### Hide panels
 
@@ -88,7 +88,7 @@ BookLoop uses a three-column layout optimized for reading:
 The toolbar provides:
 
 - **Refresh** — reloads chapters, reviews, figures, tasks, and patches for the selected book
-- **Check APIs** — checks MkDocs preview, Feedback API, and Cursor CLI harness connectivity
+- **Check APIs** — checks MkDocs preview and Feedback API connectivity
 
 ---
 
@@ -109,6 +109,9 @@ my-book/
     cumulative_review.md   ← optional summary
     review_index.json      ← optional index
   figures/                 ← figure source scripts (optional)
+  .bookloop/
+    config.json            ← optional native agent config
+    sessions/              ← native agent session logs
   bookloop/
     style_guide.md
     figures.json
@@ -137,8 +140,6 @@ Default URLs:
 |---------|---------|
 | Preview URL | `http://127.0.0.1:8000` |
 | Feedback API | `http://127.0.0.1:8765` |
-| Cursor CLI Harness URL | `http://127.0.0.1:8770` (optional HTTP mode) |
-| Cursor CLI Harness command | `cursor-agent -p --output-format stream-json --force` (optional command mode) |
 
 ### Edit book settings
 
@@ -187,15 +188,6 @@ http://127.0.0.1:8765/api/review
 ```
 
 The API is responsible for writing review files under `reviews/review_items/`. BookLoop never writes those files itself.
-
-### Cursor CLI harness (optional)
-
-If configured, BookLoop can check harness availability and optionally submit fix-review tasks. You can use either:
-
-- a **cursor_cli command template** (preferred), or
-- an **HTTP harness base URL** (legacy/compatible mode).
-
-**Task file generation** under `bookloop/tasks/` remains the primary workflow; harness submission is optional.
 
 ---
 
@@ -280,7 +272,7 @@ The chat header shows the page title and detected chapter ID when available.
 
 ---
 
-## 10. Tools mode (Reviews, Figures, Tasks, Patches, Settings)
+## 10. Tools mode (Reviews, Figures, Tasks, Patches, Agent, Settings)
 
 Open a tool from **Tools** in the sidebar. The center column switches from preview to that tool. Click **Back to Reading** to restore the preview at the same URL.
 
@@ -288,7 +280,8 @@ Open a tool from **Tools** in the sidebar. The center column switches from previ
 |------|---------|
 | **Reviews** | Browse review items; submit structured feedback |
 | **Figures** | Scan and manage figures |
-| **Tasks** | Generate and view Cursor task files; optional harness |
+| **Tasks** | Generate and view Cursor task files |
+| **Agent** | Built-in OpenAI tool-calling agent with native file/build/git tools |
 | **Patches** | Review and apply agent patches |
 | **Settings** | Per-book configuration |
 
@@ -365,7 +358,7 @@ Click a figure in the left list to inspect it. Status values include **ok**, **m
 
 ## 13. Tasks tool
 
-Shows Markdown task files in `bookloop/tasks/`. Click **Agent Harness** to show harness controls (moved from the old inspector panel).
+Shows Markdown task files in `bookloop/tasks/`.
 
 ### Generate tasks
 
@@ -381,14 +374,45 @@ Select a task file to view its contents. Use **Open Task in Finder** or **Copy T
 
 If a **validation command** is configured (default suggestion: `mkdocs build`) and **Allow shell commands** is enabled, you can run validation from this tool. BookLoop shows a confirmation dialog before executing anything.
 
-### Agent harness panel
+---
 
-- **Check Harness** — health check
-- **Fix Reviews** / other harness actions — submit tasks using the configured cursor_cli command or HTTP harness (optional)
+## 14. Agent tool
+
+The **Native Agent** runs inside BookLoop using OpenAI tool-calling and Swift file/build/git tools. It does not require an external Cursor CLI harness.
+
+### Prerequisites
+
+1. Configure your OpenAI API key in app settings (sidebar gear).
+2. Select a book in the library.
+3. Optionally click **Initialize Config** to create `.bookloop/config.json` in the book root (build command, protected paths, allowed write globs).
+
+### Built-in tasks
+
+| Button | Purpose |
+|--------|---------|
+| **Summarize Project** | Scan chapters, reviews, and config; produce a project summary |
+| **Apply Review Feedback** | Read open review items and propose edits |
+| **Improve Current Chapter** | Improve the chapter detected in Reading mode |
+| **Fix Build Errors** | Run the configured build and attempt fixes |
+| **Run Custom Task** | Run with your optional instruction text |
+
+While a task runs, BookLoop shows a live **Tool Log** (list files, read file, search, stage patch, build, git status/diff). When finished, you see a summary, staged files, and a **patch proposal** written to `bookloop/patches/agent-*.patch`.
+
+### Propose-only workflow
+
+The native Agent **does not modify book files on disk**. Each `apply_patch` call stages an exact-text replacement. At the end of a run, BookLoop exports a unified diff to `bookloop/patches/`. Review and apply it from **Tools → Patches**.
+
+### Session artifacts
+
+- Each run writes a session folder under `.bookloop/sessions/` (including `proposal.patch`).
+- **Delete Proposal Patch** removes the exported proposal from `bookloop/patches/` without changing book content.
+- Staging is limited to paths allowed in `.bookloop/config.json`; protected paths (`.git`, `.bookloop`, etc.) cannot be modified.
+
+Agent settings (max iterations, build timeout, review edits) are in app settings under **Native Agent**.
 
 ---
 
-## 14. Patches tool
+## 15. Patches tool
 
 Review and apply unified-diff patches from `bookloop/patches/*.patch` and `*.diff`.
 
@@ -421,20 +445,34 @@ Decisions apply to **whole rendered blocks**, not individual diff lines.
 | **Copy Original Raw Patch** | Copy full patch text |
 | **Apply Full Original Patch** | Apply entire patch (ignores block decisions); requires confirmation |
 | **Reject / Archive Original Patch** | Move patch to `bookloop/patches/archive/` without changing book content |
+| **Copy Git Commit Command** | Copy `git add` + `git commit` for Terminal (works without shell commands enabled) |
+| **Commit Applied Changes** | After a successful apply, run `git add` on the patch’s changed files and `git commit` (requires **Allow shell commands**) |
 
 Patch application always runs `git apply --check` before `git apply`. BookLoop never force-applies patches.
 
 **Allow patch apply** must be enabled in book settings for apply actions to work.
 
+### End-to-end workflow
+
+1. **Agent** (Tools → Agent → Apply Review Feedback) stages edits and writes **one** `.patch` file under `bookloop/patches/` (it can contain many diff blocks/hunks).
+2. **Patches** — accept/reject each rendered block, then **Apply Accepted Blocks** (or apply the full patch).
+3. **Commit** — use **Commit Applied Changes** on the right panel, or **Copy Git Commit Command** and run it in Terminal.
+
+Selecting blocks only chooses what gets applied; it does not commit. Commit only after apply succeeds and `git status` shows modified files.
+
+For very long reviews, increase **Max tool iterations** in app settings (default 20) or run the agent again after applying the first batch of changes.
+
+**Duplicate patch names:** Each **Apply Accepted Blocks** used to save a new `reviewed-…-reviewed-…` file with the same hunks. BookLoop now names reviewed patches from the root agent file only, hides duplicate reviewed copies in the list, auto-archives patches after a successful apply, and shows **Likely already applied** when `git apply --check` fails.
+
 ---
 
-## 15. Settings tool
+## 16. Settings tool
 
 Full book configuration in one form. Sections:
 
 ### Book
 
-Display name, project root, preview URL, feedback API URL, and optional cursor harness URL.
+Display name, project root, preview URL, and feedback API URL.
 
 ### Paths
 
@@ -446,7 +484,6 @@ Optional shell commands (reference only unless execution is explicitly allowed):
 
 - MkDocs serve
 - Feedback API
-- Cursor CLI harness command (supports `<task-text>` and `<task-file>` placeholders)
 - Figure generation (supports `<figure-id>` placeholder)
 - Validation
 
@@ -464,24 +501,31 @@ Free-form notes stored with the book configuration.
 
 ---
 
-## 16. App settings (OpenAI)
+## 17. App settings (OpenAI & native agent)
 
 Global app settings (not per-book) are opened from the **gear** icon in the sidebar header.
 
 | Setting | Description |
 |---------|-------------|
-| **OpenAI Model** | Model slug sent to the Chat Completions API (default `gpt-4.1`) |
-| **OpenAI API Key** | Stored in the macOS Keychain; required for Chapter Chat |
+| **OpenAI Model** | Model slug for Chapter Chat and the Native Agent (default `gpt-4.1`) |
+| **OpenAI API Key** | Stored in the macOS Keychain; required for Chapter Chat and Agent |
+| **Max tool iterations** | Limit on agent tool-calling loop (1–24) |
+| **Build timeout** | Seconds allowed for agent `run_build` (30–600) |
+| **Allow agent to edit review items** | Lets the agent stage writes under `reviews/` when allowed by config |
+| **Auto-run build after patch apply** | Reserved for future use when applying patches from the Patches tab |
 
-Use **Remove Key** to delete the saved key. Chapter Chat sends the current page text and conversation to OpenAI when you click **Send**.
+Use **Remove Key** to delete the saved key.
+
+Per-book agent path rules live in `.bookloop/config.json` (initialize from **Tools → Agent**).
 
 ---
 
-## 17. Safety and permissions
+## 18. Safety and permissions
 
 BookLoop is built around explicit, human-visible actions:
 
-- **Chapter Chat** calls OpenAI only when you send a message and an API key is configured
+- **Chapter Chat** and the **Native Agent** call OpenAI only when you run them and an API key is configured
+- Agent file writes are path-guarded and exported as patch proposals for Patches-tab review before apply
 - No direct writes to review Markdown files (Feedback API writes them)
 - No automatic shell execution unless toggles are on and you confirm
 - No silent patch application—always confirm, and run `git apply --check` first
@@ -491,7 +535,7 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 
 ---
 
-## 18. Keyboard shortcuts
+## 19. Keyboard shortcuts
 
 | Shortcut | Action |
 |----------|--------|
@@ -502,7 +546,7 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 
 ---
 
-## 19. Troubleshooting
+## 20. Troubleshooting
 
 ### Preview shows blank or error
 
@@ -544,6 +588,12 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 - Set a **Figure generation command** (book-level or per-figure in registry).
 - Confirm the command when prompted.
 
+### Agent does not run
+
+- Open app settings and confirm your OpenAI API key is saved.
+- Select a book and click **Initialize Config** if `.bookloop/config.json` is missing.
+- Check the tool log and error message in **Tools → Agent**.
+
 ### Chapter not detected in preview
 
 - Add `<meta name="chapter-id" content="your-chapter-id">` to your MkDocs theme or chapter templates.
@@ -557,7 +607,6 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 |---------|-------------|
 | MkDocs preview | `http://127.0.0.1:8000` |
 | Feedback API | `http://127.0.0.1:8765` |
-| Cursor CLI harness (HTTP mode) | `http://127.0.0.1:8770` |
 
 ---
 
