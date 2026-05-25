@@ -788,6 +788,8 @@ struct PatchReviewView: View {
     @State private var commitMessage = ""
     @State private var commitOutput: String?
     @State private var patchApplicabilityStatus: PatchApplicabilityStatus = .unknown
+    @State private var isPatchListVisible = true
+    @State private var isActionPanelVisible = true
     @State private var blockDecisions: [String: PatchBlockDecision] = [:]
 
     private var renderedBlocks: [RenderedPatchBlock] {
@@ -800,39 +802,48 @@ struct PatchReviewView: View {
     }
 
     var body: some View {
-        HSplitView {
-            patchListPane
-                .frame(minWidth: 260)
+        VStack(spacing: 0) {
+            patchLayoutToolbar
+            Divider()
+            HSplitView {
+                if isPatchListVisible {
+                    patchListPane
+                        .frame(minWidth: 220, idealWidth: 260, maxWidth: 320)
+                }
 
-            RenderedPatchReviewView(blocks: renderedBlocks, decisions: $blockDecisions)
-                .frame(minWidth: 620)
+                RenderedPatchReviewView(blocks: renderedBlocks, decisions: $blockDecisions)
+                    .frame(minWidth: 420)
 
-            PatchActionPanel(
-                book: book,
-                proposal: patchStore.selectedProposal,
-                blocks: renderedBlocks,
-                decisions: $blockDecisions,
-                applyOutput: $applyOutput,
-                saveOutput: $saveOutput,
-                preflightOutput: $preflightOutput,
-                gitStatusOutput: $gitStatusOutput,
-                patchApplicabilityStatus: patchApplicabilityStatus,
-                isRunningPatchCommand: isRunningPatchCommand,
-                confirmingApplyFullPatch: $confirmingApplyFullPatch,
-                confirmingApplyAcceptedBlocks: $confirmingApplyAcceptedBlocks,
-                confirmingCommit: $confirmingCommit,
-                commitMessage: $commitMessage,
-                commitOutput: $commitOutput,
-                copyAcceptedPatch: copyAcceptedPatch,
-                saveAcceptedPatch: saveAcceptedPatch,
-                checkOriginalPatch: checkOriginalPatch,
-                checkAcceptedBlocksPatch: checkAcceptedBlocksPatch,
-                refreshGitStatus: refreshGitStatus,
-                copyCommitCommand: copyCommitCommand,
-                commitAppliedChanges: { confirmingCommit = true }
-            )
-            .frame(minWidth: 280)
+                if isActionPanelVisible {
+                    PatchActionPanel(
+                        book: book,
+                        proposal: patchStore.selectedProposal,
+                        blocks: renderedBlocks,
+                        decisions: $blockDecisions,
+                        applyOutput: $applyOutput,
+                        saveOutput: $saveOutput,
+                        preflightOutput: $preflightOutput,
+                        gitStatusOutput: $gitStatusOutput,
+                        patchApplicabilityStatus: patchApplicabilityStatus,
+                        isRunningPatchCommand: isRunningPatchCommand,
+                        confirmingApplyFullPatch: $confirmingApplyFullPatch,
+                        confirmingApplyAcceptedBlocks: $confirmingApplyAcceptedBlocks,
+                        confirmingCommit: $confirmingCommit,
+                        commitMessage: $commitMessage,
+                        commitOutput: $commitOutput,
+                        copyAcceptedPatch: copyAcceptedPatch,
+                        saveAcceptedPatch: saveAcceptedPatch,
+                        checkOriginalPatch: checkOriginalPatch,
+                        checkAcceptedBlocksPatch: checkAcceptedBlocksPatch,
+                        refreshGitStatus: refreshGitStatus,
+                        copyCommitCommand: copyCommitCommand,
+                        commitAppliedChanges: { confirmingCommit = true }
+                    )
+                    .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
+                }
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: patchStore.selectedProposalID) {
             blockDecisions.removeAll()
             applyOutput = nil
@@ -879,6 +890,33 @@ struct PatchReviewView: View {
     private func defaultCommitMessage(for proposal: PatchProposal?) -> String {
         guard let proposal else { return "Apply BookLoop patch" }
         return "Apply BookLoop patch: \(proposal.rootStem)"
+    }
+
+    private var patchLayoutToolbar: some View {
+        HStack(spacing: 12) {
+            Button {
+                withAnimation { isPatchListVisible.toggle() }
+            } label: {
+                Text(isPatchListVisible ? "Hide Patch List" : "Show Patch List")
+            }
+            .help(isPatchListVisible ? "Hide the patch file list" : "Show the patch file list")
+
+            Button {
+                withAnimation { isActionPanelVisible.toggle() }
+            } label: {
+                Text(isActionPanelVisible ? "Hide Actions" : "Show Actions")
+            }
+            .help(isActionPanelVisible ? "Hide apply/commit controls" : "Show apply/commit controls")
+
+            Spacer()
+
+            Text("Tip: use Hide Panel / Hide Chat in the bar above to give the diff more horizontal space.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
     }
 
     private var patchListPane: some View {
@@ -1353,10 +1391,11 @@ struct PatchActionPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Rendered Patch Review")
-                .font(.headline)
-            if let proposal {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Rendered Patch Review")
+                    .font(.headline)
+                if let proposal {
                 Text(proposal.displayTitle)
                     .fontWeight(.medium)
                 Text(proposal.kindLabel)
@@ -1484,9 +1523,10 @@ struct PatchActionPanel: View {
                 Text("Select a patch proposal to review rendered before/after blocks.")
                     .foregroundStyle(.secondary)
             }
-            Spacer()
+            }
+            .padding()
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding()
         .alert("Archive original patch proposal?", isPresented: $confirmingArchive) {
             Button("Cancel", role: .cancel) {}
             Button("Archive") { archivePatch() }

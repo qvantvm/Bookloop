@@ -131,7 +131,9 @@ struct ContentView: View {
                 workspaceMode: $workspaceMode,
                 tool: tab,
                 feedbackStatus: $feedbackStatus,
-                checkFeedbackAPI: checkFeedbackAPI
+                checkFeedbackAPI: checkFeedbackAPI,
+                isSidebarVisible: $isSidebarVisible,
+                isChatVisible: $isChatVisible
             )
             .environmentObject(library)
             .environmentObject(projectStore)
@@ -157,7 +159,7 @@ struct ContentView: View {
         .environmentObject(settingsStore)
         .environmentObject(projectStore)
         .environmentObject(reviewStore)
-        .frame(minWidth: isChatVisible ? 300 : 0, idealWidth: 360, maxWidth: isChatVisible ? 420 : 0)
+        .frame(width: isChatVisible ? 360 : 0)
         .clipped()
         .opacity(isChatVisible ? 1 : 0)
         .allowsHitTesting(isChatVisible)
@@ -260,6 +262,8 @@ struct ToolWorkspaceView: View {
     let tool: WorkspaceTab
     @Binding var feedbackStatus: LocalAPIStatus
     let checkFeedbackAPI: () async -> Void
+    @Binding var isSidebarVisible: Bool
+    @Binding var isChatVisible: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -269,6 +273,21 @@ struct ToolWorkspaceView: View {
                 } label: {
                     Label("Back to Reading", systemImage: "book")
                 }
+
+                Button {
+                    withAnimation { isSidebarVisible.toggle() }
+                } label: {
+                    Text(isSidebarVisible ? "Hide Panel" : "Show Panel")
+                }
+                .help(isSidebarVisible ? "Hide books and chapters panel" : "Show books and chapters panel")
+
+                Button {
+                    withAnimation { isChatVisible.toggle() }
+                } label: {
+                    Text(isChatVisible ? "Hide Chat" : "Show Chat")
+                }
+                .help(isChatVisible ? "Hide chapter chat panel" : "Show chapter chat panel")
+
                 Text(tool.rawValue)
                     .font(.headline)
                 Spacer()
@@ -279,6 +298,7 @@ struct ToolWorkspaceView: View {
 
             if let book = library.selectedBook {
                 toolContent(book: book)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 EmptyStateView(
                     title: "No Books Configured",
@@ -287,6 +307,7 @@ struct ToolWorkspaceView: View {
                 )
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     @ViewBuilder
