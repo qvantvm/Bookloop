@@ -152,6 +152,15 @@ struct WebView: NSViewRepresentable {
         let text = try? await webView.evaluateJavaScript(script) as? String
         return text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     }
+
+    static func applyColorScheme(_ mode: PreviewColorSchemeMode, in webView: WKWebView) async {
+        guard let data = try? JSONEncoder().encode(mode.rawValue),
+              let encoded = String(data: data, encoding: .utf8) else {
+            return
+        }
+        let script = "window.BookLoopPreview?.setColorSchemeMode(\(encoded))"
+        _ = try? await webView.evaluateJavaScript(script)
+    }
 }
 
 @MainActor
@@ -175,6 +184,12 @@ final class BookPreviewModel: ObservableObject {
     @Published var loadError: String?
     @Published var navigationHint: String?
     @Published var previewStatus: LocalAPIStatus = .unknown
+
+    var colorSchemeMode: PreviewColorSchemeMode = .system {
+        didSet {
+            renderer.colorSchemeMode = colorSchemeMode
+        }
+    }
 
     private var history: [String] = []
     private var historyIndex = -1
@@ -275,6 +290,16 @@ final class BookPreviewModel: ObservableObject {
         self.webView = webView
         canGoBack = historyIndex > 0
         canGoForward = historyIndex + 1 < history.count
+        Task { await applyColorSchemeToWebView() }
+    }
+
+    func setColorSchemeMode(_ mode: PreviewColorSchemeMode) {
+        colorSchemeMode = mode
+    }
+
+    func applyColorSchemeToWebView() async {
+        guard let webView else { return }
+        await WebView.applyColorScheme(colorSchemeMode, in: webView)
     }
 
     func captureSelectedText() async {

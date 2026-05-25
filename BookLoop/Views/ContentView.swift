@@ -184,6 +184,7 @@ struct ContentView: View {
         }
 
         if let navigation = projectStore.navigationResult {
+            previewModel.setColorSchemeMode(settingsStore.previewColorScheme)
             previewModel.load(book: book, navigation: navigation)
         } else {
             previewModel.reset()

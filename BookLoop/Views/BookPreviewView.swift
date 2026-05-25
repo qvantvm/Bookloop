@@ -3,6 +3,7 @@ import WebKit
 
 struct BookPreviewView: View {
     @EnvironmentObject private var projectStore: ProjectContentStore
+    @EnvironmentObject private var settingsStore: AppSettingsStore
     @ObservedObject var model: BookPreviewModel
     @ObservedObject var chatModel: ChatPanelModel
     @Binding var isSidebarVisible: Bool
@@ -24,6 +25,13 @@ struct BookPreviewView: View {
         }
         .onChange(of: model.autoRefreshEnabled) { _, enabled in
             model.setAutoRefreshEnabled(enabled)
+        }
+        .onAppear {
+            model.setColorSchemeMode(settingsStore.previewColorScheme)
+        }
+        .onChange(of: settingsStore.previewColorScheme) { _, mode in
+            model.setColorSchemeMode(mode)
+            Task { await model.applyColorSchemeToWebView() }
         }
     }
 
@@ -98,6 +106,16 @@ struct BookPreviewView: View {
 
             Toggle("Auto Refresh", isOn: $model.autoRefreshEnabled)
                 .toggleStyle(.checkbox)
+
+            Picker("Preview theme", selection: $settingsStore.previewColorScheme) {
+                ForEach(PreviewColorSchemeMode.allCases) { mode in
+                    Label(mode.label, systemImage: mode.icon).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: 220)
+            .help("Preview color scheme: System follows macOS appearance, Light and Dark override it.")
 
             if let chapter = currentChapter {
                 Button("Open Chapter") {

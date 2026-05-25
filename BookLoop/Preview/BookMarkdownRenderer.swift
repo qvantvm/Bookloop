@@ -51,14 +51,15 @@ enum PreviewHTMLTemplate {
             theme: nil,
             generatedThemeCSS: "",
             usesGeneratedTheme: false
-        )
+        ),
+        colorSchemeMode: PreviewColorSchemeMode = .system
     ) -> String {
         let safeTitle = escapeHTML(title)
         let chapterMeta = chapterID.map { "<meta name=\"chapter-id\" content=\"\(escapeHTML($0))\">" } ?? ""
         let bookStyles = stylesheetTags(styleBundle.stylesheets)
         let htmlAttrs = htmlAttributes(for: styleBundle.theme)
         let bodyClass = bodyClass(for: styleBundle)
-        let themeScript = colorSchemeScript(for: styleBundle.theme)
+        let themeScript = colorSchemeScript(for: styleBundle.theme, mode: colorSchemeMode)
         let generatedCSS = styleBundle.generatedThemeCSS
         return """
         <!doctype html>
@@ -125,22 +126,38 @@ enum PreviewHTMLTemplate {
         return attrs.joined(separator: " ")
     }
 
-    private static func colorSchemeScript(for theme: BookPreviewTheme?) -> String {
+    private static func colorSchemeScript(for theme: BookPreviewTheme?, mode: PreviewColorSchemeMode) -> String {
         guard let theme else { return "" }
         let light = jsonString(theme.lightScheme)
         let dark = jsonString(theme.darkScheme)
+        let initialMode = jsonString(mode.rawValue)
         return """
           <script>
             (function() {
-              function applyBookLoopColorScheme() {
-                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                document.documentElement.setAttribute(
-                  'data-md-color-scheme',
-                  prefersDark ? \(dark) : \(light)
-                );
+              window.BookLoopPreview = window.BookLoopPreview || {};
+              const lightScheme = \(light);
+              const darkScheme = \(dark);
+              let mode = \(initialMode);
+
+              function resolvedScheme() {
+                if (mode === 'light') return lightScheme;
+                if (mode === 'dark') return darkScheme;
+                return window.matchMedia('(prefers-color-scheme: dark)').matches ? darkScheme : lightScheme;
               }
+
+              function applyBookLoopColorScheme() {
+                document.documentElement.setAttribute('data-md-color-scheme', resolvedScheme());
+              }
+
+              window.BookLoopPreview.setColorSchemeMode = function(nextMode) {
+                mode = nextMode;
+                applyBookLoopColorScheme();
+              };
+
               applyBookLoopColorScheme();
-              window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyBookLoopColorScheme);
+              window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function() {
+                if (mode === 'system') applyBookLoopColorScheme();
+              });
             })();
           </script>
         """
@@ -195,6 +212,8 @@ enum BookMarkdownRendererError: LocalizedError {
 }
 
 final class BookMarkdownRenderer {
+    var colorSchemeMode: PreviewColorSchemeMode = .system
+
     func renderChapter(book: BookConfig, relativePath: String) throws -> RenderedBookChapter {
         let normalizedPath = ChapterResolver.normalizedDocsRelativeMarkdownPath(relativePath)
         let docsURL = URL(fileURLWithPath: book.docsPath ?? book.suggestedPath("docs"), isDirectory: true)
@@ -220,7 +239,8 @@ final class BookMarkdownRenderer {
                 title: title,
                 chapterID: chapterID,
                 currentChapterPath: normalizedPath,
-                styleBundle: styleBundle
+                styleBundle: styleBundle,
+                colorSchemeMode: colorSchemeMode
             )
 
             return RenderedBookChapter(

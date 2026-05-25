@@ -18,6 +18,18 @@ struct AppSettingsView: View {
                 TextField("OpenAI Model", text: $draftModel)
                 SecureField(settingsStore.hasAPIKey ? "OpenAI API Key (saved)" : "OpenAI API Key", text: $draftAPIKey)
 
+                Section("Preview") {
+                    Picker("Chapter preview theme", selection: $settingsStore.previewColorScheme) {
+                        ForEach(PreviewColorSchemeMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    Text("System follows macOS light/dark mode. Light and Dark override it for the chapter preview only.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Native Agent") {
                     Stepper("Max tool iterations: \(settingsStore.maxAgentIterations)", value: $settingsStore.maxAgentIterations, in: 1...40)
                     Stepper("Build timeout (seconds): \(settingsStore.buildTimeoutSeconds)", value: $settingsStore.buildTimeoutSeconds, in: 30...600, step: 30)

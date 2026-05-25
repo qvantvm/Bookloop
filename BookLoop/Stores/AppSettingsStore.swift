@@ -8,6 +8,11 @@ final class AppSettingsStore: ObservableObject {
     @Published var buildTimeoutSeconds: Int = 120
     @Published var allowAgentReviewEdits: Bool = false
     @Published var autoRunBuildAfterAgent: Bool = true
+    @Published var previewColorScheme: PreviewColorSchemeMode = .system {
+        didSet {
+            UserDefaults.standard.set(previewColorScheme.rawValue, forKey: Self.previewColorSchemeKey)
+        }
+    }
 
     private(set) var apiKey: String = ""
 
@@ -17,6 +22,10 @@ final class AppSettingsStore: ObservableObject {
         buildTimeoutSeconds = UserDefaults.standard.object(forKey: Self.buildTimeoutKey) as? Int ?? 120
         allowAgentReviewEdits = UserDefaults.standard.bool(forKey: Self.allowReviewEditsKey)
         autoRunBuildAfterAgent = UserDefaults.standard.object(forKey: Self.autoBuildKey) as? Bool ?? true
+        if let raw = UserDefaults.standard.string(forKey: Self.previewColorSchemeKey),
+           let mode = PreviewColorSchemeMode(rawValue: raw) {
+            previewColorScheme = mode
+        }
         apiKey = KeychainStore.loadOpenAIAPIKey() ?? ""
         hasAPIKey = !apiKey.isEmpty
     }
@@ -57,4 +66,5 @@ final class AppSettingsStore: ObservableObject {
     private static let buildTimeoutKey = "bookLoop.buildTimeoutSeconds"
     private static let allowReviewEditsKey = "bookLoop.allowAgentReviewEdits"
     private static let autoBuildKey = "bookLoop.autoRunBuildAfterAgent"
+    private static let previewColorSchemeKey = "bookLoop.previewColorScheme"
 }
