@@ -85,7 +85,7 @@ Book files are not modified until you review and apply the patch in **Tools → 
 
 Requirements:
 
-- OpenAI API key in app settings (Keychain)
+- OpenAI API key in app settings (stored locally on your Mac)
 - Optional `.bookloop/config.json` in the book root (initialize from **Tools → Agent**)
 
 Session logs are stored under `.bookloop/sessions/`. Use **Delete Proposal Patch**

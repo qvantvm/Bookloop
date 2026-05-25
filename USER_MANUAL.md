@@ -36,7 +36,7 @@ This manual describes how to install BookLoop, set up a book project, and use ea
 - **macOS 14 or newer**
 - **Xcode** (to build and run BookLoop from source)
 - A **book project** on disk (`docs/`, `bookloop.yml`, reviews folders)
-- Optionally, an **OpenAI API key** for Chapter Chat and the built-in **Native Agent** (stored in the macOS Keychain)
+- Optionally, an **OpenAI API key** for Chapter Chat and the built-in **Native Agent** (stored locally in Application Support)
 
 BookLoop does **not** require an external preview server. It renders Markdown chapters in-app.
 
@@ -502,7 +502,7 @@ Global app settings (not per-book) are opened from the **gear** icon in the side
 | Setting | Description |
 |---------|-------------|
 | **OpenAI Model** | Model slug for Chapter Chat and the Native Agent (default `gpt-4.1`) |
-| **OpenAI API Key** | Stored in the macOS Keychain; required for Chapter Chat and Agent |
+| **OpenAI API Key** | Stored locally for your Mac user account; required for Chapter Chat and Agent |
 | **Max tool iterations** | Limit on agent tool-calling loop (1–24) |
 | **Build timeout** | Seconds allowed for agent `run_build` (30–600) |
 | **Allow agent to edit review items** | Lets the agent stage writes under `reviews/` when allowed by config |
