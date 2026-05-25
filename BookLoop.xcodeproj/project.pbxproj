@@ -38,6 +38,7 @@
 		10100000000000000000001D /* BookAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001E /* BookAgent.swift */; };
 		10100000000000000000001E /* AgentPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001F /* AgentPanelView.swift */; };
 		10100000000000000000001F /* AgentPatchExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000020 /* AgentPatchExporter.swift */; };
+		101000000000000000000020 /* PatchActionPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000021 /* PatchActionPanel.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -73,6 +74,7 @@
 		10200000000000000000001E /* BookAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookAgent.swift; sourceTree = "<group>"; };
 		10200000000000000000001F /* AgentPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPanelView.swift; sourceTree = "<group>"; };
 		102000000000000000000020 /* AgentPatchExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPatchExporter.swift; sourceTree = "<group>"; };
+		102000000000000000000021 /* PatchActionPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatchActionPanel.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -159,6 +161,7 @@
 				102000000000000000000013 /* AppSettingsView.swift */,
 				10200000000000000000001F /* AgentPanelView.swift */,
 				102000000000000000000005 /* Views.swift */,
+				102000000000000000000021 /* PatchActionPanel.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -319,6 +322,7 @@
 				10100000000000000000001D /* BookAgent.swift in Sources */,
 				10100000000000000000001E /* AgentPanelView.swift in Sources */,
 				10100000000000000000001F /* AgentPatchExporter.swift in Sources */,
+				101000000000000000000020 /* PatchActionPanel.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

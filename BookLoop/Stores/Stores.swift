@@ -275,8 +275,14 @@ final class PatchStore: ObservableObject {
             selectedProposalID = nil
             return
         }
+        let previousSelection = selectedProposalID
         proposals = PatchParser().scanPatchDirectory(path: book.patchDirectoryPath)
-        if selectedProposalID == nil || !proposals.contains(where: { $0.id == selectedProposalID }) {
+        if proposals.isEmpty {
+            selectedProposalID = nil
+        } else if selectedProposalID == nil || !proposals.contains(where: { $0.id == selectedProposalID }) {
+            selectedProposalID = proposals.first?.id
+        }
+        if previousSelection != nil, selectedProposalID == nil, !proposals.isEmpty {
             selectedProposalID = proposals.first?.id
         }
     }

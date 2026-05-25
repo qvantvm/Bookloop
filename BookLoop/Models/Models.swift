@@ -26,6 +26,10 @@ struct BookConfig: Identifiable, Codable, Equatable {
     var allowPatchApply: Bool
     var notes: String?
 
+    var allowsPatchGitCommands: Bool {
+        allowPatchApply || allowShellCommands
+    }
+
     static func defaults(projectRootPath: String = "") -> BookConfig {
         var book = BookConfig(
             id: UUID(),
@@ -390,6 +394,33 @@ struct PatchProposal: Identifiable, Codable, Equatable {
     var isReviewedCopy: Bool { PatchFileHelpers.isReviewedCopy(filename: title) }
     var displayTitle: String { rootStem }
     var kindLabel: String { isReviewedCopy ? "Reviewed copy" : "Agent proposal" }
+}
+
+enum PatchWorkflowPhase: Equatable {
+    case reviewing
+    case appliedToDisk
+    case committed
+    case alreadyApplied
+
+    var displayName: String {
+        switch self {
+        case .reviewing: return "Reviewing"
+        case .appliedToDisk: return "Applied to book"
+        case .committed: return "Committed"
+        case .alreadyApplied: return "Already applied"
+        }
+    }
+}
+
+struct PatchActivityEntry: Identifiable, Codable, Equatable {
+    var id: UUID
+    var timestamp: Date
+    var message: String
+}
+
+struct PendingPatchCommitContext: Equatable {
+    var changedFiles: [String]
+    var rootStem: String
 }
 
 struct DiffFile: Identifiable, Equatable {

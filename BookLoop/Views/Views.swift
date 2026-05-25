@@ -762,35 +762,45 @@ enum PatchReviewError: LocalizedError {
     case emptyReviewedPatch
     case shellCommandsDisabled
     case emptyCommitMessage
+    case archiveSourceMissing(path: String)
 
     var errorDescription: String? {
         switch self {
         case .noSelectedPatch: return "No patch proposal is selected."
-        case .noAcceptedBlocks: return "Accept at least one rendered block before generating a reviewed patch."
+        case .noAcceptedBlocks: return "Accept at least one rendered block before applying."
         case .emptyReviewedPatch: return "The reviewed patch is empty."
-        case .shellCommandsDisabled: return "Shell commands are disabled for this book. Enable Allow shell commands in Settings, or copy the git commit command and run it in Terminal."
+        case .shellCommandsDisabled: return "Git commands are disabled for this book. Enable Allow patch apply or Allow shell commands in book Settings, or copy the git commit command and run it in Terminal."
         case .emptyCommitMessage: return "Enter a commit message before committing."
+        case .archiveSourceMissing(let path): return "Could not archive \(path) because the patch file no longer exists."
         }
     }
 }
 
 struct PatchReviewView: View {
     @EnvironmentObject private var patchStore: PatchStore
+    @EnvironmentObject private var library: BookLibraryStore
     let book: BookConfig
-    @State private var applyOutput: String?
-    @State private var saveOutput: String?
-    @State private var preflightOutput: String?
-    @State private var gitStatusOutput: String?
+
+    private var activeBook: BookConfig {
+        library.selectedBook ?? book
+    }
     @State private var isRunningPatchCommand = false
-    @State private var confirmingApplyFullPatch = false
-    @State private var confirmingApplyAcceptedBlocks = false
+    @State private var confirmingApply = false
     @State private var confirmingCommit = false
+    @State private var confirmingArchive = false
     @State private var commitMessage = ""
-    @State private var commitOutput: String?
+    @State private var workflowPhase: PatchWorkflowPhase = .reviewing
+    @State private var pendingCommitContext: PendingPatchCommitContext?
     @State private var patchApplicabilityStatus: PatchApplicabilityStatus = .unknown
+    @State private var gitWorkingTree = "Loading git status…"
+    @State private var latestCommit = ""
+    @State private var activityLog: [PatchActivityEntry] = []
+    @State private var statusMessage: String?
+    @State private var showAdvanced = false
     @State private var isPatchListVisible = true
     @State private var isActionPanelVisible = true
     @State private var blockDecisions: [String: PatchBlockDecision] = [:]
+    @State private var gitRefreshGeneration = 0
 
     private var renderedBlocks: [RenderedPatchBlock] {
         guard let proposal = patchStore.selectedProposal else { return [] }
@@ -816,80 +826,129 @@ struct PatchReviewView: View {
 
                 if isActionPanelVisible {
                     PatchActionPanel(
-                        book: book,
+                        book: activeBook,
                         proposal: patchStore.selectedProposal,
+                        pendingCommitContext: pendingCommitContext,
                         blocks: renderedBlocks,
                         decisions: $blockDecisions,
-                        applyOutput: $applyOutput,
-                        saveOutput: $saveOutput,
-                        preflightOutput: $preflightOutput,
-                        gitStatusOutput: $gitStatusOutput,
+                        workflowPhase: workflowPhase,
+                        gitWorkingTree: gitWorkingTree,
+                        latestCommit: latestCommit,
+                        activityLog: activityLog,
                         patchApplicabilityStatus: patchApplicabilityStatus,
                         isRunningPatchCommand: isRunningPatchCommand,
-                        confirmingApplyFullPatch: $confirmingApplyFullPatch,
-                        confirmingApplyAcceptedBlocks: $confirmingApplyAcceptedBlocks,
-                        confirmingCommit: $confirmingCommit,
+                        showAdvanced: $showAdvanced,
                         commitMessage: $commitMessage,
-                        commitOutput: $commitOutput,
-                        copyAcceptedPatch: copyAcceptedPatch,
-                        saveAcceptedPatch: saveAcceptedPatch,
-                        checkOriginalPatch: checkOriginalPatch,
-                        checkAcceptedBlocksPatch: checkAcceptedBlocksPatch,
-                        refreshGitStatus: refreshGitStatus,
-                        copyCommitCommand: copyCommitCommand,
-                        commitAppliedChanges: { confirmingCommit = true }
+                        statusMessage: statusMessage,
+                        onApplyAccepted: { confirmingApply = true },
+                        onCommit: { confirmingCommit = true },
+                        onCopyCommitCommand: copyCommitCommand,
+                        onOpenPatchFile: openSelectedPatchFile,
+                        onArchiveWithoutApplying: { confirmingArchive = true },
+                        onCopyAcceptedPatch: copyAcceptedPatch,
+                        onSaveAcceptedPatch: saveAcceptedPatch,
+                        onCheckAcceptedPatch: checkAcceptedBlocksPatch,
+                        onApplyFullPatch: applyFullPatchFromAdvanced,
+                        onCheckFullPatch: checkOriginalPatch
                     )
-                    .frame(minWidth: 260, idealWidth: 300, maxWidth: 360)
+                    .frame(minWidth: 280, idealWidth: 320, maxWidth: 380)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: patchStore.selectedProposalID) {
-            blockDecisions.removeAll()
-            applyOutput = nil
-            saveOutput = nil
-            preflightOutput = nil
-            gitStatusOutput = nil
-            commitOutput = nil
-            commitMessage = defaultCommitMessage(for: patchStore.selectedProposal)
-            patchApplicabilityStatus = .unknown
-            Task { await checkSelectedPatchApplicability() }
+            resetForSelectedPatch()
+        }
+        .onChange(of: blockDecisions) {
+            scheduleGitPanelRefresh()
         }
         .onAppear {
-            if commitMessage.isEmpty {
-                commitMessage = defaultCommitMessage(for: patchStore.selectedProposal)
-            }
-            Task { await checkSelectedPatchApplicability() }
+            activityLog = PatchActivityLogger.load(book: activeBook)
+            resetForSelectedPatch()
         }
-        .alert("Apply full patch?", isPresented: $confirmingApplyFullPatch) {
+        .alert("Apply accepted changes to book files?", isPresented: $confirmingApply) {
             Button("Cancel", role: .cancel) {}
-            Button("Apply Full Patch", role: .destructive) {
-                Task { await applyFullPatch() }
-            }
-        } message: {
-            Text(fullPatchApplyConfirmationText)
-        }
-        .alert("Apply accepted rendered blocks?", isPresented: $confirmingApplyAcceptedBlocks) {
-            Button("Cancel", role: .cancel) {}
-            Button("Apply Accepted Blocks", role: .destructive) {
+            Button("Apply to Book", role: .destructive) {
                 Task { await applyAcceptedBlocks() }
             }
         } message: {
-            Text("BookLoop will write a reviewed patch containing only accepted rendered blocks, run git apply --check, then apply it if the check succeeds.")
+            Text("BookLoop will run git apply --check, then git apply for the accepted blocks only. Book files are updated on disk; nothing is committed yet.")
         }
-        .alert("Commit applied changes?", isPresented: $confirmingCommit) {
+        .alert("Commit changes to git?", isPresented: $confirmingCommit) {
             Button("Cancel", role: .cancel) {}
             Button("Commit", role: .destructive) {
                 Task { await commitAppliedChanges() }
             }
         } message: {
-            Text("BookLoop will run git add on the patch's changed files, then git commit with your message. Commit only after Apply Accepted Blocks or Apply Full Original Patch has succeeded.")
+            Text("BookLoop will run git add on the changed files, then git commit with your message.")
+        }
+        .alert("Archive patch without applying?", isPresented: $confirmingArchive) {
+            Button("Cancel", role: .cancel) {}
+            Button("Archive") {
+                Task { await archiveSelectedPatchWithoutApplying() }
+            }
+        } message: {
+            Text("The patch moves to bookloop/patches/archive/. Book content is not changed.")
+        }
+    }
+
+    private func resetForSelectedPatch() {
+        blockDecisions.removeAll()
+        statusMessage = nil
+        if workflowPhase != .appliedToDisk {
+            pendingCommitContext = nil
+            workflowPhase = .reviewing
+            commitMessage = defaultCommitMessage(for: patchStore.selectedProposal)
+        } else if commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            commitMessage = defaultCommitMessage(for: patchStore.selectedProposal)
+        }
+        patchApplicabilityStatus = .unknown
+        Task {
+            await checkSelectedPatchApplicability()
+            await refreshGitPanel()
         }
     }
 
     private func defaultCommitMessage(for proposal: PatchProposal?) -> String {
+        if let pendingCommitContext {
+            return "Apply BookLoop patch: \(pendingCommitContext.rootStem)"
+        }
         guard let proposal else { return "Apply BookLoop patch" }
         return "Apply BookLoop patch: \(proposal.rootStem)"
+    }
+
+    private func appendActivity(_ message: String) {
+        let entry = PatchActivityEntry(id: UUID(), timestamp: Date(), message: message)
+        activityLog.insert(entry, at: 0)
+        if activityLog.count > 20 {
+            activityLog = Array(activityLog.prefix(20))
+        }
+        PatchActivityLogger.append(entry, book: activeBook)
+    }
+
+    private func scheduleGitPanelRefresh() {
+        gitRefreshGeneration += 1
+        let generation = gitRefreshGeneration
+        Task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard generation == gitRefreshGeneration else { return }
+            await refreshGitPanel()
+        }
+    }
+
+    private func refreshGitPanel() async {
+        do {
+            let status = try await PatchApplier().gitStatus(book: activeBook)
+            gitWorkingTree = status.combinedOutput.nilIfBlank ?? "Working tree clean."
+            let log = try await PatchApplier().gitLog(book: activeBook, limit: 1)
+            latestCommit = log.combinedOutput.nilIfBlank ?? ""
+        } catch {
+            gitWorkingTree = error.localizedDescription
+        }
+
+        if workflowPhase == .reviewing, case .alreadyApplied = patchApplicabilityStatus {
+            workflowPhase = .alreadyApplied
+        }
     }
 
     private var patchLayoutToolbar: some View {
@@ -923,62 +982,61 @@ struct PatchReviewView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Button("Refresh Patches") {
-                    patchStore.refresh(book: book)
+                    patchStore.refresh(book: activeBook)
                 }
                 Button("Open Patch Folder") {
-                    FileHelpers.openInFinder(path: book.patchDirectoryPath)
+                    FileHelpers.openInFinder(path: activeBook.patchDirectoryPath)
                 }
             }
             .padding(8)
 
-            List(patchStore.proposals, selection: $patchStore.selectedProposalID) { proposal in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(proposal.displayTitle)
-                        .fontWeight(.medium)
-                        .lineLimit(2)
-                    Text("\(proposal.kindLabel) • \(proposal.changedFiles.count) changed file(s)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if proposal.title != proposal.displayTitle {
-                        Text(proposal.title)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                            .lineLimit(1)
+            if patchStore.proposals.isEmpty {
+                EmptyStateView(
+                    title: "No Pending Patches",
+                    message: pendingCommitContext == nil
+                        ? "Run Agent → Apply Review Feedback to create patch proposals."
+                        : "Patch archived after apply. Finish Step 3: Commit to git on the right.",
+                    systemImage: "tray"
+                )
+                .padding(8)
+            } else {
+                List(patchStore.proposals, selection: $patchStore.selectedProposalID) { proposal in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(proposal.displayTitle)
+                            .fontWeight(.medium)
+                            .lineLimit(2)
+                        Text("\(proposal.kindLabel) • \(proposal.changedFiles.count) changed file(s)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
+                    .tag(proposal.id)
                 }
-                .tag(proposal.id)
             }
 
-            Divider()
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Rendered Blocks")
-                    .font(.headline)
-                ForEach(renderedBlocks) { block in
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(color(for: blockDecisions[block.id] ?? .pending))
-                            .frame(width: 8, height: 8)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(block.title)
-                                .font(.caption)
-                                .lineLimit(1)
-                            Text((blockDecisions[block.id] ?? .pending).displayName)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
+            if !renderedBlocks.isEmpty {
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Rendered Blocks")
+                        .font(.headline)
+                    ForEach(renderedBlocks) { block in
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(color(for: blockDecisions[block.id] ?? .pending))
+                                .frame(width: 8, height: 8)
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(block.title)
+                                    .font(.caption)
+                                    .lineLimit(1)
+                                Text((blockDecisions[block.id] ?? .pending).displayName)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
+                .padding(8)
             }
-            .padding(8)
         }
-    }
-
-    private var fullPatchApplyConfirmationText: String {
-        guard let proposal = patchStore.selectedProposal else {
-            return "No patch selected."
-        }
-        return "BookLoop will run in \(book.projectRootPath):\n\ngit apply --check '\(proposal.filePath)'\ngit apply '\(proposal.filePath)'\n\nThis applies the full original patch, ignoring block-level Accept/Reject choices."
     }
 
     private func color(for decision: PatchBlockDecision) -> Color {
@@ -1001,35 +1059,44 @@ struct PatchReviewView: View {
     private func writeAcceptedPatchToDisk() throws -> String {
         guard let proposal = patchStore.selectedProposal else { throw PatchReviewError.noSelectedPatch }
         let text = try reviewedPatchText()
-        try FileHelpers.ensureDirectory(book.patchDirectoryPath)
-        let url = URL(fileURLWithPath: book.patchDirectoryPath, isDirectory: true)
-            .appendingPathComponent(PatchParser().reviewedPatchFilename(for: proposal))
-        try text.write(to: url, atomically: true, encoding: .utf8)
-        saveOutput = "Saved reviewed patch: \(url.path)"
-        return url.path
+        return try activeBook.withSecurityScopedProjectRoot {
+            try FileHelpers.ensureDirectory(activeBook.patchDirectoryPath)
+            let url = URL(fileURLWithPath: activeBook.patchDirectoryPath, isDirectory: true)
+                .appendingPathComponent(PatchParser().reviewedPatchFilename(for: proposal))
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            return url.path
+        }
+    }
+
+    private func openSelectedPatchFile() {
+        guard let proposal = patchStore.selectedProposal else { return }
+        FileHelpers.openInFinder(path: proposal.filePath)
     }
 
     private func copyAcceptedPatch() {
         do {
             FileHelpers.copyToPasteboard(try reviewedPatchText())
-            saveOutput = "Copied reviewed patch for \(acceptedBlockIDs.count) accepted block(s)."
+            statusMessage = "Copied patch text for \(acceptedBlockIDs.count) accepted block(s)."
+            appendActivity("Copied accepted-block patch text")
         } catch {
-            saveOutput = error.localizedDescription
+            statusMessage = error.localizedDescription
         }
     }
 
     private func saveAcceptedPatch() {
         do {
             _ = try writeAcceptedPatchToDisk()
-            patchStore.refresh(book: book)
+            patchStore.refresh(book: activeBook)
+            statusMessage = "Saved accepted-block patch to bookloop/patches/."
+            appendActivity("Saved accepted-block patch")
         } catch {
-            saveOutput = error.localizedDescription
+            statusMessage = error.localizedDescription
         }
     }
 
     private func checkOriginalPatch() {
         guard let proposal = patchStore.selectedProposal else {
-            preflightOutput = PatchReviewError.noSelectedPatch.localizedDescription
+            statusMessage = PatchReviewError.noSelectedPatch.localizedDescription
             return
         }
         Task { await runPatchPreflight(label: "Original patch", path: proposal.filePath) }
@@ -1040,112 +1107,146 @@ struct PatchReviewView: View {
             do {
                 let path = try writeAcceptedPatchToDisk()
                 await runPatchPreflight(label: "Accepted-block patch", path: path)
-                patchStore.refresh(book: book)
+                patchStore.refresh(book: activeBook)
             } catch {
-                preflightOutput = error.localizedDescription
+                statusMessage = error.localizedDescription
             }
         }
     }
 
-    private func refreshGitStatus() {
-        Task {
-            isRunningPatchCommand = true
-            gitStatusOutput = "Running: git status --short"
-            defer { isRunningPatchCommand = false }
-            do {
-                let result = try await PatchApplier().gitStatus(book: book)
-                let body = result.combinedOutput.nilIfBlank ?? "Working tree clean."
-                gitStatusOutput = "git status --short\nExit code: \(result.exitCode)\n\(body)"
-            } catch {
-                gitStatusOutput = error.localizedDescription
-            }
-        }
+    private func applyFullPatchFromAdvanced() {
+        Task { await applyFullPatch() }
     }
 
     private func runPatchPreflight(label: String, path: String) async {
         isRunningPatchCommand = true
-        preflightOutput = "Running: git apply --check \(path)"
         defer { isRunningPatchCommand = false }
         do {
-            let status = try await PatchApplier().gitStatus(book: book)
-            let check = try await PatchApplier().checkPatchFileAsync(path: path, book: book)
-            let statusBody = status.combinedOutput.nilIfBlank ?? "Working tree clean."
-            preflightOutput = "\(label) preflight\n\nGit status:\n\(statusBody)\n\nPatch check exit code: \(check.exitCode)\n\(check.combinedOutput)"
+            let check = try await PatchApplier().checkPatchFileAsync(path: path, book: activeBook)
+            statusMessage = "\(label): git apply --check exit \(check.exitCode)\n\(check.combinedOutput)"
+            appendActivity("\(label) preflight exit \(check.exitCode)")
+            await refreshGitPanel()
         } catch {
-            preflightOutput = error.localizedDescription
+            statusMessage = error.localizedDescription
         }
     }
 
     private func applyFullPatch() async {
         guard let proposal = patchStore.selectedProposal else { return }
-        guard book.allowPatchApply else {
-            applyOutput = "Patch apply is disabled for this book."
+        guard activeBook.allowPatchApply else {
+            statusMessage = "Enable Allow patch apply in book Settings."
             return
         }
         isRunningPatchCommand = true
-        applyOutput = "Applying full original patch..."
         defer { isRunningPatchCommand = false }
         do {
-            let result = try await PatchApplier().applyAsync(patch: proposal, book: book)
-            let status = try await PatchApplier().gitStatus(book: book)
-            let statusBody = status.combinedOutput.nilIfBlank ?? "Working tree clean."
+            let result = try await PatchApplier().applyAsync(patch: proposal, book: activeBook)
             if result.exitCode == 0 {
-                archiveAppliedPatches(sourcePath: proposal.filePath, appliedReviewedPath: nil)
-                applyOutput = "Full patch applied successfully.\nExit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status after apply:\n\(statusBody)\n\nPatch archived. Next: Commit Applied Changes, or copy the git commit command."
+                pendingCommitContext = PendingPatchCommitContext(
+                    changedFiles: proposal.changedFiles,
+                    rootStem: proposal.rootStem
+                )
+                workflowPhase = .appliedToDisk
+                commitMessage = defaultCommitMessage(for: proposal)
+                let archived = try archiveAppliedPatches(sourcePath: proposal.filePath, appliedReviewedPath: nil)
+                statusMessage = "Full patch applied to book files."
+                appendActivity("Applied full patch \(proposal.rootStem) (\(proposal.changedFiles.count) files)")
+                if !archived.isEmpty {
+                    appendActivity("Archived: \(archived.joined(separator: ", "))")
+                }
             } else {
-                applyOutput = "Full patch exit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status:\n\(statusBody)\n\nIf this patch was already applied, the Before preview is a static snapshot — git apply cannot re-apply the same change."
+                statusMessage = "Apply failed (exit \(result.exitCode)).\n\(result.combinedOutput)"
+                appendActivity("Apply failed for \(proposal.rootStem)")
             }
-            refreshGitStatus()
+            await refreshGitPanel()
             await checkSelectedPatchApplicability()
         } catch {
-            applyOutput = error.localizedDescription
+            statusMessage = error.localizedDescription
+            appendActivity("Apply error: \(error.localizedDescription)")
         }
     }
 
     private func applyAcceptedBlocks() async {
-        guard book.allowPatchApply else {
-            applyOutput = "Patch apply is disabled for this book."
+        guard activeBook.allowPatchApply else {
+            statusMessage = "Enable Allow patch apply in book Settings."
             return
         }
         isRunningPatchCommand = true
-        applyOutput = "Applying accepted rendered blocks..."
         defer { isRunningPatchCommand = false }
         do {
             guard let sourceProposal = patchStore.selectedProposal else { throw PatchReviewError.noSelectedPatch }
             let sourcePath = sourceProposal.filePath
             let reviewedPatchPath = try writeAcceptedPatchToDisk()
-            let result = try await PatchApplier().applyPatchFileAsync(path: reviewedPatchPath, book: book)
-            let status = try await PatchApplier().gitStatus(book: book)
-            let statusBody = status.combinedOutput.nilIfBlank ?? "Working tree clean."
+            let result = try await PatchApplier().applyPatchFileAsync(path: reviewedPatchPath, book: activeBook)
             if result.exitCode == 0 {
-                archiveAppliedPatches(sourcePath: sourcePath, appliedReviewedPath: reviewedPatchPath)
-                applyOutput = "Accepted blocks applied successfully.\nPatch: \(reviewedPatchPath)\nExit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status after apply:\n\(statusBody)\n\nPatches archived. Next: Commit Applied Changes, or copy the git commit command."
+                pendingCommitContext = PendingPatchCommitContext(
+                    changedFiles: sourceProposal.changedFiles,
+                    rootStem: sourceProposal.rootStem
+                )
+                workflowPhase = .appliedToDisk
+                commitMessage = defaultCommitMessage(for: sourceProposal)
+                let archived = try archiveAppliedPatches(sourcePath: sourcePath, appliedReviewedPath: reviewedPatchPath)
+                statusMessage = "Accepted changes applied to book files. Ready to commit."
+                appendActivity("Applied \(sourceProposal.rootStem) (\(sourceProposal.changedFiles.count) files)")
+                if !archived.isEmpty {
+                    appendActivity("Archived: \(archived.joined(separator: ", "))")
+                }
             } else {
-                applyOutput = "Accepted-block patch: \(reviewedPatchPath)\nExit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status:\n\(statusBody)\n\nIf this patch was already applied, the Before preview is a static snapshot — git apply cannot re-apply the same change."
+                statusMessage = "Apply failed (exit \(result.exitCode)).\n\(result.combinedOutput)"
+                appendActivity("Apply failed for \(sourceProposal.rootStem)")
             }
-            patchStore.refresh(book: book)
-            refreshGitStatus()
+            await refreshGitPanel()
             await checkSelectedPatchApplicability()
         } catch {
-            applyOutput = error.localizedDescription
+            statusMessage = error.localizedDescription
+            appendActivity("Apply error: \(error.localizedDescription)")
         }
     }
 
-    private func archiveAppliedPatches(sourcePath: String, appliedReviewedPath: String?) {
+    @discardableResult
+    private func archiveAppliedPatches(sourcePath: String, appliedReviewedPath: String?) throws -> [String] {
         var archivedNames: [String] = []
+        var errors: [String] = []
+
         if let appliedReviewedPath {
-            if let destination = try? PatchFileHelpers.archivePatch(at: appliedReviewedPath, patchDirectory: book.patchDirectoryPath) {
+            do {
+                let destination = try PatchFileHelpers.archivePatch(at: appliedReviewedPath, book: activeBook)
                 archivedNames.append(URL(fileURLWithPath: destination).lastPathComponent)
+            } catch {
+                errors.append(error.localizedDescription)
             }
         }
         if sourcePath != appliedReviewedPath {
-            if let destination = try? PatchFileHelpers.archivePatch(at: sourcePath, patchDirectory: book.patchDirectoryPath) {
+            do {
+                let destination = try PatchFileHelpers.archivePatch(at: sourcePath, book: activeBook)
                 archivedNames.append(URL(fileURLWithPath: destination).lastPathComponent)
+            } catch {
+                errors.append(error.localizedDescription)
             }
         }
-        patchStore.refresh(book: book)
-        if !archivedNames.isEmpty {
-            applyOutput = (applyOutput ?? "") + "\n\nArchived: \(archivedNames.joined(separator: ", "))"
+
+        patchStore.refresh(book: activeBook)
+        if !errors.isEmpty {
+            throw NSError(
+                domain: "BookLoopPatchArchive",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: errors.joined(separator: "\n")]
+            )
+        }
+        return archivedNames
+    }
+
+    private func archiveSelectedPatchWithoutApplying() async {
+        guard let proposal = patchStore.selectedProposal else { return }
+        do {
+            let destination = try PatchFileHelpers.archivePatch(at: proposal.filePath, book: activeBook)
+            patchStore.refresh(book: activeBook)
+            statusMessage = "Archived to \(URL(fileURLWithPath: destination).lastPathComponent)."
+            appendActivity("Archived without applying: \(proposal.rootStem)")
+            await refreshGitPanel()
+        } catch {
+            statusMessage = error.localizedDescription
+            appendActivity("Archive failed: \(error.localizedDescription)")
         }
     }
 
@@ -1156,7 +1257,7 @@ struct PatchReviewView: View {
         }
         patchApplicabilityStatus = .checking
         do {
-            let check = try await PatchApplier().checkPatchFileAsync(path: proposal.filePath, book: book)
+            let check = try await PatchApplier().checkPatchFileAsync(path: proposal.filePath, book: activeBook)
             if check.exitCode == 0 {
                 patchApplicabilityStatus = .applicable
             } else {
@@ -1165,6 +1266,7 @@ struct PatchReviewView: View {
                     || message.localizedCaseInsensitiveContains("patch does not apply")
                     || message.localizedCaseInsensitiveContains("conflict") {
                     patchApplicabilityStatus = .alreadyApplied(message)
+                    workflowPhase = .alreadyApplied
                 } else {
                     patchApplicabilityStatus = .checkFailed(message)
                 }
@@ -1175,34 +1277,45 @@ struct PatchReviewView: View {
     }
 
     private func copyCommitCommand() {
-        let paths = patchStore.selectedProposal?.changedFiles ?? []
+        let paths = pendingCommitContext?.changedFiles ?? patchStore.selectedProposal?.changedFiles ?? []
         let command = PatchApplier.suggestedCommitCommand(
             message: commitMessage.nilIfBlank ?? defaultCommitMessage(for: patchStore.selectedProposal),
             changedPaths: paths,
-            book: book
+            book: activeBook
         )
         FileHelpers.copyToPasteboard(command)
-        commitOutput = "Copied git commit command to the clipboard."
+        statusMessage = "Copied git commit command to the clipboard."
+        appendActivity("Copied git commit command")
     }
 
     private func commitAppliedChanges() async {
-        guard book.allowShellCommands else {
-            commitOutput = PatchReviewError.shellCommandsDisabled.localizedDescription
+        guard activeBook.allowsPatchGitCommands else {
+            statusMessage = PatchReviewError.shellCommandsDisabled.localizedDescription
+            return
+        }
+        guard workflowPhase == .appliedToDisk, let context = pendingCommitContext else {
+            statusMessage = "Apply to book first (Step 2), then commit."
             return
         }
         isRunningPatchCommand = true
-        commitOutput = "Running git add and git commit..."
         defer { isRunningPatchCommand = false }
         do {
-            let paths = patchStore.selectedProposal?.changedFiles ?? []
-            let message = commitMessage.nilIfBlank ?? defaultCommitMessage(for: patchStore.selectedProposal)
-            let result = try await PatchApplier().gitCommit(message: message, changedPaths: paths, book: book)
-            let status = try await PatchApplier().gitStatus(book: book)
-            let statusBody = status.combinedOutput.nilIfBlank ?? "Working tree clean."
-            commitOutput = "git commit exit code: \(result.exitCode)\n\(result.combinedOutput)\n\nGit status after commit:\n\(statusBody)"
-            refreshGitStatus()
+            let message = commitMessage.nilIfBlank ?? "Apply BookLoop patch: \(context.rootStem)"
+            let result = try await PatchApplier().gitCommit(message: message, changedPaths: context.changedFiles, book: activeBook)
+            if result.exitCode == 0 {
+                workflowPhase = .committed
+                statusMessage = "Committed successfully."
+                appendActivity("Committed: \(message)")
+                appendActivity("git status: \(gitWorkingTree == "Working tree clean." ? "clean" : "updated")")
+                pendingCommitContext = nil
+            } else {
+                statusMessage = "Commit failed (exit \(result.exitCode)).\n\(result.combinedOutput)"
+                appendActivity("Commit failed for \(context.rootStem)")
+            }
+            await refreshGitPanel()
         } catch {
-            commitOutput = error.localizedDescription
+            statusMessage = error.localizedDescription
+            appendActivity("Commit error: \(error.localizedDescription)")
         }
     }
 }
@@ -1322,231 +1435,6 @@ struct HTMLStringView: NSViewRepresentable {
 
     final class Coordinator {
         var lastHTML = ""
-    }
-}
-
-struct PatchActionPanel: View {
-    let book: BookConfig
-    let proposal: PatchProposal?
-    let blocks: [RenderedPatchBlock]
-    @Binding var decisions: [String: PatchBlockDecision]
-    @Binding var applyOutput: String?
-    @Binding var saveOutput: String?
-    @Binding var preflightOutput: String?
-    @Binding var gitStatusOutput: String?
-    let patchApplicabilityStatus: PatchApplicabilityStatus
-    let isRunningPatchCommand: Bool
-    @Binding var confirmingApplyFullPatch: Bool
-    @Binding var confirmingApplyAcceptedBlocks: Bool
-    @Binding var confirmingCommit: Bool
-    @Binding var commitMessage: String
-    @Binding var commitOutput: String?
-    let copyAcceptedPatch: () -> Void
-    let saveAcceptedPatch: () -> Void
-    let checkOriginalPatch: () -> Void
-    let checkAcceptedBlocksPatch: () -> Void
-    let refreshGitStatus: () -> Void
-    let copyCommitCommand: () -> Void
-    let commitAppliedChanges: () -> Void
-    @State private var confirmingArchive = false
-    @State private var archiveOutput: String?
-
-    private var acceptedCount: Int { decisions.values.filter { $0 == .accepted }.count }
-    private var rejectedCount: Int { decisions.values.filter { $0 == .rejected }.count }
-    private var pendingCount: Int { blocks.count - acceptedCount - rejectedCount }
-
-    private var isAlreadyApplied: Bool {
-        if case .alreadyApplied = patchApplicabilityStatus { return true }
-        return false
-    }
-
-    @ViewBuilder
-    private var patchApplicabilityLabel: some View {
-        switch patchApplicabilityStatus {
-        case .unknown:
-            Text("Select a patch to check whether it can still be applied.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .checking:
-            Text("Checking git apply --check…")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .applicable:
-            Label("Ready to apply", systemImage: "checkmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(.green)
-        case .alreadyApplied:
-            Label("Likely already applied — re-applying the same patch will fail", systemImage: "exclamationmark.triangle.fill")
-                .font(.caption)
-                .foregroundStyle(.orange)
-        case .checkFailed(let message):
-            Label("Patch check failed", systemImage: "xmark.circle.fill")
-                .font(.caption)
-                .foregroundStyle(.red)
-            Text(message)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-        }
-    }
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Rendered Patch Review")
-                    .font(.headline)
-                if let proposal {
-                Text(proposal.displayTitle)
-                    .fontWeight(.medium)
-                Text(proposal.kindLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if let summary = proposal.summary {
-                    Text(summary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-
-                GroupBox("Patch Status") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        patchApplicabilityLabel
-                        Text("Before/After previews are a static snapshot from the patch file. They still show TBD text even after a successful apply.")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                GroupBox("Block Decisions") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        LabeledContent("Accepted", value: "\(acceptedCount)")
-                        LabeledContent("Rejected", value: "\(rejectedCount)")
-                        LabeledContent("Pending", value: "\(pendingCount)")
-                        HStack {
-                            Button("Accept All") { setAll(.accepted) }
-                            Button("Reject All") { setAll(.rejected) }
-                            Button("Reset") { decisions.removeAll() }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                Text("Changed Files")
-                    .font(.headline)
-                ForEach(proposal.changedFiles, id: \.self) { path in
-                    Text(path)
-                        .font(.caption)
-                        .lineLimit(1)
-                }
-
-                Divider()
-
-                Button("Refresh Git Status") { refreshGitStatus() }
-                    .disabled(isRunningPatchCommand)
-                Button("Check Accepted-Blocks Patch") { checkAcceptedBlocksPatch() }
-                    .disabled(isRunningPatchCommand || acceptedCount == 0)
-                Button("Copy Accepted-Blocks Patch") { copyAcceptedPatch() }
-                    .disabled(acceptedCount == 0)
-                Button("Save Accepted-Blocks Patch") { saveAcceptedPatch() }
-                    .disabled(acceptedCount == 0)
-                Button(isRunningPatchCommand ? "Patch Command Running..." : "Apply Accepted Blocks", role: .destructive) {
-                    confirmingApplyAcceptedBlocks = true
-                }
-                .disabled(isRunningPatchCommand || !book.allowPatchApply || acceptedCount == 0 || isAlreadyApplied)
-
-                GroupBox("Commit After Apply") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Accept blocks → Apply Accepted Blocks writes files to disk. Then commit here (or copy the command for Terminal).")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        TextField("Commit message", text: $commitMessage)
-                        Button("Copy Git Commit Command") { copyCommitCommand() }
-                        Button(isRunningPatchCommand ? "Patch Command Running..." : "Commit Applied Changes") {
-                            commitAppliedChanges()
-                        }
-                        .disabled(isRunningPatchCommand || !book.allowShellCommands || commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        if !book.allowShellCommands {
-                            Text("Enable Allow shell commands in book Settings to commit from BookLoop.")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                Divider()
-
-                Button("Open Original Patch File") { FileHelpers.openInFinder(path: proposal.filePath) }
-                Button("Copy Original Raw Patch") { FileHelpers.copyToPasteboard(proposal.rawPatch) }
-                Button("Check Full Original Patch") { checkOriginalPatch() }
-                    .disabled(isRunningPatchCommand)
-                Button(isRunningPatchCommand ? "Patch Command Running..." : "Apply Full Original Patch", role: .destructive) {
-                    confirmingApplyFullPatch = true
-                }
-                .disabled(isRunningPatchCommand || !book.allowPatchApply || isAlreadyApplied)
-                Button("Reject / Archive Original Patch") {
-                    confirmingArchive = true
-                }
-
-                if let gitStatusOutput {
-                    Text(gitStatusOutput)
-                        .font(.caption)
-                        .textSelection(.enabled)
-                }
-                if let preflightOutput {
-                    Text(preflightOutput)
-                        .font(.caption)
-                        .textSelection(.enabled)
-                }
-                if let saveOutput {
-                    Text(saveOutput)
-                        .font(.caption)
-                        .textSelection(.enabled)
-                }
-                if let archiveOutput {
-                    Text(archiveOutput)
-                        .font(.caption)
-                        .textSelection(.enabled)
-                }
-                if let applyOutput {
-                    Text(applyOutput)
-                        .font(.caption)
-                        .textSelection(.enabled)
-                }
-                if let commitOutput {
-                    Text(commitOutput)
-                        .font(.caption)
-                        .textSelection(.enabled)
-                }
-            } else {
-                Text("Select a patch proposal to review rendered before/after blocks.")
-                    .foregroundStyle(.secondary)
-            }
-            }
-            .padding()
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .alert("Archive original patch proposal?", isPresented: $confirmingArchive) {
-            Button("Cancel", role: .cancel) {}
-            Button("Archive") { archivePatch() }
-        } message: {
-            Text("BookLoop will move the selected original patch into bookloop/patches/archive. No book content is changed.")
-        }
-    }
-
-    private func setAll(_ decision: PatchBlockDecision) {
-        decisions = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, decision) })
-    }
-
-    private func archivePatch() {
-        guard let proposal else { return }
-        do {
-            let destination = try PatchFileHelpers.archivePatch(at: proposal.filePath, patchDirectory: book.patchDirectoryPath)
-            archiveOutput = "Archived to \(destination). Refresh patches to update the list."
-        } catch {
-            archiveOutput = error.localizedDescription
-        }
     }
 }
 

@@ -418,51 +418,51 @@ Review and apply unified-diff patches from `bookloop/patches/*.patch` and `*.dif
 
 ### Layout
 
-- **Left** — list of patch proposals
+- **Left** — pending patch proposals (applied patches are archived automatically and disappear)
 - **Center** — rendered before/after blocks (HTML), not a raw line diff
-- **Right** — actions for the selected patch
+- **Right** — 3-step workflow: Review → Apply → Commit, plus live git status and activity log
 
 ### Block-level review
 
-Each diff hunk is shown as a semantic **block** with Before and After HTML. For each block you can:
+Each diff hunk is shown as a semantic **block** with Before and After HTML. For each block you can **Accept Block**, **Reject Block**, or **Reset** to pending.
 
-- **Accept Block**
-- **Reject Block**
-- **Reset** to pending
+In the right pane, **Step 1** provides **Accept All**, **Reject All**, and **Reset** for the whole patch.
 
-Use **Accept All**, **Reject All**, or **Reset** for the whole patch.
+Review decisions choose what *would* change. Nothing is written to book files until Step 2.
 
-Decisions apply to **whole rendered blocks**, not individual diff lines.
+### 3-step workflow (right pane)
 
-### Patch actions
+| Step | What it does |
+|------|----------------|
+| **1 Review blocks** | Accept/reject blocks; summary shows accepted · rejected · pending counts |
+| **2 Apply to book** | **Apply Accepted Changes** runs `git apply --check` then `git apply` for accepted blocks only. Requires **Allow patch apply**. Patch file is archived and removed from the left list. |
+| **3 Commit to git** | **Commit to Git** runs `git add` + `git commit`. Requires **Allow shell commands**. Enabled only after Step 2 succeeds. |
 
-| Action | Description |
-|--------|-------------|
-| **Copy Accepted-Blocks Patch** | Copy a patch containing only accepted blocks |
-| **Save Accepted-Blocks Patch** | Save to `bookloop/patches/reviewed-YYYYMMDD-HHMMSS-<name>.patch` |
-| **Apply Accepted Blocks** | Write reviewed patch, run `git apply --check`, then apply if check passes |
-| **Open Original Patch File** | Reveal in Finder |
-| **Copy Original Raw Patch** | Copy full patch text |
-| **Apply Full Original Patch** | Apply entire patch (ignores block decisions); requires confirmation |
-| **Reject / Archive Original Patch** | Move patch to `bookloop/patches/archive/` without changing book content |
-| **Copy Git Commit Command** | Copy `git add` + `git commit` for Terminal (works without shell commands enabled) |
-| **Commit Applied Changes** | After a successful apply, run `git add` on the patch’s changed files and `git commit` (requires **Allow shell commands**) |
+Terminology:
 
-Patch application always runs `git apply --check` before `git apply`. BookLoop never force-applies patches.
+- **Review decisions** — block choices; not yet on disk
+- **Applied to book** — `git apply` succeeded; files modified
+- **Committed** — `git commit` succeeded; recorded in git history
 
-**Allow patch apply** must be enabled in book settings for apply actions to work.
+### Git panel (auto-refreshed)
+
+The right pane shows:
+
+- **Working tree** — `git status --short` (refreshes automatically; no manual button)
+- **Latest commit** — `git log -1 --oneline`
+- **Activity** — recent apply/commit/archive events (also saved to `bookloop/patches/activity.json`)
+
+### Advanced (collapsed)
+
+Power-user actions: open patch file, copy commit command, archive without applying, check/copy/save accepted-block patch, apply full original patch.
 
 ### End-to-end workflow
 
-1. **Agent** (Tools → Agent → Apply Review Feedback) stages edits and writes **one** `.patch` file under `bookloop/patches/` (it can contain many diff blocks/hunks).
-2. **Patches** — accept/reject each rendered block, then **Apply Accepted Blocks** (or apply the full patch).
-3. **Commit** — use **Commit Applied Changes** on the right panel, or **Copy Git Commit Command** and run it in Terminal.
+1. **Agent** → Apply Review Feedback writes one `.patch` under `bookloop/patches/`.
+2. **Patches** → Step 1: accept blocks → Step 2: Apply Accepted Changes → Step 3: Commit to Git.
+3. Applied patches move to `bookloop/patches/archive/` and leave the pending list.
 
-Selecting blocks only chooses what gets applied; it does not commit. Commit only after apply succeeds and `git status` shows modified files.
-
-For very long reviews, increase **Max tool iterations** in app settings (default 20) or run the agent again after applying the first batch of changes.
-
-**Duplicate patch names:** Each **Apply Accepted Blocks** used to save a new `reviewed-…-reviewed-…` file with the same hunks. BookLoop now names reviewed patches from the root agent file only, hides duplicate reviewed copies in the list, auto-archives patches after a successful apply, and shows **Likely already applied** when `git apply --check` fails.
+For very long reviews, increase **Max tool iterations** in app settings or run the agent again after committing the first batch.
 
 ---
 

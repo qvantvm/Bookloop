@@ -342,6 +342,7 @@ struct ToolWorkspaceView: View {
         case .patches:
             PatchReviewView(book: book)
                 .environmentObject(patchStore)
+                .environmentObject(library)
         case .settings:
             BookSettingsTab(book: book)
                 .environmentObject(library)

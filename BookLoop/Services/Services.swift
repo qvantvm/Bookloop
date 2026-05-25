@@ -1066,20 +1066,59 @@ enum PatchFileHelpers {
     }
 
     @discardableResult
-    static func archivePatch(at path: String, patchDirectory: String) throws -> String {
-        let source = URL(fileURLWithPath: path)
-        let archiveDirectory = URL(fileURLWithPath: patchDirectory, isDirectory: true)
-            .appendingPathComponent("archive", isDirectory: true)
-        try FileManager.default.createDirectory(at: archiveDirectory, withIntermediateDirectories: true, attributes: nil)
-        var destination = archiveDirectory.appendingPathComponent(source.lastPathComponent)
-        if FileManager.default.fileExists(atPath: destination.path) {
-            let timestamp = DateFormatting.taskFilename.string(from: Date())
-            destination = archiveDirectory.appendingPathComponent(
-                "\(source.deletingPathExtension().lastPathComponent)-\(timestamp).\(source.pathExtension)"
-            )
+    static func archivePatch(at path: String, book: BookConfig) throws -> String {
+        try book.withSecurityScopedProjectRoot {
+            let patchDirectory = book.patchDirectoryPath
+            let source = URL(fileURLWithPath: path)
+            guard FileManager.default.fileExists(atPath: source.path) else {
+                throw PatchReviewError.archiveSourceMissing(path: source.lastPathComponent)
+            }
+            let archiveDirectory = URL(fileURLWithPath: patchDirectory, isDirectory: true)
+                .appendingPathComponent("archive", isDirectory: true)
+            try FileManager.default.createDirectory(at: archiveDirectory, withIntermediateDirectories: true, attributes: nil)
+            var destination = archiveDirectory.appendingPathComponent(source.lastPathComponent)
+            if FileManager.default.fileExists(atPath: destination.path) {
+                let timestamp = DateFormatting.taskFilename.string(from: Date())
+                destination = archiveDirectory.appendingPathComponent(
+                    "\(source.deletingPathExtension().lastPathComponent)-\(timestamp).\(source.pathExtension)"
+                )
+            }
+            try FileManager.default.moveItem(at: source, to: destination)
+            return destination.path
         }
-        try FileManager.default.moveItem(at: source, to: destination)
-        return destination.path
+    }
+}
+
+enum PatchActivityLogger {
+    static func filePath(book: BookConfig) -> String {
+        URL(fileURLWithPath: book.patchDirectoryPath, isDirectory: true)
+            .appendingPathComponent("activity.json")
+            .path
+    }
+
+    static func load(book: BookConfig) -> [PatchActivityEntry] {
+        (try? book.withSecurityScopedProjectRoot {
+            let path = filePath(book: book)
+            guard let data = FileManager.default.contents(atPath: path) else { return [] }
+            return (try? JSONDecoder.flexibleDates.decode([PatchActivityEntry].self, from: data)) ?? []
+        }) ?? []
+    }
+
+    static func append(_ entry: PatchActivityEntry, book: BookConfig) {
+        try? book.withSecurityScopedProjectRoot {
+            var entries = loadUnscoped(book: book)
+            entries.insert(entry, at: 0)
+            entries = Array(entries.prefix(50))
+            try FileHelpers.ensureDirectory(book.patchDirectoryPath)
+            let data = try JSONEncoder.pretty.encode(entries)
+            try data.write(to: URL(fileURLWithPath: filePath(book: book)), options: .atomic)
+        }
+    }
+
+    private static func loadUnscoped(book: BookConfig) -> [PatchActivityEntry] {
+        let path = filePath(book: book)
+        guard let data = FileManager.default.contents(atPath: path) else { return [] }
+        return (try? JSONDecoder.flexibleDates.decode([PatchActivityEntry].self, from: data)) ?? []
     }
 }
 
@@ -1403,8 +1442,13 @@ final class PatchApplier {
         try await ShellCommandRunner().runAsync(command: "git status --short", book: book)
     }
 
+    func gitLog(book: BookConfig, limit: Int = 1) async throws -> ShellCommandResult {
+        let safeLimit = max(1, min(limit, 20))
+        return try await ShellCommandRunner().runAsync(command: "git log -\(safeLimit) --oneline", book: book)
+    }
+
     func gitCommit(message: String, changedPaths: [String], book: BookConfig) async throws -> ShellCommandResult {
-        guard book.allowShellCommands else {
+        guard book.allowsPatchGitCommands else {
             throw PatchReviewError.shellCommandsDisabled
         }
         let trimmedMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
