@@ -35,7 +35,7 @@ This manual describes how to install BookLoop, set up a book project, and use ea
 
 - **macOS 14 or newer**
 - **Xcode** (to build and run BookLoop from source)
-- A **book project** on disk (`docs/`, `nav.yaml`, reviews folders)
+- A **book project** on disk (`docs/`, `bookloop.yml`, reviews folders)
 - Optionally, an **OpenAI API key** for Chapter Chat and the built-in **Native Agent** (stored in the macOS Keychain)
 
 BookLoop does **not** require an external preview server. It renders Markdown chapters in-app.
@@ -91,11 +91,11 @@ The toolbar provides:
 
 ## 4. Prepare your book project
 
-BookLoop expects a typical book layout with Markdown under `docs/` and navigation in `nav.yaml`. Recommended structure:
+BookLoop expects a typical book layout with Markdown under `docs/` and a root `bookloop.yml` project config (navigation, theme, optional extra CSS). Recommended structure:
 
 ```text
 my-book/
-  nav.yaml
+  bookloop.yml
   docs/
     index.md
     chapters/
@@ -119,7 +119,7 @@ my-book/
 
 You do not need every folder on day one. BookLoop can infer or suggest paths when you configure a book.
 
-If you still have `mkdocs.yml` but no `nav.yaml`, BookLoop reads the legacy `nav:` section and shows a banner suggesting migration. Use **Create nav.yaml from mkdocs.yml** in book settings to copy the nav block.
+If you still have `mkdocs.yml` or `nav.yml` but no `bookloop.yml`, BookLoop reads the legacy file and shows a banner suggesting migration. Use **Create bookloop.yml from mkdocs.yml** in book settings to copy nav, theme, and related settings.
 
 ### Git hygiene (book repo)
 
@@ -143,14 +143,14 @@ What you **should** commit after a successful patch workflow: the modified chapt
 ### Add a book
 
 1. Click **Add** in the sidebar toolbar.
-2. Choose the **book project root** (the folder containing `docs/` and preferably `nav.yaml`).
+2. Choose the **book project root** (the folder containing `docs/` and preferably `bookloop.yml`).
 3. BookLoop creates a book entry with sensible defaults.
 
 Default paths:
 
 | Setting | Default |
 |---------|---------|
-| Navigation | `nav.yaml` |
+| Navigation | `bookloop.yml` |
 | Review items | `reviews/review_items/` (under project root) |
 
 ### Edit book settings
@@ -199,12 +199,12 @@ Read → Save Review → Generate Task → Agent/Cursor Creates Patch → Review
 
 ## 8. Reading mode (preview)
 
-The center column renders the current chapter from `docs/` using bundled Markdown and KaTeX support. Navigation comes from `nav.yaml` (or legacy `mkdocs.yml` nav).
+The center column renders the current chapter from `docs/` using bundled Markdown and KaTeX support. Navigation comes from `bookloop.yml` (or legacy `mkdocs.yml` nav).
 
 ### Sidebar chapter tree
 
 - Click a chapter in the sidebar **Chapters** section to load that Markdown file.
-- The tree matches your `nav.yaml` nesting.
+- The tree matches your `bookloop.yml` nesting.
 
 ### Preview toolbar
 
@@ -467,9 +467,9 @@ Display name, project root, and security-scoped folder access.
 
 ### Paths
 
-Paths to `nav.yaml`, `docs/`, review folders, figure folders, `bookloop/`, style guide, and figures registry.
+Paths to `bookloop.yml`, `docs/`, review folders, figure folders, `bookloop/`, style guide, and figures registry.
 
-If you have `mkdocs.yml` but no `nav.yaml`, use **Create nav.yaml from mkdocs.yml** to migrate navigation.
+If you have `mkdocs.yml` but no `bookloop.yml`, use **Create bookloop.yml from mkdocs.yml** to migrate navigation.
 
 ### Commands
 
@@ -542,7 +542,7 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 ### Preview shows blank or error
 
 - Confirm `docs/` exists and contains the chapter Markdown file.
-- Check `nav.yaml` (or legacy `mkdocs.yml` nav) points to valid `.md` paths.
+- Check `bookloop.yml` (or legacy `mkdocs.yml` nav) points to valid `.md` paths.
 - Use toolbar **Refresh** to reload navigation and the current chapter.
 
 ### Save Review fails
@@ -606,7 +606,7 @@ These files (`changed_files.json`, `diff.patch`, `project_snapshot.json`, `diff-
 
 | Item | Default |
 |------|---------|
-| Navigation config | `nav.yaml` |
+| Navigation config | `bookloop.yml` |
 | Review items folder | `reviews/review_items/` |
 
 ---

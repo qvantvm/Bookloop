@@ -105,9 +105,7 @@ final class ProjectContentStore: ObservableObject {
             chapters = result.chapters
             chapterNav = result.navItems
             navigationResult = result
-            navigationHint = result.usedLegacyMkDocsNav
-                ? "Create nav.yaml at the book root (currently using mkdocs.yml nav)."
-                : nil
+            navigationHint = BookloopYamlConfig.migrationHint(for: BookloopYamlConfig.resolveConfigPath(for: book))
             usedLegacyMkDocsNav = result.usedLegacyMkDocsNav
             errorMessage = nil
         } catch {

@@ -42,6 +42,9 @@
 		101000000000000000000021 /* NavConfigLoader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000022 /* NavConfigLoader.swift */; };
 		101000000000000000000022 /* BookMarkdownRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000023 /* BookMarkdownRenderer.swift */; };
 		101000000000000000000029 /* BookStylesheetResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000002A /* BookStylesheetResolver.swift */; };
+		10100000000000000000002A /* BookloopYamlConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000002B /* BookloopYamlConfig.swift */; };
+		10100000000000000000002B /* BookloopThemeCSSGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000002C /* BookloopThemeCSSGenerator.swift */; };
+		10100000000000000000002C /* material-typeset.css in Resources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000002D /* material-typeset.css */; };
 		101000000000000000000023 /* preview.css in Resources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000024 /* preview.css */; };
 		101000000000000000000024 /* preview.js in Resources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000025 /* preview.js */; };
 		101000000000000000000025 /* markdown-it.min.js in Resources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000026 /* markdown-it.min.js */; };
@@ -88,6 +91,9 @@
 		102000000000000000000022 /* NavConfigLoader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavConfigLoader.swift; sourceTree = "<group>"; };
 		102000000000000000000023 /* BookMarkdownRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookMarkdownRenderer.swift; sourceTree = "<group>"; };
 		10200000000000000000002A /* BookStylesheetResolver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookStylesheetResolver.swift; sourceTree = "<group>"; };
+		10200000000000000000002B /* BookloopYamlConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookloopYamlConfig.swift; sourceTree = "<group>"; };
+		10200000000000000000002C /* BookloopThemeCSSGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookloopThemeCSSGenerator.swift; sourceTree = "<group>"; };
+		10200000000000000000002D /* material-typeset.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = material-typeset.css; sourceTree = "<group>"; };
 		102000000000000000000024 /* preview.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = preview.css; sourceTree = "<group>"; };
 		102000000000000000000025 /* preview.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = preview.js; sourceTree = "<group>"; };
 		102000000000000000000026 /* markdown-it.min.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "markdown-it.min.js"; sourceTree = "<group>"; };
@@ -250,6 +256,8 @@
 				102000000000000000000022 /* NavConfigLoader.swift */,
 				102000000000000000000023 /* BookMarkdownRenderer.swift */,
 				10200000000000000000002A /* BookStylesheetResolver.swift */,
+				10200000000000000000002B /* BookloopYamlConfig.swift */,
+				10200000000000000000002C /* BookloopThemeCSSGenerator.swift */,
 				10400000000000000000000F /* Resources */,
 			);
 			path = Preview;
@@ -259,6 +267,7 @@
 			isa = PBXGroup;
 			children = (
 				102000000000000000000024 /* preview.css */,
+				10200000000000000000002D /* material-typeset.css */,
 				102000000000000000000025 /* preview.js */,
 				102000000000000000000026 /* markdown-it.min.js */,
 				102000000000000000000027 /* katex.min.js */,
@@ -333,6 +342,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				101000000000000000000023 /* preview.css in Resources */,
+				10100000000000000000002C /* material-typeset.css in Resources */,
 				101000000000000000000024 /* preview.js in Resources */,
 				101000000000000000000025 /* markdown-it.min.js in Resources */,
 				101000000000000000000026 /* katex.min.js in Resources */,
@@ -383,6 +393,8 @@
 				101000000000000000000021 /* NavConfigLoader.swift in Sources */,
 				101000000000000000000022 /* BookMarkdownRenderer.swift in Sources */,
 				101000000000000000000029 /* BookStylesheetResolver.swift in Sources */,
+				10100000000000000000002A /* BookloopYamlConfig.swift in Sources */,
+				10100000000000000000002B /* BookloopThemeCSSGenerator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

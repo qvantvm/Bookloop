@@ -5,7 +5,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
     var displayName: String
     var projectRootPath: String
     var projectRootBookmark: Data?
-    var navConfigPath: String?
+    var bookloopConfigPath: String?
     var docsPath: String?
     var reviewsPath: String?
     var reviewItemsPath: String?
@@ -32,7 +32,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
             displayName: "Untitled Book",
             projectRootPath: projectRootPath,
             projectRootBookmark: nil,
-            navConfigPath: nil,
+            bookloopConfigPath: nil,
             docsPath: nil,
             reviewsPath: nil,
             reviewItemsPath: nil,
@@ -66,7 +66,12 @@ struct BookConfig: Identifiable, Codable, Equatable {
             return url.path
         }
 
-        navConfigPath = existing("nav.yaml", directory: false) ?? navConfigPath
+        bookloopConfigPath = existing("bookloop.yml", directory: false)
+            ?? existing("bookloop.yaml", directory: false)
+            ?? existing("nav.yml", directory: false)
+            ?? existing("nav.yaml", directory: false)
+            ?? existing("mkdocs.yml", directory: false)
+            ?? bookloopConfigPath
         docsPath = existing("docs", directory: true) ?? docsPath
         reviewsPath = existing("reviews", directory: true) ?? reviewsPath
         reviewItemsPath = existing("reviews/review_items", directory: true) ?? reviewItemsPath
@@ -113,7 +118,7 @@ struct BookConfig: Identifiable, Codable, Equatable {
 
     mutating func fillSuggestedPaths() {
         guard !projectRootPath.isEmpty else { return }
-        navConfigPath = navConfigPath ?? suggestedPath("nav.yaml")
+        bookloopConfigPath = bookloopConfigPath ?? preferredBookloopConfigPath()
         docsPath = docsPath ?? suggestedPath("docs")
         reviewsPath = reviewsPath ?? suggestedPath("reviews")
         reviewItemsPath = reviewItemsPath ?? suggestedPath("reviews/review_items")
@@ -129,6 +134,16 @@ struct BookConfig: Identifiable, Codable, Equatable {
         URL(fileURLWithPath: projectRootPath, isDirectory: true).appendingPathComponent(relativePath).path
     }
 
+    private func preferredBookloopConfigPath() -> String {
+        for name in BookloopYamlConfig.allFileNames {
+            let path = suggestedPath(name)
+            if FileManager.default.fileExists(atPath: path) {
+                return path
+            }
+        }
+        return suggestedPath("bookloop.yml")
+    }
+
     var taskDirectoryPath: String {
         if let bookloopPath {
             return URL(fileURLWithPath: bookloopPath, isDirectory: true).appendingPathComponent("tasks", isDirectory: true).path
@@ -141,6 +156,66 @@ struct BookConfig: Identifiable, Codable, Equatable {
             return URL(fileURLWithPath: bookloopPath, isDirectory: true).appendingPathComponent("patches", isDirectory: true).path
         }
         return suggestedPath("bookloop/patches")
+    }
+}
+
+extension BookConfig {
+    enum CodingKeys: String, CodingKey {
+        case id, displayName, projectRootPath, projectRootBookmark
+        case bookloopConfigPath, navConfigPath
+        case docsPath, reviewsPath, reviewItemsPath, cumulativeReviewPath
+        case figuresSourcePath, figuresOutputPath, bookloopPath, styleGuidePath
+        case figuresRegistryPath, figureGenerationCommand, validationCommand
+        case allowShellCommands, allowFigureRegeneration, allowPatchApply, notes
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        displayName = try container.decode(String.self, forKey: .displayName)
+        projectRootPath = try container.decode(String.self, forKey: .projectRootPath)
+        projectRootBookmark = try container.decodeIfPresent(Data.self, forKey: .projectRootBookmark)
+        bookloopConfigPath = try container.decodeIfPresent(String.self, forKey: .bookloopConfigPath)
+            ?? container.decodeIfPresent(String.self, forKey: .navConfigPath)
+        docsPath = try container.decodeIfPresent(String.self, forKey: .docsPath)
+        reviewsPath = try container.decodeIfPresent(String.self, forKey: .reviewsPath)
+        reviewItemsPath = try container.decodeIfPresent(String.self, forKey: .reviewItemsPath)
+        cumulativeReviewPath = try container.decodeIfPresent(String.self, forKey: .cumulativeReviewPath)
+        figuresSourcePath = try container.decodeIfPresent(String.self, forKey: .figuresSourcePath)
+        figuresOutputPath = try container.decodeIfPresent(String.self, forKey: .figuresOutputPath)
+        bookloopPath = try container.decodeIfPresent(String.self, forKey: .bookloopPath)
+        styleGuidePath = try container.decodeIfPresent(String.self, forKey: .styleGuidePath)
+        figuresRegistryPath = try container.decodeIfPresent(String.self, forKey: .figuresRegistryPath)
+        figureGenerationCommand = try container.decodeIfPresent(String.self, forKey: .figureGenerationCommand)
+        validationCommand = try container.decodeIfPresent(String.self, forKey: .validationCommand)
+        allowShellCommands = try container.decode(Bool.self, forKey: .allowShellCommands)
+        allowFigureRegeneration = try container.decode(Bool.self, forKey: .allowFigureRegeneration)
+        allowPatchApply = try container.decode(Bool.self, forKey: .allowPatchApply)
+        notes = try container.decodeIfPresent(String.self, forKey: .notes)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(displayName, forKey: .displayName)
+        try container.encode(projectRootPath, forKey: .projectRootPath)
+        try container.encodeIfPresent(projectRootBookmark, forKey: .projectRootBookmark)
+        try container.encodeIfPresent(bookloopConfigPath, forKey: .bookloopConfigPath)
+        try container.encodeIfPresent(docsPath, forKey: .docsPath)
+        try container.encodeIfPresent(reviewsPath, forKey: .reviewsPath)
+        try container.encodeIfPresent(reviewItemsPath, forKey: .reviewItemsPath)
+        try container.encodeIfPresent(cumulativeReviewPath, forKey: .cumulativeReviewPath)
+        try container.encodeIfPresent(figuresSourcePath, forKey: .figuresSourcePath)
+        try container.encodeIfPresent(figuresOutputPath, forKey: .figuresOutputPath)
+        try container.encodeIfPresent(bookloopPath, forKey: .bookloopPath)
+        try container.encodeIfPresent(styleGuidePath, forKey: .styleGuidePath)
+        try container.encodeIfPresent(figuresRegistryPath, forKey: .figuresRegistryPath)
+        try container.encodeIfPresent(figureGenerationCommand, forKey: .figureGenerationCommand)
+        try container.encodeIfPresent(validationCommand, forKey: .validationCommand)
+        try container.encode(allowShellCommands, forKey: .allowShellCommands)
+        try container.encode(allowFigureRegeneration, forKey: .allowFigureRegeneration)
+        try container.encode(allowPatchApply, forKey: .allowPatchApply)
+        try container.encodeIfPresent(notes, forKey: .notes)
     }
 }
 

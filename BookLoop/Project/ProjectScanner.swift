@@ -27,7 +27,7 @@ final class ProjectScanner {
             scanDirectory(contentRootURL, rootURL: rootURL, kind: .chapter, into: &entries)
         }
 
-        let navURL = rootURL.appendingPathComponent("nav.yaml")
+        let navURL = rootURL.appendingPathComponent("bookloop.yml")
         if fm.fileExists(atPath: navURL.path) {
             addFile(url: navURL, rootURL: rootURL, kind: .config, into: &entries)
         }

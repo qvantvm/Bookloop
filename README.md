@@ -14,7 +14,7 @@ review before apply.
 
 ```text
 my-book/
-  nav.yaml
+  bookloop.yml
   docs/
     index.md
     chapters/
@@ -39,11 +39,21 @@ my-book/
 
 BookLoop renders `docs/**/*.md` in-app using bundled Markdown and KaTeX assets. No external preview server is required.
 
-Navigation comes from a root-level `nav.yaml` file (BookLoop falls back to the `nav:` section in `mkdocs.yml` if `nav.yaml` is missing).
+Navigation, theme colors, and optional `extra_css` come from a root-level `bookloop.yml` file. BookLoop still reads legacy `nav.yml` or `mkdocs.yml` if `bookloop.yml` is missing.
 
-Example `nav.yaml`:
+Example `bookloop.yml`:
 
 ```yaml
+theme:
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+extra_css:
+  - assets/css/extra.css
 nav:
   - Home: index.md
   - Part One:
@@ -86,7 +96,7 @@ The agent is optional. Core workflows (feedback, tasks, patches) work without it
 Use the sidebar Add button and select the book project root. Defaults:
 
 ```text
-Navigation: nav.yaml
+Navigation: bookloop.yml
 Review items: reviews/review_items/
 ```
 
@@ -171,7 +181,7 @@ scheme.
 19. **Native Agent**: OpenAI tool-calling loop with list/read/search/stage-patch/build/git tools; exports proposals to `bookloop/patches/`; `.bookloop/config.json` and session logging.
 20. **Patch management**: Scans `.patch`/`.diff`, parses unified diffs, renders before/after HTML blocks, supports block-level accept/reject, creates accepted-block reviewed patches, shows git status/preflight checks, safely applies, and archives rejected patches.
 21. **Markdown editing**: Full native editing is intentionally out of v1; current chapter Markdown can be opened externally or revealed in Finder.
-22. **Chapter discovery**: Reads `nav.yaml` (or legacy `mkdocs.yml` nav), scans `docs/**/*.md`, and uses Markdown frontmatter IDs/titles.
+22. **Chapter discovery**: Reads `bookloop.yml` (or legacy `mkdocs.yml` nav), scans `docs/**/*.md`, and uses Markdown frontmatter IDs/titles.
 23. **Figure management**: Scans Markdown references, output assets, source scripts, and `bookloop/figures.json`; detects missing, stale, unreferenced, and registered figures.
 24. **Figure proposal workflow**: Figure tasks request reproducible sources, output assets, captions, insertion patches, and validation.
 25. **Validation**: Generates validation tasks and can run a configured validation command asynchronously only when shell commands are enabled and confirmed.

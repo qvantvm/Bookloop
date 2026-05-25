@@ -213,9 +213,7 @@ final class BookPreviewModel: ObservableObject {
     func load(book: BookConfig, navigation: BookNavigationScanResult) {
         self.book = book
         chapterNav = navigation.navItems
-        navigationHint = navigation.usedLegacyMkDocsNav
-            ? "Using nav from mkdocs.yml. Create nav.yaml at the book root."
-            : nil
+        navigationHint = BookloopYamlConfig.migrationHint(for: BookloopYamlConfig.resolveConfigPath(for: book))
         previewStatus = FileManager.default.fileExists(atPath: book.docsPath ?? book.suggestedPath("docs"))
             ? .online
             : .offline("docs/ folder not found.")

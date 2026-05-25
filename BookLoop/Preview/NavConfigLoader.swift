@@ -27,21 +27,19 @@ enum NavConfigLoader {
         let docsPath = book.docsPath ?? book.suggestedPath("docs")
         let docsURL = URL(fileURLWithPath: docsPath, isDirectory: true)
 
-        let navPath = book.navConfigPath ?? book.suggestedPath("nav.yaml")
-        let legacyMkDocsPath = book.suggestedPath("mkdocs.yml")
+        let navPath: String
+        let sourceDescription: String
+        let usedLegacy: Bool
 
-        let (yamlContent, sourceDescription, usedLegacy): (String, String, Bool)
-        if FileManager.default.fileExists(atPath: navPath) {
-            yamlContent = try String(contentsOfFile: navPath, encoding: .utf8)
-            sourceDescription = "nav.yaml"
-            usedLegacy = false
-        } else if FileManager.default.fileExists(atPath: legacyMkDocsPath) {
-            yamlContent = try String(contentsOfFile: legacyMkDocsPath, encoding: .utf8)
-            sourceDescription = "mkdocs.yml (legacy — create nav.yaml)"
-            usedLegacy = true
+        if let resolved = BookloopYamlConfig.resolveConfigPath(for: book) {
+            navPath = resolved
+            sourceDescription = URL(fileURLWithPath: resolved).lastPathComponent
+            usedLegacy = BookloopYamlConfig.legacyStatus(for: resolved) != .none
         } else {
             return try fallbackFilesystemScan(book: book, docsURL: docsURL, sourceDescription: "docs/**/*.md")
         }
+
+        let yamlContent = try String(contentsOfFile: navPath, encoding: .utf8)
 
         let navNodes = try parseNavYAML(yamlContent)
         guard !navNodes.isEmpty else {
@@ -80,14 +78,13 @@ enum NavConfigLoader {
         )
     }
 
+    static func createBookloopYAML(fromLegacyMkDocsAt path: String) throws -> String {
+        try BookloopYamlConfig.createBookloopYAML(fromLegacyMkDocsAt: path)
+    }
+
+    @available(*, deprecated, renamed: "createBookloopYAML(fromLegacyMkDocsAt:)")
     static func createNavYAML(fromLegacyMkDocsAt path: String) throws -> String {
-        let content = try String(contentsOfFile: path, encoding: .utf8)
-        guard let yaml = try Yams.load(yaml: content) as? [String: Any],
-              let nav = yaml["nav"] else {
-            throw NavConfigLoaderError.navSectionMissing
-        }
-        let navYAML = try Yams.dump(object: ["nav": nav])
-        return "# BookLoop navigation\n# Migrated from mkdocs.yml\n\n" + navYAML
+        try createBookloopYAML(fromLegacyMkDocsAt: path)
     }
 
     private static func parseNavYAML(_ content: String) throws -> [NavTreeNode] {

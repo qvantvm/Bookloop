@@ -1,69 +1,95 @@
 import Foundation
 import Yams
 
-struct BookStylesheet: Equatable {
-    var href: String
-    var media: String?
+enum BookloopThemeParser {
+    static func parse(from book: BookConfig) -> BookPreviewTheme? {
+        guard let root = BookloopYamlConfig.loadRootNode(for: book),
+              case .mapping(let pairs) = root,
+              let themeNode = pairs.first(where: { nodeString($0.key) == "theme" })?.value,
+              case .mapping(let themePairs) = themeNode else {
+            return nil
+        }
+
+        var theme = BookPreviewTheme()
+
+        if let paletteNode = themePairs.first(where: { nodeString($0.key) == "palette" })?.value,
+           case .sequence(let paletteItems) = paletteNode {
+            for item in paletteItems {
+                guard case .mapping(let palettePairs) = item else { continue }
+                let scheme = palettePairs.first(where: { nodeString($0.key) == "scheme" }).flatMap { nodeString($0.value) }
+                let primary = palettePairs.first(where: { nodeString($0.key) == "primary" }).flatMap { nodeString($0.value) }
+                let accent = palettePairs.first(where: { nodeString($0.key) == "accent" }).flatMap { nodeString($0.value) }
+
+                if let primary { theme.primary = primary }
+                if let accent { theme.accent = accent }
+                if scheme == "default" || scheme == "light" {
+                    theme.lightScheme = scheme ?? "default"
+                } else if scheme == "slate" || scheme == "dark" {
+                    theme.darkScheme = scheme ?? "slate"
+                }
+            }
+        }
+
+        return theme
+    }
+
+    private static func nodeString(_ node: Node) -> String? {
+        if case .scalar(let scalar) = node {
+            return scalar.string.nilIfBlank
+        }
+        return nil
+    }
 }
 
 enum BookStylesheetResolver {
-    static func resolve(for book: BookConfig) -> [BookStylesheet] {
+    static func resolve(for book: BookConfig) -> BookPreviewStyleBundle {
         let docsPath = book.docsPath ?? book.suggestedPath("docs")
         let docsURL = URL(fileURLWithPath: docsPath, isDirectory: true)
         let projectRoot = URL(fileURLWithPath: book.projectRootPath, isDirectory: true)
         var ordered: [BookStylesheet] = []
         var seen = Set<String>()
 
-        func append(_ href: String) {
+        func append(_ href: String, media: String? = nil) {
             let normalized = normalizedStylesheetHref(href, docsURL: docsURL, projectRoot: projectRoot)
             guard !normalized.isEmpty, seen.insert(normalized).inserted else { return }
             let fileURL = docsURL.appendingPathComponent(normalized)
             guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
-            ordered.append(BookStylesheet(href: normalized, media: mediaQuery(for: normalized)))
+            ordered.append(BookStylesheet(href: normalized, media: media ?? mediaQuery(for: normalized)))
         }
 
-        for href in extraCSS(from: projectRoot.appendingPathComponent("mkdocs.yml")) {
+        let hasProjectConfig = BookloopYamlConfig.resolveConfigPath(for: book) != nil
+        let theme = hasProjectConfig
+            ? (BookloopThemeParser.parse(from: book) ?? BookPreviewTheme())
+            : nil
+        let generatedThemeCSS: String
+        let usesGeneratedTheme: Bool
+        if let theme {
+            generatedThemeCSS = BookloopThemeCSSGenerator.generate(theme: theme)
+            usesGeneratedTheme = true
+        } else {
+            generatedThemeCSS = ""
+            usesGeneratedTheme = false
+        }
+
+        for href in extraCSS(from: book) {
             append(href)
         }
 
-        let scanDirectories = [
-            "stylesheets",
-            "css",
-            "assets/stylesheets",
-            "assets/css"
-        ]
-        for directory in scanDirectories {
-            let dirURL = docsURL.appendingPathComponent(directory, isDirectory: true)
-            guard let files = try? FileManager.default.contentsOfDirectory(
-                at: dirURL,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-            ) else { continue }
-            for file in files.sorted(by: { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending })
-            where file.pathExtension.lowercased() == "css" {
-                append("\(directory)/\(file.lastPathComponent)")
-            }
-        }
-
-        return ordered
+        return BookPreviewStyleBundle(
+            stylesheets: ordered,
+            theme: theme,
+            generatedThemeCSS: generatedThemeCSS,
+            usesGeneratedTheme: usesGeneratedTheme
+        )
     }
 
-    private static func extraCSS(from mkdocsURL: URL) -> [String] {
-        guard FileManager.default.fileExists(atPath: mkdocsURL.path),
-              let content = try? String(contentsOf: mkdocsURL, encoding: .utf8),
-              let root = try? Yams.compose(yaml: content) else {
+    private static func extraCSS(from book: BookConfig) -> [String] {
+        guard let root = BookloopYamlConfig.loadRootNode(for: book),
+              case .mapping(let pairs) = root,
+              let extraNode = pairs.first(where: { nodeString($0.key) == "extra_css" })?.value else {
             return []
         }
 
-        let extraNode: Node?
-        switch root {
-        case .mapping(let pairs):
-            extraNode = pairs.first(where: { nodeString($0.key) == "extra_css" })?.value
-        default:
-            extraNode = nil
-        }
-
-        guard let extraNode else { return [] }
         switch extraNode {
         case .sequence(let items):
             return items.compactMap { nodeString($0) }

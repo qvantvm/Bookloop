@@ -1506,16 +1506,21 @@ struct BookSettingsForm: View {
             }
 
             Section("Paths") {
-                PathField(title: "nav.yaml", path: $draft.navConfigPath, isDirectory: false)
-                if showsNavMigrationButton {
-                    Button("Create nav.yaml from mkdocs.yml") {
-                        migrateNavYAML()
+                PathField(title: "bookloop.yml", path: $draft.bookloopConfigPath, isDirectory: false)
+                if showsBookloopMigrationButton {
+                    Button("Create bookloop.yml from mkdocs.yml") {
+                        migrateBookloopYAML()
                     }
                     if let migrationMessage {
                         Text(migrationMessage)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                }
+                if showsRenameNavHint {
+                    Text("Tip: rename nav.yml to bookloop.yml — it is the full BookLoop project config.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 PathField(title: "docs", path: $draft.docsPath, isDirectory: true)
                 PathField(title: "reviews", path: $draft.reviewsPath, isDirectory: true)
@@ -1548,22 +1553,39 @@ struct BookSettingsForm: View {
         .padding()
     }
 
-    private var showsNavMigrationButton: Bool {
+    private var showsBookloopMigrationButton: Bool {
         guard !draft.projectRootPath.isEmpty else { return false }
-        let navPath = draft.navConfigPath ?? draft.suggestedPath("nav.yaml")
         let mkdocsPath = draft.suggestedPath("mkdocs.yml")
-        return FileManager.default.fileExists(atPath: mkdocsPath)
-            && !FileManager.default.fileExists(atPath: navPath)
+        guard FileManager.default.fileExists(atPath: mkdocsPath) else { return false }
+        for name in BookloopYamlConfig.primaryFileNames {
+            if FileManager.default.fileExists(atPath: draft.suggestedPath(name)) {
+                return false
+            }
+        }
+        if let configured = draft.bookloopConfigPath?.nilIfBlank,
+           FileManager.default.fileExists(atPath: configured),
+           BookloopYamlConfig.legacyStatus(for: configured) == .none {
+            return false
+        }
+        return true
     }
 
-    private func migrateNavYAML() {
+    private var showsRenameNavHint: Bool {
+        guard !draft.projectRootPath.isEmpty else { return false }
+        let navYml = draft.suggestedPath("nav.yml")
+        let bookloopYml = draft.suggestedPath("bookloop.yml")
+        return FileManager.default.fileExists(atPath: navYml)
+            && !FileManager.default.fileExists(atPath: bookloopYml)
+    }
+
+    private func migrateBookloopYAML() {
         let mkdocsPath = draft.suggestedPath("mkdocs.yml")
-        let navPath = draft.navConfigPath ?? draft.suggestedPath("nav.yaml")
+        let bookloopPath = draft.suggestedPath("bookloop.yml")
         do {
-            let content = try NavConfigLoader.createNavYAML(fromLegacyMkDocsAt: mkdocsPath)
-            try content.write(toFile: navPath, atomically: true, encoding: .utf8)
-            draft.navConfigPath = navPath
-            migrationMessage = "Created nav.yaml from mkdocs.yml."
+            let content = try NavConfigLoader.createBookloopYAML(fromLegacyMkDocsAt: mkdocsPath)
+            try content.write(toFile: bookloopPath, atomically: true, encoding: .utf8)
+            draft.bookloopConfigPath = bookloopPath
+            migrationMessage = "Created bookloop.yml from mkdocs.yml."
         } catch {
             migrationMessage = error.localizedDescription
         }

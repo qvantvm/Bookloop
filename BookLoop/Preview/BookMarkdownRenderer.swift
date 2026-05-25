@@ -31,6 +31,10 @@ enum PreviewResourceLoader {
         loadText(resource: "katex-auto-render.min", ext: "js") ?? ""
     }
 
+    static var materialTypesetCSS: String {
+        loadText(resource: "material-typeset", ext: "css") ?? ""
+    }
+
     static var katexCSS: String {
         loadText(resource: "katex.min", ext: "css") ?? ""
     }
@@ -42,27 +46,42 @@ enum PreviewHTMLTemplate {
         title: String,
         chapterID: String?,
         currentChapterPath: String,
-        stylesheets: [BookStylesheet] = []
+        styleBundle: BookPreviewStyleBundle = BookPreviewStyleBundle(
+            stylesheets: [],
+            theme: nil,
+            generatedThemeCSS: "",
+            usesGeneratedTheme: false
+        )
     ) -> String {
         let safeTitle = escapeHTML(title)
         let chapterMeta = chapterID.map { "<meta name=\"chapter-id\" content=\"\(escapeHTML($0))\">" } ?? ""
-        let bookStyles = stylesheetTags(stylesheets)
-        let bodyClass = stylesheets.isEmpty ? "bookloop-preview" : "bookloop-preview has-book-stylesheet"
+        let bookStyles = stylesheetTags(styleBundle.stylesheets)
+        let htmlAttrs = htmlAttributes(for: styleBundle.theme)
+        let bodyClass = bodyClass(for: styleBundle)
+        let themeScript = colorSchemeScript(for: styleBundle.theme)
+        let generatedCSS = styleBundle.generatedThemeCSS
         return """
         <!doctype html>
-        <html lang="en" style="color-scheme: light dark;">
+        <html \(htmlAttrs)>
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <meta name="color-scheme" content="light dark">
           \(chapterMeta)
           <style>\(PreviewResourceLoader.katexCSS)</style>
-          <style>\(PreviewResourceLoader.previewCSS)</style>
+          <style>\(PreviewResourceLoader.materialTypesetCSS)</style>
+          \(generatedCSS.isEmpty ? "" : "<style>\(generatedCSS)</style>")
           \(bookStyles)
+          <style>\(PreviewResourceLoader.previewCSS)</style>
           <title>\(safeTitle)</title>
         </head>
         <body class="\(bodyClass)">
-          <article id="bookloop-content" class="md-content md-typeset"></article>
+          <main class="md-content">
+            <div class="md-content__inner">
+              <article id="bookloop-content" class="md-typeset"></article>
+            </div>
+          </main>
+          \(themeScript)
           <script>\(PreviewResourceLoader.markdownItJS)</script>
           <script>\(PreviewResourceLoader.katexJS)</script>
           <script>\(PreviewResourceLoader.katexAutoRenderJS)</script>
@@ -78,6 +97,52 @@ enum PreviewHTMLTemplate {
           </script>
         </body>
         </html>
+        """
+    }
+
+    private static func bodyClass(for styleBundle: BookPreviewStyleBundle) -> String {
+        var classes = ["bookloop-preview"]
+        if styleBundle.usesGeneratedTheme {
+            classes.append("has-book-theme")
+        }
+        if !styleBundle.stylesheets.isEmpty {
+            classes.append("has-book-stylesheet")
+        }
+        return classes.joined(separator: " ")
+    }
+
+    private static func htmlAttributes(for theme: BookPreviewTheme?) -> String {
+        guard let theme else {
+            return "lang=\"en\""
+        }
+        var attrs = [
+            "lang=\"en\"",
+            "data-md-color-switching=\"\"",
+            "data-md-color-scheme=\"\(escapeHTML(theme.lightScheme))\"",
+            "data-md-color-primary=\"\(escapeHTML(theme.primary))\"",
+            "data-md-color-accent=\"\(escapeHTML(theme.accent))\""
+        ]
+        return attrs.joined(separator: " ")
+    }
+
+    private static func colorSchemeScript(for theme: BookPreviewTheme?) -> String {
+        guard let theme else { return "" }
+        let light = jsonString(theme.lightScheme)
+        let dark = jsonString(theme.darkScheme)
+        return """
+          <script>
+            (function() {
+              function applyBookLoopColorScheme() {
+                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                document.documentElement.setAttribute(
+                  'data-md-color-scheme',
+                  prefersDark ? \(dark) : \(light)
+                );
+              }
+              applyBookLoopColorScheme();
+              window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyBookLoopColorScheme);
+            })();
+          </script>
         """
     }
 
@@ -148,14 +213,14 @@ final class BookMarkdownRenderer {
             let chapterID = parsed.frontmatter["id"]
                 ?? normalizedPath.replacingOccurrences(of: ".md", with: "").replacingOccurrences(of: "/", with: "-")
 
-            let stylesheets = BookStylesheetResolver.resolve(for: book)
+            let styleBundle = BookStylesheetResolver.resolve(for: book)
 
             let html = PreviewHTMLTemplate.document(
                 markdownBody: parsed.body,
                 title: title,
                 chapterID: chapterID,
                 currentChapterPath: normalizedPath,
-                stylesheets: stylesheets
+                styleBundle: styleBundle
             )
 
             return RenderedBookChapter(
