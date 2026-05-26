@@ -207,6 +207,12 @@ struct ReviewBrowserView: View {
                     Text("All").tag("All")
                     ForEach(reviewStore.types, id: \.self) { Text($0).tag($0) }
                 }
+                Picker("Status", selection: $reviewStore.statusFilter) {
+                    Text("Open").tag("Open")
+                    Text("Resolved").tag("Resolved")
+                    Text("All").tag("All")
+                }
+                .frame(width: 110)
                 Picker("Group", selection: $grouping) {
                     ForEach(ReviewGrouping.allCases) { Text($0.rawValue).tag($0) }
                 }
@@ -235,7 +241,15 @@ struct ReviewBrowserView: View {
             TabView {
                 reviewItemsPane
                     .tabItem { Text("Review Items") }
-                SupplementalMarkdownView(title: "Cumulative Review", content: reviewStore.cumulativeReview, emptyMessage: "reviews/cumulative_review.md was not found.")
+                VStack(spacing: 0) {
+                    if reviewStore.artifactsHealth.needsRepair {
+                        staleArtifactsBanner
+                    }
+                    CumulativeReviewView(
+                        content: reviewStore.cumulativeReview,
+                        emptyMessage: "reviews/cumulative_review.md was not found."
+                    )
+                }
                     .tabItem { Text("Cumulative") }
                 ReviewIndexCardView(
                     book: book,
@@ -251,6 +265,10 @@ struct ReviewBrowserView: View {
                 Button("Refresh Reviews") {
                     reviewStore.refresh(book: book)
                 }
+                Button(reviewStore.isRepairingArtifacts ? "Rebuilding…" : "Rebuild Summaries") {
+                    Task { await reviewStore.rebuildArtifacts(book: book) }
+                }
+                .disabled(reviewStore.isRepairingArtifacts)
                 Button("Generate Task for Selected Reviews") {
                     let selected = reviewStore.items.filter { reviewStore.selectedIDs.contains($0.id) }
                     taskStore.generate(book: book, mode: .fixReviews, chapterID: selected.compactMap(\.chapter).first, reviewItems: selected, selectedText: webModel.selectedText)
@@ -265,11 +283,33 @@ struct ReviewBrowserView: View {
                 }
                 .disabled(reviewStore.selectedIDs.isEmpty && webModel.detectedChapterID == nil)
                 Spacer()
+                if let message = reviewStore.lastArtifactsRepairMessage {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Text("\(reviewStore.filteredItems.count) shown")
                     .foregroundStyle(.secondary)
             }
             .padding(8)
         }
+    }
+
+    private var staleArtifactsBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text(reviewStore.artifactsHealth.issueSummary ?? "Review summaries are out of date.")
+                .font(.caption)
+            Spacer()
+            if reviewStore.isRepairingArtifacts {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.orange.opacity(0.08))
     }
 
     private var reviewItemsPane: some View {
@@ -299,7 +339,7 @@ struct ReviewBrowserView: View {
                     }
                     .frame(minWidth: 320)
 
-                    ReviewDetailView(item: selectedReview)
+                    ReviewDetailView(item: selectedReview, book: book)
                         .frame(minWidth: 320)
                 }
             }
@@ -334,6 +374,39 @@ struct ReviewBrowserView: View {
             return reviewStore.items.first { $0.id == first }
         }
         return reviewStore.filteredItems.first
+    }
+}
+
+struct CumulativeReviewView: View {
+    let content: String?
+    let emptyMessage: String
+
+    @State private var showsSource = false
+
+    var body: some View {
+        if let content, !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            VStack(spacing: 0) {
+                HTMLStringView(html: ReviewSummaryMarkdownRenderer().renderDocument(markdown: content))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                Divider()
+
+                DisclosureGroup("Show markdown source", isExpanded: $showsSource) {
+                    ScrollView {
+                        Text(content)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4)
+                    }
+                    .frame(maxHeight: 160)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+        } else {
+            EmptyStateView(title: "Cumulative Review", message: emptyMessage, systemImage: "doc.text")
+        }
     }
 }
 
@@ -400,15 +473,15 @@ struct ReviewIndexCardView: View {
 
     private var rebuildIndexControls: some View {
         VStack(spacing: 8) {
-            if reviewStore.indexMissingEntryCount > 0 {
-                Text("\(reviewStore.indexMissingEntryCount) review file(s) on disk are not in the index.")
+            if let summary = reviewStore.artifactsHealth.issueSummary {
+                Text(summary)
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
-            Button(reviewStore.isRebuildingIndex ? "Rebuilding Index…" : "Rebuild Index") {
-                Task { await reviewStore.rebuildIndex(book: book) }
+            Button(reviewStore.isRepairingArtifacts ? "Rebuilding…" : "Rebuild Summaries") {
+                Task { await reviewStore.rebuildArtifacts(book: book) }
             }
-            .disabled(reviewStore.isRebuildingIndex)
+            .disabled(reviewStore.isRepairingArtifacts)
         }
         .padding()
     }
@@ -417,8 +490,8 @@ struct ReviewIndexCardView: View {
     private func indexContent(_ document: ReviewIndexDocument) -> some View {
         VStack(spacing: 0) {
             header(document)
-            if reviewStore.indexMissingEntryCount > 0 {
-                staleIndexBanner
+            if reviewStore.artifactsHealth.needsRepair {
+                staleArtifactsBanner
             }
             toolbar
             Divider()
@@ -439,6 +512,7 @@ struct ReviewIndexCardView: View {
                                 isExpanded: expandedEntryID == entry.id,
                                 onToggle: { toggleExpansion(for: entry.id) }
                             )
+                            .environmentObject(reviewStore)
                         }
                     }
                     .padding()
@@ -468,10 +542,10 @@ struct ReviewIndexCardView: View {
                 Text("Review Index")
                     .font(.title3.bold())
                 Spacer()
-                Button(reviewStore.isRebuildingIndex ? "Rebuilding…" : "Rebuild Index") {
-                    Task { await reviewStore.rebuildIndex(book: book) }
+                Button(reviewStore.isRepairingArtifacts ? "Rebuilding…" : "Rebuild Summaries") {
+                    Task { await reviewStore.rebuildArtifacts(book: book) }
                 }
-                .disabled(reviewStore.isRebuildingIndex)
+                .disabled(reviewStore.isRepairingArtifacts)
             }
             HStack(spacing: 12) {
                 if let lastRebuilt = document.lastRebuilt {
@@ -490,11 +564,11 @@ struct ReviewIndexCardView: View {
         .padding(.bottom, 8)
     }
 
-    private var staleIndexBanner: some View {
+    private var staleArtifactsBanner: some View {
         HStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
-            Text("Index is stale: \(reviewStore.indexMissingEntryCount) review(s) on disk are missing.")
+            Text(reviewStore.artifactsHealth.issueSummary ?? "Review summaries are out of date.")
                 .font(.caption)
             Spacer()
         }
@@ -557,6 +631,9 @@ private struct ReviewIndexEntryCard: View {
     let isExpanded: Bool
     let onToggle: () -> Void
 
+    @EnvironmentObject private var reviewStore: ReviewStore
+    @State private var isReopening = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button(action: onToggle) {
@@ -599,10 +676,23 @@ private struct ReviewIndexEntryCard: View {
                     LabeledContent("ID", value: entry.id)
                     if let file = entry.file?.nilIfBlank {
                         LabeledContent("File", value: file)
-                        Button("Reveal in Finder") {
-                            revealInFinder(relativePath: file)
+                        HStack {
+                            Button("Reveal in Finder") {
+                                revealInFinder(relativePath: file)
+                            }
+                            .font(.caption)
+                            if entry.status.lowercased() == "resolved" {
+                                Button(isReopening ? "Reopening…" : "Reopen Review") {
+                                    Task {
+                                        isReopening = true
+                                        defer { isReopening = false }
+                                        await reviewStore.reopenReview(id: entry.id, book: book)
+                                    }
+                                }
+                                .font(.caption)
+                                .disabled(isReopening)
+                            }
                         }
-                        .font(.caption)
                     }
                 }
                 .font(.callout)
@@ -646,9 +736,19 @@ struct ReviewRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(item.title)
-                .fontWeight(.medium)
-                .lineLimit(2)
+            HStack {
+                Text(item.title)
+                    .fontWeight(.medium)
+                    .lineLimit(2)
+                if item.status == .resolved {
+                    Text("RESOLVED")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 4)
+                        .background(Color.green.opacity(0.15))
+                        .foregroundStyle(.green)
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                }
+            }
             HStack {
                 if let severity = item.severity {
                     Text(severity.uppercased())
@@ -674,6 +774,11 @@ struct ReviewRow: View {
 
 struct ReviewDetailView: View {
     let item: ReviewItem?
+    let book: BookConfig
+
+    @EnvironmentObject private var reviewStore: ReviewStore
+    @State private var isReopening = false
+    @State private var isResolving = false
 
     var body: some View {
         if let item {
@@ -701,6 +806,33 @@ struct ReviewDetailView: View {
                         }
                         Button("Copy ID") {
                             FileHelpers.copyToPasteboard(item.id)
+                        }
+                        if item.status.isOpenForWorkflow {
+                            Button(isResolving ? "Marking Resolved…" : "Mark Resolved") {
+                                Task {
+                                    isResolving = true
+                                    defer { isResolving = false }
+                                    do {
+                                        try await Task(priority: .userInitiated) {
+                                            _ = try ReviewItemResolver.resolveOpenReviews(ids: [item.id], book: book)
+                                        }.value
+                                        reviewStore.refresh(book: book)
+                                    } catch {
+                                        reviewStore.errorMessage = error.localizedDescription
+                                    }
+                                }
+                            }
+                            .disabled(isResolving)
+                        }
+                        if item.status == .resolved {
+                            Button(isReopening ? "Reopening…" : "Reopen Review") {
+                                Task {
+                                    isReopening = true
+                                    defer { isReopening = false }
+                                    await reviewStore.reopenReview(id: item.id, book: book)
+                                }
+                            }
+                            .disabled(isReopening)
                         }
                     }
                 }
@@ -1046,6 +1178,7 @@ enum PatchReviewError: LocalizedError {
 struct PatchReviewView: View {
     @EnvironmentObject private var patchStore: PatchStore
     @EnvironmentObject private var library: BookLibraryStore
+    @EnvironmentObject private var reviewStore: ReviewStore
     let book: BookConfig
 
     private var activeBook: BookConfig {
@@ -1595,6 +1728,18 @@ struct PatchReviewView: View {
                 appendActivity("Committed: \(message)")
                 if !context.evidenceFiles.isEmpty {
                     appendActivity("Included evidence: \(context.evidenceFiles.joined(separator: ", "))")
+                }
+                do {
+                    let resolvedReviewIDs = try await Task(priority: .userInitiated) {
+                        try ReviewItemResolver.resolveReviewsAfterCommit(context: context, book: activeBook)
+                    }.value
+                    if !resolvedReviewIDs.isEmpty {
+                        appendActivity("Marked resolved: \(resolvedReviewIDs.joined(separator: ", "))")
+                        statusMessage = (statusMessage ?? "") + " Resolved \(resolvedReviewIDs.count) review(s)."
+                        reviewStore.refresh(book: activeBook)
+                    }
+                } catch {
+                    appendActivity("Review resolve failed: \(error.localizedDescription)")
                 }
                 appendActivity("git status: \(gitWorkingTree == "Working tree clean." ? "clean" : "updated")")
                 pendingCommitContext = nil

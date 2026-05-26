@@ -349,14 +349,34 @@ final class ReviewIndexParser {
 
 final class ReviewItemParser {
     func parseReviewItems(book: BookConfig) throws -> [ReviewItem] {
-        let directory = URL(fileURLWithPath: book.reviewItemsPath ?? book.suggestedPath("reviews/review_items"), isDirectory: true)
+        try parseReviewItems(in: reviewItemsDirectory(for: book), defaultStatus: .open)
+    }
+
+    func parseAllReviewItems(book: BookConfig) throws -> [ReviewItem] {
+        let openItems = try parseReviewItems(book: book)
+        let resolvedItems = try parseReviewItems(in: Self.resolvedDirectory(for: book), defaultStatus: .resolved)
+        var byID: [String: ReviewItem] = [:]
+        for item in openItems {
+            byID[item.id] = item
+        }
+        for item in resolvedItems {
+            byID[item.id] = item
+        }
+        return byID.values.sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
+    }
+
+    private func reviewItemsDirectory(for book: BookConfig) -> URL {
+        URL(fileURLWithPath: book.reviewItemsPath ?? book.suggestedPath("reviews/review_items"), isDirectory: true)
+    }
+
+    private func parseReviewItems(in directory: URL, defaultStatus: ReviewStatus) throws -> [ReviewItem] {
         guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey]) else {
             return []
         }
 
         return files
-            .filter { $0.pathExtension.lowercased() == "md" }
-            .compactMap(parse(url:))
+            .filter { $0.pathExtension.lowercased() == "md" && $0.lastPathComponent.caseInsensitiveCompare("README.md") != .orderedSame }
+            .compactMap { parse(url: $0, defaultStatus: defaultStatus) }
             .sorted { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }
     }
 
@@ -365,12 +385,13 @@ final class ReviewItemParser {
         return try? String(contentsOfFile: path, encoding: .utf8)
     }
 
-    private func parse(url: URL) -> ReviewItem? {
+    private func parse(url: URL, defaultStatus: ReviewStatus = .open) -> ReviewItem? {
         guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
         let frontmatter = parseFrontmatter(content)
         let id = frontmatter["id"] ?? url.deletingPathExtension().lastPathComponent
         let title = frontmatter["title"] ?? firstHeading(content) ?? id
-        let status = ReviewStatus(rawValue: frontmatter["status"] ?? "") ?? .open
+        let inResolvedFolder = url.path.contains("/resolved/")
+        let status = Self.parseReviewStatus(frontmatter["status"], inResolvedFolder: inResolvedFolder, defaultStatus: defaultStatus)
         let createdAt = parseDate(frontmatter["created_at"]) ?? parseDateFromFilename(url.deletingPathExtension().lastPathComponent) ?? url.modificationDate
 
         return ReviewItem(
@@ -568,6 +589,192 @@ final class ReviewItemParser {
         }
         return URL(fileURLWithPath: book.suggestedPath("reviews/resolved"), isDirectory: true)
     }
+
+    static func parseReviewStatus(_ raw: String?, inResolvedFolder: Bool, defaultStatus: ReviewStatus = .open) -> ReviewStatus {
+        let normalized = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        if normalized == "resolved" { return .resolved }
+        if let status = ReviewStatus(rawValue: normalized), status != .unknown {
+            return status
+        }
+        if inResolvedFolder { return .resolved }
+        return defaultStatus
+    }
+
+    func reviewFileURL(id: String, book: BookConfig) -> URL? {
+        let itemsURL = reviewItemsDirectory(for: book).appendingPathComponent("\(id).md")
+        if FileManager.default.fileExists(atPath: itemsURL.path) {
+            return itemsURL
+        }
+        let resolvedURL = Self.resolvedDirectory(for: book).appendingPathComponent("\(id).md")
+        if FileManager.default.fileExists(atPath: resolvedURL.path) {
+            return resolvedURL
+        }
+        return nil
+    }
+}
+
+enum ReviewItemResolver {
+    enum ResolverError: LocalizedError {
+        case reviewNotFound(String)
+        case alreadyOpen(String)
+        case notResolved(String)
+        case moveFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .reviewNotFound(let id):
+                return "Review not found: \(id)"
+            case .alreadyOpen(let id):
+                return "Review is already open: \(id)"
+            case .notResolved(let id):
+                return "Review is not resolved: \(id)"
+            case .moveFailed(let detail):
+                return detail
+            }
+        }
+    }
+
+    static func resolveReviewsAfterCommit(context: PendingPatchCommitContext, book: BookConfig) throws -> [String] {
+        let ids = reviewIDs(from: context.evidenceFiles)
+        guard !ids.isEmpty else { return [] }
+        return try resolveOpenReviews(ids: ids, book: book)
+    }
+
+    static func reviewIDs(from paths: [String]) -> Set<String> {
+        Set(paths.compactMap { relativePath in
+            let normalized = relativePath.replacingOccurrences(of: "\\", with: "/")
+            guard normalized.contains("reviews/review_items/") || normalized.contains("reviews/resolved/") else {
+                return nil
+            }
+            return URL(fileURLWithPath: normalized).deletingPathExtension().lastPathComponent
+        })
+    }
+
+    static func resolveOpenReviews(ids: Set<String>, book: BookConfig) throws -> [String] {
+        try book.withSecurityScopedProjectRoot {
+            var resolvedIDs: [String] = []
+            for id in ids.sorted() {
+                if try resolveReview(id: id, book: book) {
+                    resolvedIDs.append(id)
+                }
+            }
+            if !resolvedIDs.isEmpty {
+                try ReviewArtifactsMaintainer.repairAll(book: book)
+            }
+            return resolvedIDs
+        }
+    }
+
+    @discardableResult
+    static func resolveReview(id: String, book: BookConfig) throws -> Bool {
+        let itemsDir = URL(fileURLWithPath: book.reviewItemsPath ?? book.suggestedPath("reviews/review_items"), isDirectory: true)
+        let sourceURL = itemsDir.appendingPathComponent("\(id).md")
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else { return false }
+
+        let content = try String(contentsOf: sourceURL, encoding: .utf8)
+        let updated = updateFrontmatter(content, mutate: { fields in
+            fields["status"] = "resolved"
+            fields["resolved_at"] = formatTimestamp(Date())
+        })
+
+        let resolvedDir = ReviewItemParser.resolvedDirectory(for: book)
+        try FileHelpers.ensureDirectory(resolvedDir.path)
+        let destinationURL = resolvedDir.appendingPathComponent("\(id).md")
+        try updated.write(to: destinationURL, atomically: true, encoding: .utf8)
+        try FileManager.default.removeItem(at: sourceURL)
+        return true
+    }
+
+    static func reopenReview(id: String, book: BookConfig) throws {
+        try book.withSecurityScopedProjectRoot {
+            let resolvedDir = ReviewItemParser.resolvedDirectory(for: book)
+            let sourceURL = resolvedDir.appendingPathComponent("\(id).md")
+            guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+                let itemsURL = URL(fileURLWithPath: book.reviewItemsPath ?? book.suggestedPath("reviews/review_items"), isDirectory: true)
+                    .appendingPathComponent("\(id).md")
+                if FileManager.default.fileExists(atPath: itemsURL.path) {
+                    throw ResolverError.alreadyOpen(id)
+                }
+                throw ResolverError.reviewNotFound(id)
+            }
+
+            let content = try String(contentsOf: sourceURL, encoding: .utf8)
+            let updated = updateFrontmatter(content, mutate: { fields in
+                fields["status"] = "open"
+                fields.removeValue(forKey: "resolved_at")
+            })
+
+            let itemsDir = URL(fileURLWithPath: book.reviewItemsPath ?? book.suggestedPath("reviews/review_items"), isDirectory: true)
+            try FileHelpers.ensureDirectory(itemsDir.path)
+            let destinationURL = itemsDir.appendingPathComponent("\(id).md")
+            try updated.write(to: destinationURL, atomically: true, encoding: .utf8)
+            try FileManager.default.removeItem(at: sourceURL)
+            try ReviewArtifactsMaintainer.repairAll(book: book)
+        }
+    }
+
+    private static func updateFrontmatter(_ content: String, mutate: (inout [String: String]) -> Void) -> String {
+        guard content.hasPrefix("---") else { return content }
+        var lines = content.components(separatedBy: .newlines)
+        guard let endIndex = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) else {
+            return content
+        }
+
+        var fields: [String: String] = [:]
+        var fieldOrder: [String] = []
+        for line in lines[1..<endIndex] {
+            let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
+            guard parts.count == 2 else { continue }
+            let key = parts[0].trimmingCharacters(in: .whitespaces).lowercased()
+            let value = parts[1].trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+            fields[key] = value
+            if !fieldOrder.contains(key) {
+                fieldOrder.append(key)
+            }
+        }
+
+        mutate(&fields)
+
+        if fields["status"] == "resolved", !fieldOrder.contains("resolved_at"), fields["resolved_at"] != nil {
+            fieldOrder.append("resolved_at")
+        }
+        if fields["status"] == "open" {
+            fieldOrder.removeAll { $0 == "resolved_at" }
+        }
+        for key in fields.keys where !fieldOrder.contains(key) {
+            fieldOrder.append(key)
+        }
+
+        var newFrontmatter = ["---"]
+        for key in fieldOrder {
+            guard let value = fields[key] else { continue }
+            if key == "resolved_at" || key == "created_at" {
+                newFrontmatter.append("\(key): '\(value)'")
+            } else {
+                newFrontmatter.append("\(key): \(yamlScalar(value))")
+            }
+        }
+        newFrontmatter.append("---")
+
+        let body = lines[(endIndex + 1)...].joined(separator: "\n")
+        if body.isEmpty {
+            return newFrontmatter.joined(separator: "\n") + "\n"
+        }
+        return newFrontmatter.joined(separator: "\n") + "\n" + body
+    }
+
+    private static func yamlScalar(_ value: String) -> String {
+        if value.contains(":") || value.contains("\"") || value.contains("\n") {
+            return "\"\(value.replacingOccurrences(of: "\"", with: "\\\""))\""
+        }
+        return value
+    }
+
+    private static func formatTimestamp(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
+    }
 }
 
 enum ReviewIndexBuilder {
@@ -592,29 +799,36 @@ enum ReviewIndexBuilder {
             let parser = ReviewItemParser()
             let entries = parser.buildIndexEntries(book: book)
             let rebuiltAt = Date()
-            let outputURL = indexURL(for: book)
-            try FileHelpers.ensureDirectory(outputURL.deletingLastPathComponent().path)
-
-            let payload: [String: Any] = [
-                "last_rebuilt": formatIndexTimestamp(rebuiltAt),
-                "items": entries.map(indexDictionary)
-            ]
-            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
-            guard let json = String(data: data, encoding: .utf8) else {
-                throw BuilderError.writeFailed("UTF-8 encoding failed")
-            }
-            do {
-                try (json + "\n").write(to: outputURL, atomically: true, encoding: .utf8)
-            } catch {
-                throw BuilderError.writeFailed(error.localizedDescription)
-            }
-
+            try writeIndex(entries: entries, book: book, rebuiltAt: rebuiltAt)
             return ReviewIndexDocument(
                 lastRebuilt: rebuiltAt,
                 items: entries,
-                rawJSON: json + "\n"
+                rawJSON: try indexJSON(entries: entries, rebuiltAt: rebuiltAt)
             )
         }
+    }
+
+    static func writeIndex(entries: [ReviewIndexEntry], book: BookConfig, rebuiltAt: Date) throws {
+        let outputURL = indexURL(for: book)
+        try FileHelpers.ensureDirectory(outputURL.deletingLastPathComponent().path)
+        let json = try indexJSON(entries: entries, rebuiltAt: rebuiltAt)
+        do {
+            try json.write(to: outputURL, atomically: true, encoding: .utf8)
+        } catch {
+            throw BuilderError.writeFailed(error.localizedDescription)
+        }
+    }
+
+    private static func indexJSON(entries: [ReviewIndexEntry], rebuiltAt: Date) throws -> String {
+        let payload: [String: Any] = [
+            "last_rebuilt": formatIndexTimestamp(rebuiltAt),
+            "items": entries.map(indexDictionary)
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        guard let json = String(data: data, encoding: .utf8) else {
+            throw BuilderError.writeFailed("UTF-8 encoding failed")
+        }
+        return json + "\n"
     }
 
     private static func indexURL(for book: BookConfig) -> URL {
@@ -650,6 +864,394 @@ enum ReviewIndexBuilder {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         return formatter.string(from: date)
+    }
+}
+
+struct ReviewArtifactsHealth: Equatable {
+    var missingIndexEntries: Int
+    var cumulativeStale: Bool
+    var staleByChapterFiles: Int
+
+    static let healthy = ReviewArtifactsHealth(missingIndexEntries: 0, cumulativeStale: false, staleByChapterFiles: 0)
+
+    var needsRepair: Bool {
+        missingIndexEntries > 0 || cumulativeStale || staleByChapterFiles > 0
+    }
+
+    var issueSummary: String? {
+        guard needsRepair else { return nil }
+        var parts: [String] = []
+        if missingIndexEntries > 0 {
+            parts.append("\(missingIndexEntries) missing from index")
+        }
+        if cumulativeStale {
+            parts.append("cumulative summary out of date")
+        }
+        if staleByChapterFiles > 0 {
+            parts.append("\(staleByChapterFiles) chapter summary file(s) out of date")
+        }
+        return parts.joined(separator: ", ")
+    }
+}
+
+enum ReviewSummaryBuilder {
+    enum BuilderError: LocalizedError {
+        case writeFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .writeFailed(let detail):
+                return "Could not write review summaries: \(detail)"
+            }
+        }
+    }
+
+    private static let themeStopwords: Set<String> = [
+        "about", "after", "also", "been", "from", "have", "that", "this", "with", "would", "should",
+        "could", "their", "there", "these", "those", "what", "when", "where", "which", "while", "will",
+        "your", "they", "them", "than", "then", "into", "more", "some", "such", "only", "other", "each",
+        "make", "like", "just", "book", "chapter", "review", "items", "item", "open", "file", "type",
+        "severity", "agent", "systems", "living"
+    ]
+
+    static func writeSummaries(
+        entries: [ReviewIndexEntry],
+        book: BookConfig,
+        parser: ReviewItemParser,
+        rebuiltAt: Date
+    ) throws {
+        let cumulativePath = book.cumulativeReviewPath ?? book.suggestedPath("reviews/cumulative_review.md")
+        try FileHelpers.ensureDirectory(URL(fileURLWithPath: cumulativePath).deletingLastPathComponent().path)
+        let cumulative = buildCumulativeReview(entries: entries, book: book, parser: parser, rebuiltAt: rebuiltAt)
+        do {
+            try cumulative.write(to: URL(fileURLWithPath: cumulativePath), atomically: true, encoding: .utf8)
+        } catch {
+            throw BuilderError.writeFailed(error.localizedDescription)
+        }
+
+        let byChapterDirectory = byChapterDirectory(for: book)
+        try FileHelpers.ensureDirectory(byChapterDirectory.path)
+        let grouped = Dictionary(grouping: entries.filter { $0.chapterID?.nilIfBlank != nil }) {
+            $0.chapterID ?? "unknown"
+        }
+        var expectedFiles = Set<String>()
+        for (chapterID, chapterEntries) in grouped.sorted(by: { $0.key.localizedStandardCompare($1.key) == .orderedAscending }) {
+            let filename = "\(chapterID).md"
+            expectedFiles.insert(filename)
+            let content = buildByChapterReview(chapterID: chapterID, entries: chapterEntries)
+            let fileURL = byChapterDirectory.appendingPathComponent(filename)
+            do {
+                try content.write(to: fileURL, atomically: true, encoding: .utf8)
+            } catch {
+                throw BuilderError.writeFailed(error.localizedDescription)
+            }
+        }
+
+        if let existing = try? FileManager.default.contentsOfDirectory(at: byChapterDirectory, includingPropertiesForKeys: nil) {
+            for url in existing where url.pathExtension.lowercased() == "md" {
+                if !expectedFiles.contains(url.lastPathComponent) {
+                    try? FileManager.default.removeItem(at: url)
+                }
+            }
+        }
+    }
+
+    static func isCumulativeStale(content: String?, openCount: Int, resolvedCount: Int, totalEntries: Int) -> Bool {
+        guard totalEntries > 0 else { return false }
+        guard let content, !content.isEmpty else { return true }
+        guard let parsedOpen = parseSummaryCount(in: content, label: "Total open items"),
+              let parsedResolved = parseSummaryCount(in: content, label: "Total resolved items") else {
+            return true
+        }
+        return parsedOpen != openCount || parsedResolved != resolvedCount
+    }
+
+    static func staleByChapterCount(book: BookConfig, entries: [ReviewIndexEntry]) -> Int {
+        let grouped = Dictionary(grouping: entries.filter { $0.chapterID?.nilIfBlank != nil }) {
+            $0.chapterID ?? "unknown"
+        }
+        var stale = 0
+        for (chapterID, chapterEntries) in grouped {
+            let fileURL = byChapterDirectory(for: book).appendingPathComponent("\(chapterID).md")
+            guard let content = try? String(contentsOf: fileURL, encoding: .utf8) else {
+                stale += 1
+                continue
+            }
+            let openCount = chapterEntries.filter { $0.status.lowercased() == "open" }.count
+            let resolvedCount = chapterEntries.filter { $0.status.lowercased() == "resolved" }.count
+            guard let parsedOpen = parseInlineCount(in: content, label: "Open"),
+                  let parsedResolved = parseInlineCount(in: content, label: "Resolved") else {
+                stale += 1
+                continue
+            }
+            if parsedOpen != openCount || parsedResolved != resolvedCount {
+                stale += 1
+            }
+        }
+        return stale
+    }
+
+    private static func buildCumulativeReview(
+        entries: [ReviewIndexEntry],
+        book: BookConfig,
+        parser: ReviewItemParser,
+        rebuiltAt: Date
+    ) -> String {
+        let openEntries = entries.filter { $0.status.lowercased() == "open" }
+        let resolvedEntries = entries.filter { $0.status.lowercased() == "resolved" }
+        let criticalCount = openEntries.filter { $0.severity?.lowercased() == FeedbackSeverity.critical.rawValue }.count
+        let highCount = openEntries.filter { $0.severity?.lowercased() == FeedbackSeverity.high.rawValue }.count
+        let rebuiltLabel = DateFormatting.cumulativeReview.string(from: rebuiltAt)
+
+        var lines = [
+            "# Cumulative Review",
+            "",
+            "Last rebuilt: \(rebuiltLabel)",
+            "",
+            "## Summary",
+            "",
+            "Total open items: \(openEntries.count)  ",
+            "Total resolved items: \(resolvedEntries.count)  ",
+            "Critical items: \(criticalCount)  ",
+            "High priority items: \(highCount)  ",
+            ""
+        ]
+
+        lines.append("## Open Items by Chapter")
+        lines.append("")
+        if openEntries.isEmpty {
+            lines.append("_No open review items._")
+            lines.append("")
+        } else {
+            let grouped = Dictionary(grouping: openEntries) { $0.chapterID ?? "unknown" }
+            for chapterID in grouped.keys.sorted(by: { $0.localizedStandardCompare($1) == .orderedAscending }) {
+                let chapterEntries = grouped[chapterID] ?? []
+                let displayName = chapterDisplayName(chapterID: chapterID, entries: chapterEntries)
+                lines.append("### \(chapterID) — \(displayName)")
+                lines.append("")
+                for entry in chapterEntries.sorted(by: { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }) {
+                    lines.append("- [ ] \(entry.title)  ")
+                    if let type = entry.type?.nilIfBlank {
+                        lines.append("  Type: \(type)  ")
+                    }
+                    if let severity = entry.severity?.nilIfBlank {
+                        lines.append("  Severity: \(severity)  ")
+                    }
+                    if let file = entry.file?.nilIfBlank {
+                        lines.append("  File: \(file)")
+                    }
+                    lines.append("")
+                }
+            }
+        }
+
+        lines.append("## Themes Across Feedback")
+        lines.append("")
+        let themes = extractThemes(from: openEntries, book: book, parser: parser)
+        if themes.isEmpty {
+            lines.append("_No recurring themes detected in open reviews._")
+        } else {
+            for theme in themes {
+                lines.append("- Recurring theme around \"\(theme.word)\" (\(theme.count) mentions in open reviews).")
+            }
+        }
+        lines.append("")
+        lines.append("## Suggested Revision Priorities")
+        lines.append("")
+        let priorities = openEntries.sorted { lhs, rhs in
+            let left = FeedbackSeverity(rawValue: lhs.severity ?? "")?.rank ?? 99
+            let right = FeedbackSeverity(rawValue: rhs.severity ?? "")?.rank ?? 99
+            if left != right { return left < right }
+            return (lhs.createdAt ?? .distantPast) > (rhs.createdAt ?? .distantPast)
+        }
+        if priorities.isEmpty {
+            lines.append("_No open review items to prioritize._")
+        } else {
+            for (index, entry) in priorities.enumerated() {
+                let chapter = entry.chapterID ?? "unknown"
+                let severity = entry.severity ?? "unknown"
+                let type = entry.type ?? "feedback"
+                lines.append("\(index + 1). Address \"\(entry.title)\" in \(chapter) (\(severity) / \(type)).")
+            }
+        }
+        lines.append("")
+        return lines.joined(separator: "\n")
+    }
+
+    private static func buildByChapterReview(chapterID: String, entries: [ReviewIndexEntry]) -> String {
+        let openEntries = entries.filter { $0.status.lowercased() == "open" }
+        let resolvedEntries = entries.filter { $0.status.lowercased() == "resolved" }
+        let displayName = chapterDisplayName(chapterID: chapterID, entries: entries)
+        var lines = [
+            "# Reviews — \(displayName)",
+            "",
+            "Chapter ID: `\(chapterID)`",
+            "",
+            "Open: \(openEntries.count) | Resolved: \(resolvedEntries.count)",
+            "",
+            "## Open Items",
+            ""
+        ]
+
+        if openEntries.isEmpty {
+            lines.append("_None._")
+        } else {
+            for entry in openEntries.sorted(by: { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }) {
+                let severity = entry.severity ?? "unknown"
+                let type = entry.type ?? "feedback"
+                lines.append("- **\(entry.title)** (\(severity) / \(type))")
+                if let file = entry.file?.nilIfBlank {
+                    lines.append("  - File: `\(file)`")
+                }
+                lines.append("")
+            }
+        }
+
+        lines.append("## Resolved Items")
+        lines.append("")
+        if resolvedEntries.isEmpty {
+            lines.append("_None._")
+        } else {
+            for entry in resolvedEntries.sorted(by: { ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast) }) {
+                let file = entry.file ?? entry.id
+                lines.append("- \(entry.title) — `\(file)`")
+            }
+        }
+        lines.append("")
+        return lines.joined(separator: "\n")
+    }
+
+    private static func chapterDisplayName(chapterID: String, entries: [ReviewIndexEntry]) -> String {
+        if let title = entries.compactMap(\.title).first(where: { !$0.isEmpty }) {
+            if let range = title.range(of: " - LLM") {
+                return String(title[..<range.lowerBound])
+            }
+            if let range = title.range(of: " - ") {
+                return String(title[..<range.lowerBound])
+            }
+            return title
+        }
+        return chapterID
+            .split(separator: "-")
+            .map { part in
+                part.count <= 3 ? part.uppercased() : part.capitalized
+            }
+            .joined(separator: " ")
+    }
+
+    private static func extractThemes(
+        from entries: [ReviewIndexEntry],
+        book: BookConfig,
+        parser: ReviewItemParser
+    ) -> [(word: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for entry in entries {
+            let text = reviewBody(for: entry, book: book, parser: parser) ?? entry.title
+            let words = text
+                .lowercased()
+                .components(separatedBy: CharacterSet.alphanumerics.inverted)
+                .filter { $0.count >= 4 && !themeStopwords.contains($0) }
+            for word in words {
+                counts[word, default: 0] += 1
+            }
+        }
+        return counts
+            .sorted {
+                if $0.value != $1.value { return $0.value > $1.value }
+                return $0.key.localizedStandardCompare($1.key) == .orderedAscending
+            }
+            .prefix(5)
+            .map { (word: $0.key, count: $0.value) }
+    }
+
+    private static func reviewBody(for entry: ReviewIndexEntry, book: BookConfig, parser: ReviewItemParser) -> String? {
+        guard let file = entry.file?.nilIfBlank else { return nil }
+        let absolute = URL(fileURLWithPath: book.projectRootPath, isDirectory: true)
+            .appendingPathComponent(file)
+            .path
+        guard FileManager.default.fileExists(atPath: absolute),
+              let content = try? String(contentsOfFile: absolute, encoding: .utf8) else {
+            return nil
+        }
+        return parser.conversationSection(from: content) ?? content
+    }
+
+    private static func parseSummaryCount(in content: String, label: String) -> Int? {
+        let escaped = NSRegularExpression.escapedPattern(for: label)
+        let pattern = "(?m)^\(escaped):\\s*(\\d+)\\s*$"
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: content, range: NSRange(content.startIndex..., in: content)),
+              let range = Range(match.range(at: 1), in: content),
+              let value = Int(content[range]) else {
+            return nil
+        }
+        return value
+    }
+
+    private static func parseInlineCount(in content: String, label: String) -> Int? {
+        let escaped = NSRegularExpression.escapedPattern(for: label)
+        let pattern = "\(escaped):\\s*(\\d+)"
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: content, range: NSRange(content.startIndex..., in: content)),
+              let range = Range(match.range(at: 1), in: content),
+              let value = Int(content[range]) else {
+            return nil
+        }
+        return value
+    }
+
+    private static func byChapterDirectory(for book: BookConfig) -> URL {
+        URL(fileURLWithPath: book.reviewsPath ?? book.suggestedPath("reviews"), isDirectory: true)
+            .appendingPathComponent("by_chapter", isDirectory: true)
+    }
+}
+
+enum ReviewArtifactsMaintainer {
+    static let maintenanceInterval: TimeInterval = 5 * 60
+
+    static func assessHealth(
+        book: BookConfig,
+        indexDocument: ReviewIndexDocument?,
+        cumulativeReview: String?
+    ) -> ReviewArtifactsHealth {
+        let parser = ReviewItemParser()
+        let entries = parser.buildIndexEntries(book: book)
+        let indexedIDs = Set((indexDocument?.items ?? []).map(\.id))
+        let missingIndexEntries = ReviewIndexBuilder.missingEntryCount(book: book, indexedIDs: indexedIDs)
+        let openCount = entries.filter { $0.status.lowercased() == "open" }.count
+        let resolvedCount = entries.filter { $0.status.lowercased() == "resolved" }.count
+        let cumulativeStale = ReviewSummaryBuilder.isCumulativeStale(
+            content: cumulativeReview,
+            openCount: openCount,
+            resolvedCount: resolvedCount,
+            totalEntries: entries.count
+        )
+        let staleByChapterFiles = ReviewSummaryBuilder.staleByChapterCount(book: book, entries: entries)
+        return ReviewArtifactsHealth(
+            missingIndexEntries: missingIndexEntries,
+            cumulativeStale: cumulativeStale,
+            staleByChapterFiles: staleByChapterFiles
+        )
+    }
+
+    @discardableResult
+    static func repairIfNeeded(book: BookConfig) throws -> Bool {
+        let cumulative = ReviewItemParser().readOptional(path: book.cumulativeReviewPath)
+        let indexDocument = try ReviewIndexParser().parse(book: book)
+        let health = assessHealth(book: book, indexDocument: indexDocument, cumulativeReview: cumulative)
+        guard health.needsRepair else { return false }
+        try repairAll(book: book)
+        return true
+    }
+
+    static func repairAll(book: BookConfig) throws {
+        try book.withSecurityScopedProjectRoot {
+            let parser = ReviewItemParser()
+            let entries = parser.buildIndexEntries(book: book)
+            let rebuiltAt = Date()
+            try ReviewIndexBuilder.writeIndex(entries: entries, book: book, rebuiltAt: rebuiltAt)
+            try ReviewSummaryBuilder.writeSummaries(entries: entries, book: book, parser: parser, rebuiltAt: rebuiltAt)
+        }
     }
 }
 
@@ -1188,6 +1790,527 @@ final class MarkdownHTMLRenderer {
 
     private func renderInline(_ markdown: String) -> String {
         escapeHTML(markdown)
+    }
+
+    private func escapeHTML(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+    }
+}
+
+final class ReviewSummaryMarkdownRenderer {
+    func renderDocument(markdown: String) -> String {
+        let body = renderBody(markdown)
+        return """
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="color-scheme" content="light dark">
+          <style>
+            :root {
+              color-scheme: light dark;
+              --accent: #007aff;
+              --accent-soft: rgba(0, 122, 255, 0.12);
+              --surface: rgba(127, 127, 127, 0.08);
+              --surface-strong: rgba(127, 127, 127, 0.14);
+              --border: rgba(127, 127, 127, 0.22);
+              --muted: #636366;
+              --open: #ff9500;
+              --resolved: #34c759;
+              --critical: #ff3b30;
+              --high: #ff9500;
+            }
+            body {
+              font: -apple-system-body;
+              margin: 0;
+              padding: 20px 22px 28px;
+              line-height: 1.5;
+              color: CanvasText;
+              background: Canvas;
+            }
+            .doc-header {
+              margin-bottom: 22px;
+              padding-bottom: 16px;
+              border-bottom: 1px solid var(--border);
+            }
+            .doc-header h1 {
+              margin: 0 0 8px;
+              font-size: 1.65rem;
+              font-weight: 700;
+              letter-spacing: -0.02em;
+            }
+            .rebuilt-badge {
+              display: inline-block;
+              font-size: 0.82rem;
+              color: var(--muted);
+              background: var(--surface);
+              border: 1px solid var(--border);
+              border-radius: 999px;
+              padding: 4px 10px;
+            }
+            .section {
+              margin: 26px 0 0;
+            }
+            .section h2 {
+              margin: 0 0 14px;
+              font-size: 1.05rem;
+              font-weight: 600;
+              letter-spacing: -0.01em;
+              text-transform: uppercase;
+              color: var(--muted);
+            }
+            .stats-grid {
+              display: grid;
+              grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+              gap: 10px;
+            }
+            .stat-card {
+              background: var(--surface);
+              border: 1px solid var(--border);
+              border-radius: 12px;
+              padding: 12px 14px;
+            }
+            .stat-card .label {
+              display: block;
+              font-size: 0.78rem;
+              color: var(--muted);
+              margin-bottom: 4px;
+            }
+            .stat-card .value {
+              font-size: 1.55rem;
+              font-weight: 700;
+              letter-spacing: -0.03em;
+            }
+            .stat-card.open .value { color: var(--open); }
+            .stat-card.resolved .value { color: var(--resolved); }
+            .stat-card.critical .value { color: var(--critical); }
+            .stat-card.high .value { color: var(--high); }
+            .chapter-card {
+              background: var(--surface);
+              border: 1px solid var(--border);
+              border-radius: 14px;
+              padding: 14px 16px;
+              margin-bottom: 12px;
+            }
+            .chapter-card h3 {
+              margin: 0 0 12px;
+              font-size: 1rem;
+              font-weight: 600;
+              line-height: 1.35;
+            }
+            .chapter-id {
+              display: block;
+              font-size: 0.78rem;
+              font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+              color: var(--muted);
+              margin-top: 2px;
+            }
+            .review-item {
+              list-style: none;
+              margin: 0 0 10px;
+              padding: 10px 12px;
+              background: Canvas;
+              border: 1px solid var(--border);
+              border-radius: 10px;
+            }
+            .review-item:last-child { margin-bottom: 0; }
+            .review-title-row {
+              display: flex;
+              align-items: flex-start;
+              gap: 8px;
+              margin-bottom: 8px;
+            }
+            .checkbox {
+              flex: 0 0 auto;
+              width: 16px;
+              height: 16px;
+              border: 1.5px solid var(--border);
+              border-radius: 4px;
+              margin-top: 2px;
+            }
+            .review-title {
+              font-weight: 600;
+              line-height: 1.35;
+            }
+            .meta-row {
+              display: flex;
+              flex-wrap: wrap;
+              gap: 6px;
+              margin-left: 24px;
+            }
+            .meta-pill {
+              font-size: 0.74rem;
+              padding: 2px 8px;
+              border-radius: 999px;
+              background: var(--surface-strong);
+              color: var(--muted);
+            }
+            .meta-pill.type { color: var(--accent); background: var(--accent-soft); }
+            .meta-pill.severity-medium { color: #bf5f00; background: rgba(255, 149, 0, 0.14); }
+            .meta-pill.severity-high { color: var(--high); background: rgba(255, 149, 0, 0.16); }
+            .meta-pill.severity-critical { color: var(--critical); background: rgba(255, 59, 48, 0.14); }
+            .meta-pill.severity-low { color: #248a3d; background: rgba(52, 199, 89, 0.14); }
+            .file-path {
+              display: block;
+              margin: 6px 0 0 24px;
+              font-size: 0.76rem;
+              font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+              color: var(--muted);
+              word-break: break-all;
+            }
+            .theme-list, .priority-list, .plain-list {
+              margin: 0;
+              padding: 0;
+              list-style: none;
+            }
+            .theme-item {
+              padding: 10px 12px 10px 14px;
+              margin-bottom: 8px;
+              border-left: 3px solid var(--accent);
+              background: var(--surface);
+              border-radius: 0 10px 10px 0;
+            }
+            .priority-item {
+              display: flex;
+              gap: 10px;
+              align-items: flex-start;
+              padding: 10px 0;
+              border-bottom: 1px solid var(--border);
+            }
+            .priority-item:last-child { border-bottom: none; }
+            .priority-rank {
+              flex: 0 0 auto;
+              width: 24px;
+              height: 24px;
+              border-radius: 50%;
+              background: var(--accent-soft);
+              color: var(--accent);
+              font-size: 0.78rem;
+              font-weight: 700;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+            }
+            .plain-item {
+              padding: 6px 0;
+              color: var(--muted);
+            }
+            .empty-note {
+              color: var(--muted);
+              font-style: italic;
+              margin: 0;
+            }
+          </style>
+        </head>
+        <body>\(body)</body>
+        </html>
+        """
+    }
+
+    private func renderBody(_ markdown: String) -> String {
+        let lines = markdown.components(separatedBy: .newlines)
+        var html: [String] = []
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("# ") && !trimmed.hasPrefix("## ") {
+                html.append(renderDocumentHeader(title: String(trimmed.dropFirst(2)), lines: lines, startIndex: &index))
+                continue
+            }
+
+            if trimmed.hasPrefix("## ") {
+                let sectionTitle = String(trimmed.dropFirst(3))
+                index += 1
+                html.append(renderSection(title: sectionTitle, lines: lines, startIndex: &index))
+                continue
+            }
+
+            if trimmed.hasPrefix("### ") {
+                html.append(renderChapterBlock(titleLine: trimmed, lines: lines, startIndex: &index))
+                continue
+            }
+
+            if !trimmed.isEmpty {
+                html.append("<p>\(escapeHTML(trimmed))</p>")
+            }
+            index += 1
+        }
+
+        return html.joined(separator: "\n")
+    }
+
+    private func renderDocumentHeader(title: String, lines: [String], startIndex: inout Int) -> String {
+        startIndex += 1
+        var rebuilt: String?
+        if startIndex < lines.count {
+            let next = lines[startIndex].trimmingCharacters(in: .whitespaces)
+            if next.lowercased().hasPrefix("last rebuilt:") {
+                rebuilt = String(next.dropFirst("last rebuilt:".count)).trimmingCharacters(in: .whitespaces)
+                startIndex += 1
+            }
+        }
+        var parts = [
+            "<header class=\"doc-header\">",
+            "<h1>\(escapeHTML(title))</h1>"
+        ]
+        if let rebuilt, !rebuilt.isEmpty {
+            parts.append("<span class=\"rebuilt-badge\">Last rebuilt: \(escapeHTML(rebuilt))</span>")
+        }
+        parts.append("</header>")
+        return parts.joined(separator: "\n")
+    }
+
+    private func renderSection(title: String, lines: [String], startIndex: inout Int) -> String {
+        var sectionLines: [String] = []
+        while startIndex < lines.count {
+            let trimmed = lines[startIndex].trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("## ") { break }
+            sectionLines.append(lines[startIndex])
+            startIndex += 1
+        }
+
+        let content: String
+        switch title.lowercased() {
+        case "summary":
+            content = renderSummarySection(sectionLines)
+        case "open items by chapter":
+            content = renderOpenItemsSection(sectionLines)
+        case "themes across feedback":
+            content = renderThemesSection(sectionLines)
+        case "suggested revision priorities":
+            content = renderPrioritiesSection(sectionLines)
+        default:
+            content = renderGenericSection(sectionLines)
+        }
+
+        return """
+        <section class="section">
+          <h2>\(escapeHTML(title))</h2>
+          \(content)
+        </section>
+        """
+    }
+
+    private func renderSummarySection(_ lines: [String]) -> String {
+        var cards: [String] = []
+        let statPattern = #"^Total (.+):\s*(\d+)\s*$"#
+        let regex = try? NSRegularExpression(pattern: statPattern)
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            let ns = trimmed as NSString
+            guard let regex,
+                  let match = regex.firstMatch(in: trimmed, range: NSRange(location: 0, length: ns.length)),
+                  match.numberOfRanges == 3,
+                  let labelRange = Range(match.range(at: 1), in: trimmed),
+                  let valueRange = Range(match.range(at: 2), in: trimmed) else {
+                continue
+            }
+            let label = String(trimmed[labelRange])
+            let value = String(trimmed[valueRange])
+            let cssClass = summaryCardClass(for: label)
+            cards.append("""
+            <div class="stat-card \(cssClass)">
+              <span class="label">\(escapeHTML(label))</span>
+              <span class="value">\(escapeHTML(value))</span>
+            </div>
+            """)
+        }
+
+        if cards.isEmpty {
+            return "<p class=\"empty-note\">No summary statistics available.</p>"
+        }
+        return "<div class=\"stats-grid\">\(cards.joined())</div>"
+    }
+
+    private func summaryCardClass(for label: String) -> String {
+        let lower = label.lowercased()
+        if lower.contains("open") { return "open" }
+        if lower.contains("resolved") { return "resolved" }
+        if lower.contains("critical") { return "critical" }
+        if lower.contains("high") { return "high" }
+        return ""
+    }
+
+    private func renderOpenItemsSection(_ lines: [String]) -> String {
+        var html: [String] = []
+        var index = 0
+        while index < lines.count {
+            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("### ") {
+                html.append(renderChapterBlock(titleLine: trimmed, lines: lines, startIndex: &index))
+            } else if trimmed.hasPrefix("_") && trimmed.hasSuffix("_") {
+                html.append("<p class=\"empty-note\">\(escapeHTML(String(trimmed.dropFirst().dropLast())))</p>")
+                index += 1
+            } else if !trimmed.isEmpty {
+                index += 1
+            } else {
+                index += 1
+            }
+        }
+        if html.isEmpty {
+            return "<p class=\"empty-note\">No open review items.</p>"
+        }
+        return html.joined()
+    }
+
+    private func renderChapterBlock(titleLine: String, lines: [String], startIndex: inout Int) -> String {
+        let heading = String(titleLine.dropFirst(4))
+        let parts = heading.components(separatedBy: " — ")
+        let chapterID = parts.first ?? heading
+        let chapterTitle = parts.count > 1 ? parts.dropFirst().joined(separator: " — ") : chapterID
+        startIndex += 1
+
+        var items: [String] = []
+        while startIndex < lines.count {
+            let line = lines[startIndex]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("## ") || trimmed.hasPrefix("### ") { break }
+            if trimmed.isEmpty {
+                startIndex += 1
+                continue
+            }
+            if trimmed.hasPrefix("- [ ]") || trimmed.hasPrefix("- [x]") || trimmed.hasPrefix("- [X]") {
+                items.append(renderReviewItem(line: line, lines: lines, startIndex: &startIndex))
+            } else {
+                startIndex += 1
+            }
+        }
+
+        let itemsHTML = items.isEmpty
+            ? "<p class=\"empty-note\">No items for this chapter.</p>"
+            : "<ul class=\"plain-list\">\(items.joined())</ul>"
+
+        return """
+        <article class="chapter-card">
+          <h3>\(escapeHTML(chapterTitle))<span class="chapter-id">\(escapeHTML(chapterID))</span></h3>
+          \(itemsHTML)
+        </article>
+        """
+    }
+
+    private func renderReviewItem(line: String, lines: [String], startIndex: inout Int) -> String {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let title = trimmed
+            .replacingOccurrences(of: "- [ ]", with: "")
+            .replacingOccurrences(of: "- [x]", with: "", options: .caseInsensitive)
+            .trimmingCharacters(in: .whitespaces)
+        startIndex += 1
+
+        var type: String?
+        var severity: String?
+        var file: String?
+
+        while startIndex < lines.count {
+            let metaLine = lines[startIndex]
+            let metaTrimmed = metaLine.trimmingCharacters(in: .whitespaces)
+            if metaTrimmed.hasPrefix("- [") || metaTrimmed.hasPrefix("## ") || metaTrimmed.hasPrefix("### ") {
+                break
+            }
+            if metaLine.hasPrefix("  ") || metaLine.hasPrefix("\t") {
+                if metaTrimmed.lowercased().hasPrefix("type:") {
+                    type = String(metaTrimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                } else if metaTrimmed.lowercased().hasPrefix("severity:") {
+                    severity = String(metaTrimmed.dropFirst(9)).trimmingCharacters(in: .whitespaces)
+                } else if metaTrimmed.lowercased().hasPrefix("file:") {
+                    file = String(metaTrimmed.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                }
+                startIndex += 1
+            } else if metaTrimmed.isEmpty {
+                startIndex += 1
+            } else {
+                break
+            }
+        }
+
+        var pills: [String] = []
+        if let type, !type.isEmpty {
+            pills.append("<span class=\"meta-pill type\">\(escapeHTML(type))</span>")
+        }
+        if let severity, !severity.isEmpty {
+            let css = "severity-\(severity.lowercased())"
+            pills.append("<span class=\"meta-pill \(css)\">\(escapeHTML(severity))</span>")
+        }
+
+        var parts = [
+            "<li class=\"review-item\">",
+            "<div class=\"review-title-row\"><span class=\"checkbox\"></span><span class=\"review-title\">\(escapeHTML(title))</span></div>"
+        ]
+        if !pills.isEmpty {
+            parts.append("<div class=\"meta-row\">\(pills.joined())</div>")
+        }
+        if let file, !file.isEmpty {
+            parts.append("<span class=\"file-path\">\(escapeHTML(file))</span>")
+        }
+        parts.append("</li>")
+        return parts.joined()
+    }
+
+    private func renderThemesSection(_ lines: [String]) -> String {
+        var items: [String] = []
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("- ") {
+                items.append("<li class=\"theme-item\">\(escapeHTML(String(trimmed.dropFirst(2))))</li>")
+            } else if trimmed.hasPrefix("_") && trimmed.hasSuffix("_") {
+                return "<p class=\"empty-note\">\(escapeHTML(String(trimmed.dropFirst().dropLast())))</p>"
+            }
+        }
+        if items.isEmpty {
+            return "<p class=\"empty-note\">No recurring themes detected.</p>"
+        }
+        return "<ul class=\"theme-list\">\(items.joined())</ul>"
+    }
+
+    private func renderPrioritiesSection(_ lines: [String]) -> String {
+        var items: [String] = []
+        let pattern = #"^(\d+)\.\s*(.+)$"#
+        let regex = try? NSRegularExpression(pattern: pattern)
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("_") && trimmed.hasSuffix("_") {
+                return "<p class=\"empty-note\">\(escapeHTML(String(trimmed.dropFirst().dropLast())))</p>"
+            }
+            let ns = trimmed as NSString
+            guard let regex,
+                  let match = regex.firstMatch(in: trimmed, range: NSRange(location: 0, length: ns.length)),
+                  match.numberOfRanges == 3,
+                  let rankRange = Range(match.range(at: 1), in: trimmed),
+                  let textRange = Range(match.range(at: 2), in: trimmed) else {
+                continue
+            }
+            let rank = String(trimmed[rankRange])
+            let text = String(trimmed[textRange])
+            items.append("""
+            <li class="priority-item">
+              <span class="priority-rank">\(escapeHTML(rank))</span>
+              <span>\(escapeHTML(text))</span>
+            </li>
+            """)
+        }
+        if items.isEmpty {
+            return "<p class=\"empty-note\">No open review items to prioritize.</p>"
+        }
+        return "<ul class=\"priority-list\">\(items.joined())</ul>"
+    }
+
+    private func renderGenericSection(_ lines: [String]) -> String {
+        let trimmedLines = lines.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if trimmedLines.isEmpty {
+            return "<p class=\"empty-note\">No content.</p>"
+        }
+        let items = trimmedLines.map { "<li class=\"plain-item\">\(escapeHTML($0))</li>" }.joined()
+        return "<ul class=\"plain-list\">\(items)</ul>"
     }
 
     private func escapeHTML(_ value: String) -> String {

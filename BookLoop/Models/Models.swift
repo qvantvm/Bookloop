@@ -365,10 +365,15 @@ struct ReviewIndexEntry: Identifiable, Equatable {
 
 enum ReviewStatus: String, Codable, CaseIterable {
     case open
+    case resolved
     case fixed
     case rejected
     case needsDiscussion = "needs_discussion"
     case unknown
+
+    var isOpenForWorkflow: Bool {
+        self == .open
+    }
 }
 
 struct RevisionTask: Identifiable, Codable {

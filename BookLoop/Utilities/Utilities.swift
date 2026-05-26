@@ -16,6 +16,13 @@ enum DateFormatting {
         formatter.timeStyle = .short
         return formatter
     }()
+
+    static let cumulativeReview: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
 }
 
 enum FileHelpers {

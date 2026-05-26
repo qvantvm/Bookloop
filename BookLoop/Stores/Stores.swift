@@ -135,22 +135,34 @@ final class ReviewStore: ObservableObject {
     @Published var chapterFilter = "All"
     @Published var severityFilter = "All"
     @Published var typeFilter = "All"
+    @Published var statusFilter = "Open"
     @Published var sortMode: SortMode = .newest
     @Published var cumulativeReview: String?
     @Published var reviewIndexDocument: ReviewIndexDocument?
+    @Published var artifactsHealth: ReviewArtifactsHealth = .healthy
     @Published var indexMissingEntryCount: Int = 0
-    @Published var isRebuildingIndex = false
+    @Published var isRepairingArtifacts = false
+    @Published var lastArtifactsRepairMessage: String?
     @Published var errorMessage: String?
+
+    private var maintenanceBook: BookConfig?
+    private var maintenanceTimer: Timer?
+    private var deferredRepairTask: Task<Void, Never>?
 
     var filteredItems: [ReviewItem] {
         items
             .filter { item in
-                (chapterFilter == "All" || item.chapter == chapterFilter)
+                matchesStatusFilter(item)
+                    && (chapterFilter == "All" || item.chapter == chapterFilter)
                     && (severityFilter == "All" || item.severity == severityFilter)
                     && (typeFilter == "All" || item.type == typeFilter)
                     && matchesSearch(item)
             }
             .sorted(by: sort)
+    }
+
+    var openCount: Int {
+        items.filter { $0.status.isOpenForWorkflow }.count
     }
 
     var chapters: [String] {
@@ -165,12 +177,8 @@ final class ReviewStore: ObservableObject {
         Array(Set(items.compactMap(\.type))).sorted()
     }
 
-    var openCount: Int {
-        items.filter { $0.status == .open }.count
-    }
-
     var criticalCount: Int {
-        items.filter { $0.severity == FeedbackSeverity.critical.rawValue && $0.status == .open }.count
+        items.filter { $0.severity == FeedbackSeverity.critical.rawValue && $0.status.isOpenForWorkflow }.count
     }
 
     func refresh(book: BookConfig?) {
@@ -179,13 +187,16 @@ final class ReviewStore: ObservableObject {
             items = []
             cumulativeReview = nil
             reviewIndexDocument = nil
+            artifactsHealth = .healthy
             indexMissingEntryCount = 0
+            lastArtifactsRepairMessage = nil
+            stopPeriodicMaintenance()
             errorMessage = nil
             return
         }
         do {
             let parser = ReviewItemParser()
-            items = try parser.parseReviewItems(book: book)
+            items = try parser.parseAllReviewItems(book: book)
             cumulativeReview = parser.readOptional(path: book.cumulativeReviewPath)
         } catch {
             items = []
@@ -203,21 +214,113 @@ final class ReviewStore: ObservableObject {
             errorMessage = error.localizedDescription
         }
 
-        let indexedIDs = Set((reviewIndexDocument?.items ?? []).map(\.id))
-        indexMissingEntryCount = ReviewIndexBuilder.missingEntryCount(book: book, indexedIDs: indexedIDs)
+        updateArtifactsHealth(book: book)
+        scheduleDeferredRepairIfNeeded(book: book)
+        startPeriodicMaintenance(for: book)
     }
 
-    func rebuildIndex(book: BookConfig) async {
-        guard !isRebuildingIndex else { return }
-        isRebuildingIndex = true
-        defer { isRebuildingIndex = false }
+    func rebuildArtifacts(book: BookConfig) async {
+        await repairArtifactsIfNeeded(book: book, force: true)
+    }
+
+    private func updateArtifactsHealth(book: BookConfig) {
+        artifactsHealth = ReviewArtifactsMaintainer.assessHealth(
+            book: book,
+            indexDocument: reviewIndexDocument,
+            cumulativeReview: cumulativeReview
+        )
+        indexMissingEntryCount = artifactsHealth.missingIndexEntries
+    }
+
+    private func scheduleDeferredRepairIfNeeded(book: BookConfig) {
+        deferredRepairTask?.cancel()
+        guard artifactsHealth.needsRepair else { return }
+        deferredRepairTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            await repairArtifactsIfNeeded(book: book, force: false)
+        }
+    }
+
+    private func repairArtifactsIfNeeded(book: BookConfig, force: Bool) async {
+        guard !isRepairingArtifacts else { return }
+        if !force {
+            let health = ReviewArtifactsMaintainer.assessHealth(
+                book: book,
+                indexDocument: reviewIndexDocument,
+                cumulativeReview: cumulativeReview
+            )
+            guard health.needsRepair else { return }
+        }
+
+        isRepairingArtifacts = true
+        defer { isRepairingArtifacts = false }
         do {
-            try await Task(priority: .userInitiated) {
-                try ReviewIndexBuilder.rebuild(book: book)
+            let repaired = try await Task(priority: .utility) {
+                if force {
+                    try ReviewArtifactsMaintainer.repairAll(book: book)
+                    return true
+                }
+                return try ReviewArtifactsMaintainer.repairIfNeeded(book: book)
             }.value
+            if repaired {
+                lastArtifactsRepairMessage = "Review index and summaries were rebuilt."
+            }
             refresh(book: book)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func startPeriodicMaintenance(for book: BookConfig?) {
+        maintenanceTimer?.invalidate()
+        maintenanceTimer = nil
+        maintenanceBook = book
+        guard book != nil else { return }
+
+        maintenanceTimer = Timer.scheduledTimer(
+            withTimeInterval: ReviewArtifactsMaintainer.maintenanceInterval,
+            repeats: true
+        ) { [weak self] _ in
+            guard let self, let book = self.maintenanceBook else { return }
+            Task { @MainActor in
+                await self.repairArtifactsIfNeeded(book: book, force: false)
+            }
+        }
+    }
+
+    private func stopPeriodicMaintenance() {
+        deferredRepairTask?.cancel()
+        deferredRepairTask = nil
+        maintenanceTimer?.invalidate()
+        maintenanceTimer = nil
+        maintenanceBook = nil
+    }
+
+    deinit {
+        maintenanceTimer?.invalidate()
+    }
+
+    func reopenReview(id: String, book: BookConfig) async {
+        do {
+            try await Task(priority: .userInitiated) {
+                try ReviewItemResolver.reopenReview(id: id, book: book)
+            }.value
+            lastArtifactsRepairMessage = "Review reopened."
+            refresh(book: book)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func matchesStatusFilter(_ item: ReviewItem) -> Bool {
+        switch statusFilter {
+        case "Resolved":
+            return item.status == .resolved
+        case "All":
+            return true
+        default:
+            return item.status.isOpenForWorkflow
         }
     }
 
