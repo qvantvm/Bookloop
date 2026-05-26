@@ -279,6 +279,74 @@ enum ChapterResolver {
     }
 }
 
+final class ReviewIndexParser {
+    enum ParserError: LocalizedError {
+        case invalidFormat(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidFormat(let detail):
+                return "Could not parse review_index.json: \(detail)"
+            }
+        }
+    }
+
+    func parse(book: BookConfig) throws -> ReviewIndexDocument? {
+        let path = indexPath(for: book)
+        guard FileManager.default.fileExists(atPath: path) else { return nil }
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        let rawJSON = String(data: data, encoding: .utf8)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw ParserError.invalidFormat("root must be an object")
+        }
+
+        let lastRebuilt = parseDate(object["last_rebuilt"] as? String)
+        let itemObjects = object["items"] as? [[String: Any]] ?? []
+        let items = itemObjects.compactMap(parseEntry)
+
+        return ReviewIndexDocument(lastRebuilt: lastRebuilt, items: items, rawJSON: rawJSON)
+    }
+
+    private func indexPath(for book: BookConfig) -> String {
+        URL(fileURLWithPath: book.reviewsPath ?? book.suggestedPath("reviews"), isDirectory: true)
+            .appendingPathComponent("review_index.json")
+            .path
+    }
+
+    private func parseEntry(_ dictionary: [String: Any]) -> ReviewIndexEntry? {
+        guard let id = (dictionary["id"] as? String)?.nilIfBlank else { return nil }
+        let title = (dictionary["title"] as? String)?.nilIfBlank ?? id
+        let chapterID = (dictionary["chapter_id"] as? String)?.nilIfBlank
+            ?? (dictionary["chapter"] as? String)?.nilIfBlank
+        let status = (dictionary["status"] as? String)?.nilIfBlank ?? "unknown"
+        return ReviewIndexEntry(
+            id: id,
+            chapterID: chapterID,
+            title: title,
+            type: (dictionary["type"] as? String)?.nilIfBlank,
+            severity: (dictionary["severity"] as? String)?.nilIfBlank,
+            status: status,
+            createdAt: parseDate(dictionary["created_at"] as? String),
+            file: (dictionary["file"] as? String)?.nilIfBlank
+        )
+    }
+
+    private func parseDate(_ raw: String?) -> Date? {
+        guard let raw = raw?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank else { return nil }
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = iso.date(from: raw) { return date }
+        iso.formatOptions = [.withInternetDateTime]
+        if let date = iso.date(from: raw) { return date }
+        iso.formatOptions = [.withFullDate, .withTime, .withColonSeparatorInTime]
+        if let date = iso.date(from: raw) { return date }
+        if raw.count >= 15 {
+            return DateFormatting.taskFilename.date(from: String(raw.prefix(15)))
+        }
+        return nil
+    }
+}
+
 final class ReviewItemParser {
     func parseReviewItems(book: BookConfig) throws -> [ReviewItem] {
         let directory = URL(fileURLWithPath: book.reviewItemsPath ?? book.suggestedPath("reviews/review_items"), isDirectory: true)

@@ -237,7 +237,11 @@ struct ReviewBrowserView: View {
                     .tabItem { Text("Review Items") }
                 SupplementalMarkdownView(title: "Cumulative Review", content: reviewStore.cumulativeReview, emptyMessage: "reviews/cumulative_review.md was not found.")
                     .tabItem { Text("Cumulative") }
-                SupplementalMarkdownView(title: "Review Index", content: reviewStore.reviewIndex, emptyMessage: "reviews/review_index.json was not found.")
+                ReviewIndexCardView(
+                    book: book,
+                    document: reviewStore.reviewIndexDocument,
+                    errorMessage: reviewStore.errorMessage
+                )
                     .tabItem { Text("Index") }
             }
 
@@ -355,6 +359,246 @@ struct SupplementalMarkdownView: View {
         } else {
             EmptyStateView(title: title, message: emptyMessage, systemImage: "doc.text")
         }
+    }
+}
+
+private enum ReviewIndexSortMode: String, CaseIterable, Identifiable {
+    case newest = "Newest"
+    case oldest = "Oldest"
+
+    var id: String { rawValue }
+}
+
+struct ReviewIndexCardView: View {
+    let book: BookConfig
+    let document: ReviewIndexDocument?
+    let errorMessage: String?
+
+    @State private var searchText = ""
+    @State private var statusFilter = "All"
+    @State private var sortMode: ReviewIndexSortMode = .newest
+    @State private var expandedEntryID: String?
+    @State private var showsRawJSON = false
+
+    var body: some View {
+        Group {
+            if let document {
+                indexContent(document)
+            } else if let errorMessage, !errorMessage.isEmpty {
+                EmptyStateView(title: "Review Index", message: errorMessage, systemImage: "exclamationmark.triangle")
+            } else {
+                EmptyStateView(
+                    title: "Review Index",
+                    message: "reviews/review_index.json was not found.",
+                    systemImage: "doc.text"
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func indexContent(_ document: ReviewIndexDocument) -> some View {
+        VStack(spacing: 0) {
+            header(document)
+            toolbar
+            Divider()
+
+            if filteredEntries.isEmpty {
+                EmptyStateView(
+                    title: "No Matching Entries",
+                    message: document.items.isEmpty ? "Index file has no entries." : "Try clearing filters or search.",
+                    systemImage: "tray"
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(filteredEntries) { entry in
+                            ReviewIndexEntryCard(
+                                entry: entry,
+                                book: book,
+                                isExpanded: expandedEntryID == entry.id,
+                                onToggle: { toggleExpansion(for: entry.id) }
+                            )
+                        }
+                    }
+                    .padding()
+                }
+            }
+
+            if let rawJSON = document.rawJSON?.nilIfBlank {
+                Divider()
+                DisclosureGroup("Show raw JSON", isExpanded: $showsRawJSON) {
+                    ScrollView(.horizontal) {
+                        Text(rawJSON)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 180)
+                }
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private func header(_ document: ReviewIndexDocument) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Review Index")
+                .font(.title3.bold())
+            HStack(spacing: 12) {
+                if let lastRebuilt = document.lastRebuilt {
+                    Text("Last rebuilt: \(DateFormatting.display.string(from: lastRebuilt))")
+                }
+                Text("\(document.items.count) total")
+                Text("\(document.openCount) open")
+                Text("\(document.resolvedCount) resolved")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal)
+        .padding(.top, 12)
+        .padding(.bottom, 8)
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 8) {
+            TextField("Search index", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+            Picker("Status", selection: $statusFilter) {
+                Text("All").tag("All")
+                Text("open").tag("open")
+                Text("resolved").tag("resolved")
+            }
+            .frame(width: 120)
+            Picker("Sort", selection: $sortMode) {
+                ForEach(ReviewIndexSortMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .frame(width: 110)
+        }
+        .padding(.horizontal)
+        .padding(.bottom, 8)
+    }
+
+    private var filteredEntries: [ReviewIndexEntry] {
+        document?.items
+            .filter { entry in
+                if statusFilter != "All", entry.status.lowercased() != statusFilter.lowercased() {
+                    return false
+                }
+                let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !query.isEmpty else { return true }
+                let haystack = [entry.id, entry.title, entry.chapterID, entry.type, entry.severity, entry.status, entry.file]
+                    .compactMap { $0 }
+                    .joined(separator: "\n")
+                return haystack.localizedCaseInsensitiveContains(query)
+            }
+            .sorted { lhs, rhs in
+                let left = lhs.createdAt ?? .distantPast
+                let right = rhs.createdAt ?? .distantPast
+                switch sortMode {
+                case .newest: return left > right
+                case .oldest: return left < right
+                }
+            } ?? []
+    }
+
+    private func toggleExpansion(for id: String) {
+        expandedEntryID = expandedEntryID == id ? nil : id
+    }
+}
+
+private struct ReviewIndexEntryCard: View {
+    let entry: ReviewIndexEntry
+    let book: BookConfig
+    let isExpanded: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: onToggle) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top) {
+                        Text(entry.title)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        statusBadge
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack(spacing: 8) {
+                        Text(entry.chapterID ?? "Unknown chapter")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        if let createdAt = entry.createdAt {
+                            Text(DateFormatting.display.string(from: createdAt))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                Divider()
+                VStack(alignment: .leading, spacing: 6) {
+                    if let type = entry.type?.nilIfBlank {
+                        LabeledContent("Type", value: type)
+                    }
+                    if let severity = entry.severity?.nilIfBlank {
+                        LabeledContent("Severity", value: severity)
+                    }
+                    LabeledContent("ID", value: entry.id)
+                    if let file = entry.file?.nilIfBlank {
+                        LabeledContent("File", value: file)
+                        Button("Reveal in Finder") {
+                            revealInFinder(relativePath: file)
+                        }
+                        .font(.caption)
+                    }
+                }
+                .font(.callout)
+            }
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(isExpanded ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
+        )
+    }
+
+    private var statusBadge: some View {
+        Text(entry.status.uppercased())
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(statusColor.opacity(0.18))
+            .foregroundStyle(statusColor)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+
+    private var statusColor: Color {
+        switch entry.status.lowercased() {
+        case "open": return .orange
+        case "resolved": return .green
+        default: return .secondary
+        }
+    }
+
+    private func revealInFinder(relativePath: String) {
+        let url = URL(fileURLWithPath: book.projectRootPath, isDirectory: true)
+            .appendingPathComponent(relativePath)
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
 

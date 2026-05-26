@@ -338,6 +338,31 @@ struct ReviewItem: Identifiable, Codable, Equatable {
     var createdAt: Date?
 }
 
+struct ReviewIndexDocument: Equatable {
+    var lastRebuilt: Date?
+    var items: [ReviewIndexEntry]
+    var rawJSON: String?
+
+    var openCount: Int {
+        items.filter { $0.status.lowercased() == "open" }.count
+    }
+
+    var resolvedCount: Int {
+        items.filter { $0.status.lowercased() == "resolved" }.count
+    }
+}
+
+struct ReviewIndexEntry: Identifiable, Equatable {
+    var id: String
+    var chapterID: String?
+    var title: String
+    var type: String?
+    var severity: String?
+    var status: String
+    var createdAt: Date?
+    var file: String?
+}
+
 enum ReviewStatus: String, Codable, CaseIterable {
     case open
     case fixed

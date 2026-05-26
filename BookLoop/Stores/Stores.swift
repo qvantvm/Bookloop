@@ -137,7 +137,7 @@ final class ReviewStore: ObservableObject {
     @Published var typeFilter = "All"
     @Published var sortMode: SortMode = .newest
     @Published var cumulativeReview: String?
-    @Published var reviewIndex: String?
+    @Published var reviewIndexDocument: ReviewIndexDocument?
     @Published var errorMessage: String?
 
     var filteredItems: [ReviewItem] {
@@ -176,18 +176,28 @@ final class ReviewStore: ObservableObject {
         guard let book else {
             items = []
             cumulativeReview = nil
-            reviewIndex = nil
+            reviewIndexDocument = nil
             errorMessage = nil
             return
         }
+        var loadError: String?
         do {
             let parser = ReviewItemParser()
             items = try parser.parseReviewItems(book: book)
             cumulativeReview = parser.readOptional(path: book.cumulativeReviewPath)
-            reviewIndex = parser.readOptional(path: URL(fileURLWithPath: book.reviewsPath ?? book.suggestedPath("reviews"), isDirectory: true).appendingPathComponent("review_index.json").path)
-            errorMessage = nil
         } catch {
             items = []
+            cumulativeReview = nil
+            reviewIndexDocument = nil
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        do {
+            reviewIndexDocument = try ReviewIndexParser().parse(book: book)
+            errorMessage = nil
+        } catch {
+            reviewIndexDocument = nil
             errorMessage = error.localizedDescription
         }
     }
