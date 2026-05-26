@@ -37,6 +37,110 @@ enum AgentTools {
         )
     }
 
+    static func grep(
+        pattern: String,
+        glob: String?,
+        path: String?,
+        ignoreCase: Bool,
+        fixedStrings: Bool,
+        limit: Int,
+        context: AgentToolContext
+    ) throws -> GrepResponse {
+        let trimmedPattern = pattern.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPattern.isEmpty else {
+            return GrepResponse(pattern: pattern, matches: [], filesSearched: 0, truncated: false)
+        }
+
+        let maxMatches = max(1, min(limit, 200))
+        let pathPrefix = normalizedPathPrefix(path)
+        let effectiveGlob = glob?.nilIfBlank ?? "**/*"
+        let candidatePaths = context.project.projectMap.relativePaths(matchingGlob: effectiveGlob)
+            .filter { relative in
+                guard let pathPrefix else { return true }
+                return relative == pathPrefix || relative.hasPrefix(pathPrefix + "/")
+            }
+            .filter { isGrepCandidatePath($0) }
+
+        let regex = try grepRegex(pattern: trimmedPattern, ignoreCase: ignoreCase, fixedStrings: fixedStrings)
+
+        var matches: [SearchResult] = []
+        var filesSearched = 0
+
+        try context.project.withSecurityScoped {
+            for relativePath in candidatePaths {
+                if matches.count >= maxMatches { break }
+                guard let url = try? context.project.pathGuard.validateRead(relativePath),
+                      let content = try? String(contentsOf: url, encoding: .utf8) else {
+                    continue
+                }
+                filesSearched += 1
+                let lines = content.components(separatedBy: .newlines)
+                for (index, line) in lines.enumerated() {
+                    if lineMatches(line, regex: regex, fixedStrings: fixedStrings, pattern: trimmedPattern, ignoreCase: ignoreCase) {
+                        matches.append(SearchResult(
+                            relativePath: relativePath,
+                            lineNumber: index + 1,
+                            snippet: String(line.trimmingCharacters(in: .whitespaces).prefix(300))
+                        ))
+                        if matches.count >= maxMatches { break }
+                    }
+                }
+            }
+        }
+
+        return GrepResponse(
+            pattern: trimmedPattern,
+            matches: matches,
+            filesSearched: filesSearched,
+            truncated: matches.count >= maxMatches
+        )
+    }
+
+    private static func normalizedPathPrefix(_ path: String?) -> String? {
+        guard var value = path?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank else { return nil }
+        value = value.replacingOccurrences(of: "\\", with: "/").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return value.isEmpty ? nil : value
+    }
+
+    private static func isGrepCandidatePath(_ path: String) -> Bool {
+        let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+        if ext.isEmpty { return false }
+        let allowed: Set<String> = [
+            "md", "markdown", "txt", "yml", "yaml", "json", "patch", "diff",
+            "css", "js", "ts", "swift", "py", "sh", "toml", "xml", "html", "htm"
+        ]
+        return allowed.contains(ext)
+    }
+
+    private static func grepRegex(pattern: String, ignoreCase: Bool, fixedStrings: Bool) throws -> NSRegularExpression? {
+        guard !fixedStrings else { return nil }
+        var options: NSRegularExpression.Options = []
+        if ignoreCase { options.insert(.caseInsensitive) }
+        do {
+            return try NSRegularExpression(pattern: pattern, options: options)
+        } catch {
+            throw AgentToolError.invalidGrepPattern(pattern)
+        }
+    }
+
+    private static func lineMatches(
+        _ line: String,
+        regex: NSRegularExpression?,
+        fixedStrings: Bool,
+        pattern: String,
+        ignoreCase: Bool
+    ) -> Bool {
+        if fixedStrings {
+            if ignoreCase {
+                return line.range(of: pattern, options: .caseInsensitive) != nil
+            }
+            return line.contains(pattern)
+        }
+        guard let regex else { return false }
+        let range = NSRange(line.startIndex..., in: line)
+        return regex.firstMatch(in: line, range: range) != nil
+    }
+
     static func readReviewItems(status: String?, target: String?, context: AgentToolContext) throws -> [[String: String]] {
         let parser = ReviewItemParser()
         let items = try context.project.withSecurityScoped {
@@ -222,6 +326,7 @@ enum AgentToolError: LocalizedError {
     case patchNotUnique(occurrences: Int)
     case reviewEditsDisabled
     case unknownTool(String)
+    case invalidGrepPattern(String)
 
     var errorDescription: String? {
         switch self {
@@ -231,6 +336,8 @@ enum AgentToolError: LocalizedError {
             return "Editing review items is disabled in app settings."
         case .unknownTool(let name):
             return "Unknown tool: \(name)"
+        case .invalidGrepPattern(let pattern):
+            return "Invalid grep regex pattern: \(pattern)"
         }
     }
 }

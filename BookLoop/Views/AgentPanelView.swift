@@ -179,7 +179,7 @@ struct AgentPanelView: View {
                         Text("Model: \(settingsStore.openAIModel) via OpenAI. The agent can fetch public HTTPS URLs (size limit in App Settings) and read your book repo via local tools. One agent run writes one patch file with multiple diff blocks; long reviews may need higher max iterations in app settings or several agent runs.")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
-                        Text("Limitations: lexical search only, exact-text apply_patch (single match), simple build command parsing, HTTPS-only fetch (no auth/cookies).")
+                        Text("Limitations: exact-text apply_patch (single match), grep/search over text files, simple build command parsing, HTTPS-only fetch (no auth/cookies).")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }

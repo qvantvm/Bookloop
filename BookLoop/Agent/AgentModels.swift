@@ -60,6 +60,8 @@ enum AgentPromptBuilder {
     - Never invent citations, references, or facts.
     - Use fetch_url to read public HTTPS pages (documentation, GitHub READMEs, etc.) before citing external projects.
     - If information is missing, leave a TODO or report an unresolved issue.
+    - Use grep for regex or exact substring search with line numbers across project files.
+    - Use search_text for quick indexed lookup when regex is not needed.
     - Prefer precise replacements using apply_patch to stage edits.
     - apply_patch stages changes only; book files are not modified on disk until a human applies the patch in Tools → Patches.
     - Open review items often contain actionable guidance in the body or Conversation section even when suggested_fix is empty or says TODO.
@@ -166,11 +168,19 @@ enum AgentToolRegistry {
             tool(name: "read_file", description: "Read a UTF-8 text file from the project.", properties: [
                 "path": prop("string", "Project-relative file path")
             ], required: ["path"]),
-            tool(name: "search_text", description: "Search indexed project text.", properties: [
+            tool(name: "search_text", description: "Quick indexed substring search across chapters, reviews, and config files.", properties: [
                 "query": prop("string", "Search query"),
                 "glob": prop("string", "Optional glob filter"),
                 "limit": prop("integer", "Max results, default 10")
             ], required: ["query"]),
+            tool(name: "grep", description: "Search file contents with a regex or fixed string. Returns path, line number, and matching line. Respects project path guards.", properties: [
+                "pattern": prop("string", "Regex pattern, or literal string when fixed_strings is true"),
+                "glob": prop("string", "Optional glob filter such as docs/**/*.md"),
+                "path": prop("string", "Optional project-relative file or directory prefix to limit search"),
+                "ignore_case": prop("boolean", "Case-insensitive match, default false"),
+                "fixed_strings": prop("boolean", "Treat pattern as literal text instead of regex, default false"),
+                "limit": prop("integer", "Max matches to return, default 50")
+            ], required: ["pattern"]),
             tool(name: "read_review_items", description: "Read structured review items including body, Conversation, source_file, and whether suggested_fix is only a placeholder.", properties: [
                 "status": prop("string", "Filter by status such as open"),
                 "target": prop("string", "Filter by target chapter/path")
@@ -204,6 +214,22 @@ enum AgentToolRegistry {
             let glob = args["glob"] as? String
             let limit = args["limit"] as? Int ?? 10
             return encode(AgentTools.searchText(query: query, glob: glob, limit: limit, context: context))
+        case "grep":
+            let pattern = args["pattern"] as? String ?? ""
+            let glob = args["glob"] as? String
+            let path = args["path"] as? String
+            let ignoreCase = args["ignore_case"] as? Bool ?? false
+            let fixedStrings = args["fixed_strings"] as? Bool ?? false
+            let limit = args["limit"] as? Int ?? 50
+            return encode(try AgentTools.grep(
+                pattern: pattern,
+                glob: glob,
+                path: path,
+                ignoreCase: ignoreCase,
+                fixedStrings: fixedStrings,
+                limit: limit,
+                context: context
+            ))
         case "read_review_items":
             return encode(try AgentTools.readReviewItems(
                 status: args["status"] as? String,

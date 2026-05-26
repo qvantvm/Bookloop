@@ -47,6 +47,13 @@ struct SearchResult: Codable, Equatable {
     var snippet: String
 }
 
+struct GrepResponse: Codable, Equatable {
+    var pattern: String
+    var matches: [SearchResult]
+    var filesSearched: Int
+    var truncated: Bool
+}
+
 enum GlobMatcher {
     static func matches(glob: String, path: String) -> Bool {
         let normalizedGlob = glob.replacingOccurrences(of: "\\", with: "/")
