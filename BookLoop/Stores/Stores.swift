@@ -138,6 +138,8 @@ final class ReviewStore: ObservableObject {
     @Published var sortMode: SortMode = .newest
     @Published var cumulativeReview: String?
     @Published var reviewIndexDocument: ReviewIndexDocument?
+    @Published var indexMissingEntryCount: Int = 0
+    @Published var isRebuildingIndex = false
     @Published var errorMessage: String?
 
     var filteredItems: [ReviewItem] {
@@ -177,10 +179,10 @@ final class ReviewStore: ObservableObject {
             items = []
             cumulativeReview = nil
             reviewIndexDocument = nil
+            indexMissingEntryCount = 0
             errorMessage = nil
             return
         }
-        var loadError: String?
         do {
             let parser = ReviewItemParser()
             items = try parser.parseReviewItems(book: book)
@@ -198,6 +200,23 @@ final class ReviewStore: ObservableObject {
             errorMessage = nil
         } catch {
             reviewIndexDocument = nil
+            errorMessage = error.localizedDescription
+        }
+
+        let indexedIDs = Set((reviewIndexDocument?.items ?? []).map(\.id))
+        indexMissingEntryCount = ReviewIndexBuilder.missingEntryCount(book: book, indexedIDs: indexedIDs)
+    }
+
+    func rebuildIndex(book: BookConfig) async {
+        guard !isRebuildingIndex else { return }
+        isRebuildingIndex = true
+        defer { isRebuildingIndex = false }
+        do {
+            try await Task(priority: .userInitiated) {
+                try ReviewIndexBuilder.rebuild(book: book)
+            }.value
+            refresh(book: book)
+        } catch {
             errorMessage = error.localizedDescription
         }
     }

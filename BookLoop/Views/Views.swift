@@ -374,6 +374,7 @@ struct ReviewIndexCardView: View {
     let document: ReviewIndexDocument?
     let errorMessage: String?
 
+    @EnvironmentObject private var reviewStore: ReviewStore
     @State private var searchText = ""
     @State private var statusFilter = "All"
     @State private var sortMode: ReviewIndexSortMode = .newest
@@ -392,14 +393,33 @@ struct ReviewIndexCardView: View {
                     message: "reviews/review_index.json was not found.",
                     systemImage: "doc.text"
                 )
+                rebuildIndexControls
             }
         }
+    }
+
+    private var rebuildIndexControls: some View {
+        VStack(spacing: 8) {
+            if reviewStore.indexMissingEntryCount > 0 {
+                Text("\(reviewStore.indexMissingEntryCount) review file(s) on disk are not in the index.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            Button(reviewStore.isRebuildingIndex ? "Rebuilding Index…" : "Rebuild Index") {
+                Task { await reviewStore.rebuildIndex(book: book) }
+            }
+            .disabled(reviewStore.isRebuildingIndex)
+        }
+        .padding()
     }
 
     @ViewBuilder
     private func indexContent(_ document: ReviewIndexDocument) -> some View {
         VStack(spacing: 0) {
             header(document)
+            if reviewStore.indexMissingEntryCount > 0 {
+                staleIndexBanner
+            }
             toolbar
             Divider()
 
@@ -444,8 +464,15 @@ struct ReviewIndexCardView: View {
 
     private func header(_ document: ReviewIndexDocument) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Review Index")
-                .font(.title3.bold())
+            HStack {
+                Text("Review Index")
+                    .font(.title3.bold())
+                Spacer()
+                Button(reviewStore.isRebuildingIndex ? "Rebuilding…" : "Rebuild Index") {
+                    Task { await reviewStore.rebuildIndex(book: book) }
+                }
+                .disabled(reviewStore.isRebuildingIndex)
+            }
             HStack(spacing: 12) {
                 if let lastRebuilt = document.lastRebuilt {
                     Text("Last rebuilt: \(DateFormatting.display.string(from: lastRebuilt))")
@@ -460,6 +487,18 @@ struct ReviewIndexCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal)
         .padding(.top, 12)
+        .padding(.bottom, 8)
+    }
+
+    private var staleIndexBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text("Index is stale: \(reviewStore.indexMissingEntryCount) review(s) on disk are missing.")
+                .font(.caption)
+            Spacer()
+        }
+        .padding(.horizontal)
         .padding(.bottom, 8)
     }
 

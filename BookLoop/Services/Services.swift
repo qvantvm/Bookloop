@@ -474,6 +474,183 @@ final class ReviewItemParser {
         let prefix = String(filename.prefix(15))
         return DateFormatting.taskFilename.date(from: prefix)
     }
+
+    func reviewMarkdownURLs(book: BookConfig) -> [URL] {
+        let itemsDirectory = URL(
+            fileURLWithPath: book.reviewItemsPath ?? book.suggestedPath("reviews/review_items"),
+            isDirectory: true
+        )
+        let resolvedDirectory = Self.resolvedDirectory(for: book)
+        return [itemsDirectory, resolvedDirectory].flatMap { directory in
+            guard let files = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: nil
+            ) else {
+                return [] as [URL]
+            }
+            return files.filter { url in
+                url.pathExtension.lowercased() == "md"
+                    && url.lastPathComponent.caseInsensitiveCompare("README.md") != .orderedSame
+            }
+        }
+    }
+
+    func onDiskReviewIDs(book: BookConfig) -> Set<String> {
+        Set(reviewMarkdownURLs(book: book).map { url in
+            if let content = try? String(contentsOf: url, encoding: .utf8) {
+                let frontmatter = parseFrontmatter(content)
+                if let id = frontmatter["id"]?.nilIfBlank {
+                    return id
+                }
+            }
+            return url.deletingPathExtension().lastPathComponent
+        })
+    }
+
+    func indexEntry(for url: URL, book: BookConfig, defaultStatus: String) -> ReviewIndexEntry? {
+        guard let content = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let frontmatter = parseFrontmatter(content)
+        let id = frontmatter["id"]?.nilIfBlank ?? url.deletingPathExtension().lastPathComponent
+        let title = frontmatter["title"]?.nilIfBlank ?? firstHeading(content) ?? id
+        let chapterID = value(frontmatter, keys: ["chapter_id", "chapter"])
+        let status = frontmatter["status"]?.nilIfBlank ?? defaultStatus
+        let createdAt = parseDate(frontmatter["created_at"])
+            ?? parseDateFromFilename(url.deletingPathExtension().lastPathComponent)
+            ?? url.modificationDate
+        let rootPath = URL(fileURLWithPath: book.projectRootPath, isDirectory: true).standardizedFileURL.path
+        let filePath = url.standardizedFileURL.path
+        let relativeFile: String
+        if filePath.hasPrefix(rootPath + "/") {
+            relativeFile = String(filePath.dropFirst(rootPath.count + 1))
+        } else {
+            relativeFile = url.lastPathComponent
+        }
+
+        return ReviewIndexEntry(
+            id: id,
+            chapterID: chapterID,
+            title: title,
+            type: value(frontmatter, keys: ["type", "feedback_type"]),
+            severity: frontmatter["severity"],
+            status: status,
+            createdAt: createdAt,
+            file: relativeFile
+        )
+    }
+
+    func buildIndexEntries(book: BookConfig) -> [ReviewIndexEntry] {
+        let resolvedDirectory = Self.resolvedDirectory(for: book)
+        var entriesByID: [String: ReviewIndexEntry] = [:]
+
+        for url in reviewMarkdownURLs(book: book) {
+            let defaultStatus = url.path.hasPrefix(resolvedDirectory.path) ? "resolved" : "open"
+            guard let entry = indexEntry(for: url, book: book, defaultStatus: defaultStatus) else { continue }
+            if let existing = entriesByID[entry.id] {
+                let existingIsResolved = existing.file?.contains("/resolved/") == true
+                let incomingIsResolved = entry.file?.contains("/resolved/") == true
+                if incomingIsResolved || !existingIsResolved {
+                    entriesByID[entry.id] = entry
+                }
+            } else {
+                entriesByID[entry.id] = entry
+            }
+        }
+
+        return entriesByID.values.sorted {
+            ($0.createdAt ?? .distantPast) > ($1.createdAt ?? .distantPast)
+        }
+    }
+
+    static func resolvedDirectory(for book: BookConfig) -> URL {
+        if let reviewsPath = book.reviewsPath?.nilIfBlank {
+            return URL(fileURLWithPath: reviewsPath, isDirectory: true)
+                .appendingPathComponent("resolved", isDirectory: true)
+        }
+        return URL(fileURLWithPath: book.suggestedPath("reviews/resolved"), isDirectory: true)
+    }
+}
+
+enum ReviewIndexBuilder {
+    enum BuilderError: LocalizedError {
+        case writeFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .writeFailed(let detail):
+                return "Could not write review_index.json: \(detail)"
+            }
+        }
+    }
+
+    static func missingEntryCount(book: BookConfig, indexedIDs: Set<String>) -> Int {
+        let parser = ReviewItemParser()
+        return parser.onDiskReviewIDs(book: book).subtracting(indexedIDs).count
+    }
+
+    static func rebuild(book: BookConfig) throws -> ReviewIndexDocument {
+        try book.withSecurityScopedProjectRoot {
+            let parser = ReviewItemParser()
+            let entries = parser.buildIndexEntries(book: book)
+            let rebuiltAt = Date()
+            let outputURL = indexURL(for: book)
+            try FileHelpers.ensureDirectory(outputURL.deletingLastPathComponent().path)
+
+            let payload: [String: Any] = [
+                "last_rebuilt": formatIndexTimestamp(rebuiltAt),
+                "items": entries.map(indexDictionary)
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            guard let json = String(data: data, encoding: .utf8) else {
+                throw BuilderError.writeFailed("UTF-8 encoding failed")
+            }
+            do {
+                try (json + "\n").write(to: outputURL, atomically: true, encoding: .utf8)
+            } catch {
+                throw BuilderError.writeFailed(error.localizedDescription)
+            }
+
+            return ReviewIndexDocument(
+                lastRebuilt: rebuiltAt,
+                items: entries,
+                rawJSON: json + "\n"
+            )
+        }
+    }
+
+    private static func indexURL(for book: BookConfig) -> URL {
+        URL(fileURLWithPath: book.reviewsPath ?? book.suggestedPath("reviews"), isDirectory: true)
+            .appendingPathComponent("review_index.json")
+    }
+
+    private static func indexDictionary(_ entry: ReviewIndexEntry) -> [String: Any] {
+        var dictionary: [String: Any] = [
+            "id": entry.id,
+            "title": entry.title,
+            "status": entry.status
+        ]
+        if let chapterID = entry.chapterID?.nilIfBlank {
+            dictionary["chapter_id"] = chapterID
+        }
+        if let type = entry.type?.nilIfBlank {
+            dictionary["type"] = type
+        }
+        if let severity = entry.severity?.nilIfBlank {
+            dictionary["severity"] = severity
+        }
+        if let createdAt = entry.createdAt {
+            dictionary["created_at"] = formatIndexTimestamp(createdAt)
+        }
+        if let file = entry.file?.nilIfBlank {
+            dictionary["file"] = file
+        }
+        return dictionary
+    }
+
+    private static func formatIndexTimestamp(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter.string(from: date)
+    }
 }
 
 final class TaskGenerator {
