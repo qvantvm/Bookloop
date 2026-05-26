@@ -7,6 +7,7 @@ struct AgentToolContext {
     var sessionsDirectory: URL
     var allowReviewEdits: Bool
     var buildTimeoutSeconds: TimeInterval
+    var fetchURLMaxBytes: Int
     var stagedChanges: [StagedFileChange]
 
     var changedFiles: [String] {
@@ -203,6 +204,10 @@ enum AgentTools {
         return try context.project.withSecurityScoped {
             try ProcessRunner().runGit(["diff", "--", "."], workingDirectory: context.project.rootURL).combinedOutput
         }
+    }
+
+    static func fetchURL(url: String, context: AgentToolContext) async throws -> AgentURLFetchResult {
+        try await AgentURLFetcher.fetch(urlString: url, maxBytes: context.fetchURLMaxBytes)
     }
 
     private static func isReviewPath(_ path: String, reviewRoot: String) -> Bool {

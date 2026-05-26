@@ -58,6 +58,7 @@ enum AgentPromptBuilder {
     - Never modify files outside allowed write globs.
     - Never read protected paths.
     - Never invent citations, references, or facts.
+    - Use fetch_url to read public HTTPS pages (documentation, GitHub READMEs, etc.) before citing external projects.
     - If information is missing, leave a TODO or report an unresolved issue.
     - Prefer precise replacements using apply_patch to stage edits.
     - apply_patch stages changes only; book files are not modified on disk until a human applies the patch in Tools → Patches.
@@ -104,10 +105,11 @@ enum AgentPromptBuilder {
             2. For each open review where has_actionable_guidance is true, use source_file and actionable_guidance as the primary instructions.
             3. Ignore placeholder suggested_fix values such as "TODO: add suggested fix".
             4. Read the target chapter markdown, then stage improvements with apply_patch that address the review (expand stubs, fill missing sections, clarify confusing parts).
-            5. When actionable_guidance lists multiple numbered sections or headings, stage one apply_patch per section that still contains stubs, TBD, TODO, or placeholder text. Do not stop after only one or two sections if more remain.
-            6. Prefer several small apply_patch calls over one huge rewrite.
-            7. Use as many tool iterations as needed (up to the configured limit) to cover the review.
-            8. If has_actionable_guidance is true for any review, you must stage at least one apply_patch before finishing.
+            5. When a review mentions an external URL or project, call fetch_url on that URL before writing factual claims about it.
+            6. When actionable_guidance lists multiple numbered sections or headings, stage one apply_patch per section that still contains stubs, TBD, TODO, or placeholder text. Do not stop after only one or two sections if more remain.
+            7. Prefer several small apply_patch calls over one huge rewrite.
+            8. Use as many tool iterations as needed (up to the configured limit) to cover the review.
+            9. If has_actionable_guidance is true for any review, you must stage at least one apply_patch before finishing.
             """)
             lines.append(openReviewDigest(for: project))
         case .improveCurrentChapter:
@@ -173,6 +175,9 @@ enum AgentToolRegistry {
                 "status": prop("string", "Filter by status such as open"),
                 "target": prop("string", "Filter by target chapter/path")
             ], required: []),
+            tool(name: "fetch_url", description: "Fetch a public HTTPS URL and return readable text. HTML is simplified to plain text. GitHub repo and blob URLs are rewritten to raw content when possible. Response size is capped by app settings.", properties: [
+                "url": prop("string", "Full HTTPS URL to fetch")
+            ], required: ["url"]),
             tool(name: "apply_patch", description: "Stage an exact old_text to new_text replacement once in a file. Does not modify disk until the patch is applied in Patches.", properties: [
                 "path": prop("string", "Project-relative file path"),
                 "old_text": prop("string", "Exact text to replace"),
@@ -184,7 +189,7 @@ enum AgentToolRegistry {
         ]
     }
 
-    static func execute(name: String, argumentsJSON: String, context: inout AgentToolContext) throws -> String {
+    static func execute(name: String, argumentsJSON: String, context: inout AgentToolContext) async throws -> String {
         let args = parseJSON(argumentsJSON)
         switch name {
         case "list_files":
@@ -205,6 +210,9 @@ enum AgentToolRegistry {
                 target: args["target"] as? String,
                 context: context
             ))
+        case "fetch_url":
+            guard let url = args["url"] as? String else { throw AgentToolError.unknownTool(name) }
+            return encode(try await AgentTools.fetchURL(url: url, context: context))
         case "apply_patch":
             guard let path = args["path"] as? String,
                   let oldText = args["old_text"] as? String,

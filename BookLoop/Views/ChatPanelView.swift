@@ -70,12 +70,31 @@ final class ChatPanelModel: ObservableObject {
 
         do {
             let pageContent = await WebView.extractPageContent(in: webView)
-            let openAIMessages = buildOpenAIMessages(pageContent: pageContent, latestUserMessage: text, book: book)
-            let reply = try await openAIClient.sendChat(
-                apiKey: settingsStore.apiKey,
-                model: settingsStore.openAIModel,
-                messages: openAIMessages
-            )
+            let reply: String
+            if settingsStore.enableChatWebSearch {
+                let request = buildWebSearchRequest(
+                    pageContent: pageContent,
+                    latestUserMessage: text,
+                    book: book
+                )
+                reply = try await openAIClient.sendChatWithWebSearch(
+                    apiKey: settingsStore.apiKey,
+                    model: settingsStore.openAIModel,
+                    instructions: request.instructions,
+                    input: request.input
+                )
+            } else {
+                let openAIMessages = buildOpenAIMessages(
+                    pageContent: pageContent,
+                    latestUserMessage: text,
+                    book: book
+                )
+                reply = try await openAIClient.sendChat(
+                    apiKey: settingsStore.apiKey,
+                    model: settingsStore.openAIModel,
+                    messages: openAIMessages
+                )
+            }
             appendMessage(ChatMessage(role: .assistant, content: reply))
         } catch {
             chatError = error.localizedDescription
@@ -140,21 +159,59 @@ final class ChatPanelModel: ObservableObject {
         sessions[pageContext.pageKey] = messages
     }
 
+    private func buildWebSearchRequest(
+        pageContent: String,
+        latestUserMessage: String,
+        book: BookConfig?
+    ) -> (instructions: String, input: [OpenAIChatMessage]) {
+        let instructions = chapterChatInstructions(book: book, webSearchEnabled: true)
+        var input = chapterChatInputMessages(
+            pageContent: pageContent,
+            latestUserMessage: latestUserMessage,
+            includeLatestUserMessage: false
+        )
+        input.append(OpenAIChatMessage(role: "user", content: latestUserMessage))
+        return (instructions, input)
+    }
+
     private func buildOpenAIMessages(pageContent: String, latestUserMessage: String, book: BookConfig?) -> [OpenAIChatMessage] {
+        var result: [OpenAIChatMessage] = [
+            OpenAIChatMessage(role: "system", content: chapterChatInstructions(book: book, webSearchEnabled: false))
+        ]
+        result.append(contentsOf: chapterChatInputMessages(
+            pageContent: pageContent,
+            latestUserMessage: latestUserMessage,
+            includeLatestUserMessage: true
+        ))
+        return result
+    }
+
+    private func chapterChatInstructions(book: BookConfig?, webSearchEnabled: Bool) -> String {
         var systemContent = """
         You are a reading assistant helping the user understand the current book chapter. \
         Answer using the provided page content, book-wide llms.txt context when present, and the conversation so far. \
         If the answer is not in the page, say so clearly.
         """
+        if webSearchEnabled {
+            systemContent += """
+
+            You may use OpenAI web search when the user asks about external projects, repositories, current events, \
+            or facts not present on the page. Prefer page content first; search only when needed. \
+            When you use web results, cite sources clearly.
+            """
+        }
         if let excerpt = book.flatMap({ BookLLMsContext.promptExcerpt(for: $0) }) {
             systemContent += "\n\nBook-wide context from llms.txt:\n\(excerpt)"
         }
+        return systemContent
+    }
 
+    private func chapterChatInputMessages(
+        pageContent: String,
+        latestUserMessage: String,
+        includeLatestUserMessage: Bool
+    ) -> [OpenAIChatMessage] {
         var result: [OpenAIChatMessage] = [
-            OpenAIChatMessage(
-                role: "system",
-                content: systemContent
-            ),
             OpenAIChatMessage(
                 role: "user",
                 content: """
@@ -176,7 +233,10 @@ final class ChatPanelModel: ObservableObject {
             result.append(OpenAIChatMessage(role: message.role.rawValue, content: message.content))
         }
 
-        result.append(OpenAIChatMessage(role: "user", content: latestUserMessage))
+        if includeLatestUserMessage {
+            result.append(OpenAIChatMessage(role: "user", content: latestUserMessage))
+        }
+
         return result
     }
 
@@ -258,7 +318,9 @@ struct ChatPanelView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if model.messages.isEmpty {
-                        Text("Ask a question about the current chapter. The page content and chat history are sent to OpenAI.")
+                        Text(settingsStore.enableChatWebSearch
+                             ? "Ask about this chapter. OpenAI web search is enabled for external facts; page content is always included."
+                             : "Ask a question about the current chapter. The page content and chat history are sent to OpenAI.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .padding(.vertical, 8)

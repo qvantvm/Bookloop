@@ -6,6 +6,8 @@ final class AppSettingsStore: ObservableObject {
     @Published var hasAPIKey = false
     @Published var maxAgentIterations: Int = 20
     @Published var buildTimeoutSeconds: Int = 120
+    @Published var fetchURLMaxBytes: Int = AgentURLFetcher.defaultMaxBytes
+    @Published var enableChatWebSearch: Bool = true
     @Published var allowAgentReviewEdits: Bool = false
     @Published var autoRunBuildAfterAgent: Bool = true
     @Published var previewColorScheme: PreviewColorSchemeMode = .system {
@@ -21,6 +23,10 @@ final class AppSettingsStore: ObservableObject {
         openAIModel = UserDefaults.standard.string(forKey: Self.modelKey) ?? "gpt-4.1"
         maxAgentIterations = UserDefaults.standard.object(forKey: Self.maxIterationsKey) as? Int ?? 20
         buildTimeoutSeconds = UserDefaults.standard.object(forKey: Self.buildTimeoutKey) as? Int ?? 120
+        fetchURLMaxBytes = clampedFetchURLMaxBytes(
+            UserDefaults.standard.object(forKey: Self.fetchURLMaxBytesKey) as? Int ?? AgentURLFetcher.defaultMaxBytes
+        )
+        enableChatWebSearch = UserDefaults.standard.object(forKey: Self.enableChatWebSearchKey) as? Bool ?? true
         allowAgentReviewEdits = UserDefaults.standard.bool(forKey: Self.allowReviewEditsKey)
         autoRunBuildAfterAgent = UserDefaults.standard.object(forKey: Self.autoBuildKey) as? Bool ?? true
         if let raw = UserDefaults.standard.string(forKey: Self.previewColorSchemeKey),
@@ -66,13 +72,21 @@ final class AppSettingsStore: ObservableObject {
     private func persistAgentSettings() {
         UserDefaults.standard.set(maxAgentIterations, forKey: Self.maxIterationsKey)
         UserDefaults.standard.set(buildTimeoutSeconds, forKey: Self.buildTimeoutKey)
+        UserDefaults.standard.set(clampedFetchURLMaxBytes(fetchURLMaxBytes), forKey: Self.fetchURLMaxBytesKey)
+        UserDefaults.standard.set(enableChatWebSearch, forKey: Self.enableChatWebSearchKey)
         UserDefaults.standard.set(allowAgentReviewEdits, forKey: Self.allowReviewEditsKey)
         UserDefaults.standard.set(autoRunBuildAfterAgent, forKey: Self.autoBuildKey)
+    }
+
+    private func clampedFetchURLMaxBytes(_ value: Int) -> Int {
+        min(max(value, AgentURLFetcher.minMaxBytes), AgentURLFetcher.maxMaxBytes)
     }
 
     private static let modelKey = "bookLoop.openAIModel"
     private static let maxIterationsKey = "bookLoop.maxAgentIterations"
     private static let buildTimeoutKey = "bookLoop.buildTimeoutSeconds"
+    private static let fetchURLMaxBytesKey = "bookLoop.fetchURLMaxBytes"
+    private static let enableChatWebSearchKey = "bookLoop.enableChatWebSearch"
     private static let allowReviewEditsKey = "bookLoop.allowAgentReviewEdits"
     private static let autoBuildKey = "bookLoop.autoRunBuildAfterAgent"
     private static let previewColorSchemeKey = "bookLoop.previewColorScheme"

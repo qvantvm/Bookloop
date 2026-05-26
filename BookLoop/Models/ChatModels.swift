@@ -37,6 +37,45 @@ struct OpenAIChatRequest: Codable {
     let messages: [OpenAIChatMessage]
 }
 
+struct OpenAIResponsesTool: Codable {
+    let type: String
+}
+
+struct OpenAIResponsesRequest: Encodable {
+    let model: String
+    let instructions: String
+    let input: [OpenAIChatMessage]
+    let tools: [OpenAIResponsesTool]
+    let store: Bool
+}
+
+struct OpenAIResponsesResponse: Decodable {
+    struct OutputItem: Decodable {
+        struct ContentBlock: Decodable {
+            let type: String
+            let text: String?
+        }
+
+        let type: String
+        let content: [ContentBlock]?
+    }
+
+    let output: [OutputItem]?
+
+    var outputText: String {
+        guard let output else { return "" }
+        var texts: [String] = []
+        for item in output where item.type == "message" {
+            for block in item.content ?? [] where block.type == "output_text" {
+                if let text = block.text?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty {
+                    texts.append(text)
+                }
+            }
+        }
+        return texts.joined(separator: "\n\n")
+    }
+}
+
 struct OpenAIChatResponse: Codable {
     struct Choice: Codable {
         struct Message: Codable {

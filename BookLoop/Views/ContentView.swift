@@ -23,6 +23,10 @@ struct ContentView: View {
 
     var body: some View {
         HSplitView {
+            WorkspaceToolbarView(
+                workspaceMode: $workspaceMode,
+                showingAppSettings: $showingAppSettings
+            )
             libraryColumn
             centerColumn
             chatColumn
@@ -79,8 +83,6 @@ struct ContentView: View {
 
     private var libraryColumn: some View {
         LibrarySidebarView(
-            workspaceMode: $workspaceMode,
-            showingAppSettings: $showingAppSettings,
             isSidebarVisible: $isSidebarVisible,
             previewStatus: previewModel.previewStatus,
             chapterItems: effectiveChapterNav,

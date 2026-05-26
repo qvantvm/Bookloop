@@ -54,6 +54,66 @@ final class OpenAIClient {
         }
     }
 
+    func sendChatWithWebSearch(
+        apiKey: String,
+        model: String,
+        instructions: String,
+        input: [OpenAIChatMessage]
+    ) async throws -> String {
+        guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw OpenAIError.missingAPIKey
+        }
+
+        guard let url = URL(string: "https://api.openai.com/v1/responses") else {
+            throw OpenAIError.invalidResponse
+        }
+
+        let body = OpenAIResponsesRequest(
+            model: model,
+            instructions: instructions,
+            input: input,
+            tools: [OpenAIResponsesTool(type: "web_search")],
+            store: false
+        )
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 180
+        request.httpBody = try JSONEncoder().encode(body)
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw OpenAIError.transportError(error.localizedDescription)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OpenAIError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            let bodyText = String(data: data, encoding: .utf8)
+            throw OpenAIError.httpError(statusCode: httpResponse.statusCode, body: bodyText)
+        }
+
+        do {
+            let decoded = try JSONDecoder().decode(OpenAIResponsesResponse.self, from: data)
+            let content = decoded.outputText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !content.isEmpty else {
+                throw OpenAIError.invalidResponse
+            }
+            return content
+        } catch let error as OpenAIError {
+            throw error
+        } catch {
+            throw OpenAIError.decodingFailed
+        }
+    }
+
     func sendChatWithTools(
         apiKey: String,
         model: String,

@@ -8,8 +8,6 @@ struct LibrarySidebarView: View {
     @EnvironmentObject private var patchStore: PatchStore
     @EnvironmentObject private var taskStore: TaskStore
 
-    @Binding var workspaceMode: WorkspaceMode
-    @Binding var showingAppSettings: Bool
     @Binding var isSidebarVisible: Bool
     let previewStatus: LocalAPIStatus
     let chapterItems: [ChapterNavItem]
@@ -45,13 +43,6 @@ struct LibrarySidebarView: View {
                         }
                         .buttonStyle(.borderless)
                         .help("Hide panel")
-                        Button {
-                            showingAppSettings = true
-                        } label: {
-                            Image(systemName: "gearshape")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("App settings")
                     }
                 }
 
@@ -61,18 +52,6 @@ struct LibrarySidebarView: View {
                             previewStatus: previewStatus,
                             openReviewCount: reviewStore.openCount
                         )
-                    }
-
-                    Section("Tools") {
-                        ForEach(WorkspaceTab.toolTabs) { tab in
-                            Button {
-                                workspaceMode = .tool(tab)
-                            } label: {
-                                Label(tab.rawValue, systemImage: icon(for: tab))
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(isToolSelected(tab) ? Color.accentColor : Color.primary)
-                        }
                     }
 
                     Section("Chapters") {
@@ -111,25 +90,6 @@ struct LibrarySidebarView: View {
             .labelStyle(.iconOnly)
             .padding(8)
         }
-    }
-
-    private func icon(for tab: WorkspaceTab) -> String {
-        switch tab {
-        case .preview: return "safari"
-        case .agent: return "cpu"
-        case .reviews: return "quote.bubble"
-        case .figures: return "photo"
-        case .tasks: return "checklist"
-        case .patches: return "doc.text.magnifyingglass"
-        case .settings: return "gearshape"
-        }
-    }
-
-    private func isToolSelected(_ tab: WorkspaceTab) -> Bool {
-        if case .tool(let selected) = workspaceMode {
-            return selected == tab
-        }
-        return false
     }
 }
 
@@ -232,11 +192,5 @@ private struct ChapterNavRow: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
         }
-    }
-}
-
-extension WorkspaceTab {
-    static var toolTabs: [WorkspaceTab] {
-        allCases.filter { $0 != .preview }
     }
 }

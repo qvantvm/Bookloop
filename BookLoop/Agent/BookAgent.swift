@@ -54,6 +54,7 @@ final class BookAgent {
         appModel: String,
         maxIterations: Int,
         buildTimeoutSeconds: TimeInterval,
+        fetchURLMaxBytes: Int,
         allowReviewEdits: Bool,
         isCancelled: @escaping () -> Bool,
         onToolLogUpdate: (([AgentToolLogEntry]) -> Void)? = nil
@@ -67,6 +68,7 @@ final class BookAgent {
             sessionsDirectory: project.sessionsDirectory,
             allowReviewEdits: allowReviewEdits,
             buildTimeoutSeconds: buildTimeoutSeconds,
+            fetchURLMaxBytes: fetchURLMaxBytes,
             stagedChanges: []
         )
 
@@ -95,7 +97,7 @@ final class BookAgent {
                     if isCancelled() { throw CancellationError() }
                     let entryStart = Date()
                     do {
-                        let result = try AgentToolRegistry.execute(
+                        let result = try await AgentToolRegistry.execute(
                             name: call.function.name,
                             argumentsJSON: call.function.arguments,
                             context: &context

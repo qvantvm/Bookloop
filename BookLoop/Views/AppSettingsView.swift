@@ -30,14 +30,27 @@ struct AppSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Section("Chapter Chat") {
+                    Toggle("Enable OpenAI web search", isOn: $settingsStore.enableChatWebSearch)
+                    Text("Uses the OpenAI Responses API with the hosted web_search tool. The model can look up external projects and current facts on OpenAI's side. Page content and llms.txt are still sent with each message.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Native Agent") {
                     Stepper("Max tool iterations: \(settingsStore.maxAgentIterations)", value: $settingsStore.maxAgentIterations, in: 1...40)
                     Stepper("Build timeout (seconds): \(settingsStore.buildTimeoutSeconds)", value: $settingsStore.buildTimeoutSeconds, in: 30...600, step: 30)
+                    Stepper(
+                        "Fetch URL max size: \(settingsStore.fetchURLMaxBytes / 1024) KB",
+                        value: $settingsStore.fetchURLMaxBytes,
+                        in: AgentURLFetcher.minMaxBytes...AgentURLFetcher.maxMaxBytes,
+                        step: 8_192
+                    )
                     Toggle("Allow agent to edit review items", isOn: $settingsStore.allowAgentReviewEdits)
                     Toggle("Auto-run build after patch apply", isOn: $settingsStore.autoRunBuildAfterAgent)
                 }
 
-                Text("Default model: gpt-4.1 (change to any OpenAI chat model you have access to). No web search — the agent only reads your book repo via local tools. For long reviews, raise max iterations (default 20) or run Apply Review Feedback again after applying the first patch.")
+                Text("Default model: gpt-4.1 (change to any OpenAI chat model you have access to). The agent can fetch public HTTPS pages via fetch_url (GitHub READMEs, docs) up to the size limit above, and read your book repo via local tools. For long reviews, raise max iterations (default 20) or run Apply Review Feedback again after applying the first patch.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

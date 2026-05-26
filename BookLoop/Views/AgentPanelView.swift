@@ -55,6 +55,7 @@ final class AgentPanelModel: ObservableObject {
                 appModel: settingsStore.openAIModel,
                 maxIterations: settingsStore.maxAgentIterations,
                 buildTimeoutSeconds: TimeInterval(settingsStore.buildTimeoutSeconds),
+                fetchURLMaxBytes: settingsStore.fetchURLMaxBytes,
                 allowReviewEdits: settingsStore.allowAgentReviewEdits,
                 isCancelled: { self.shouldCancel },
                 onToolLogUpdate: { [weak self] log in
@@ -175,10 +176,10 @@ struct AgentPanelView: View {
                         Text("Run an agent task to stage edits and write a patch proposal to bookloop/patches/. Book files stay unchanged until you apply the patch in Tools → Patches.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Text("Model: \(settingsStore.openAIModel) via OpenAI (no web search). One agent run writes one patch file with multiple diff blocks; long reviews may need higher max iterations in app settings or several agent runs.")
+                        Text("Model: \(settingsStore.openAIModel) via OpenAI. The agent can fetch public HTTPS URLs (size limit in App Settings) and read your book repo via local tools. One agent run writes one patch file with multiple diff blocks; long reviews may need higher max iterations in app settings or several agent runs.")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
-                        Text("Limitations: lexical search only, exact-text apply_patch (single match), simple build command parsing.")
+                        Text("Limitations: lexical search only, exact-text apply_patch (single match), simple build command parsing, HTTPS-only fetch (no auth/cookies).")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
