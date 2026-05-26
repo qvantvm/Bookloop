@@ -456,7 +456,13 @@ struct PatchActivityEntry: Identifiable, Codable, Equatable {
 
 struct PendingPatchCommitContext: Equatable {
     var changedFiles: [String]
+    var evidenceFiles: [String]
     var rootStem: String
+
+    var allCommitPaths: [String] {
+        var seen = Set<String>()
+        return (changedFiles + evidenceFiles).filter { seen.insert($0).inserted }
+    }
 }
 
 struct DiffFile: Identifiable, Equatable {

@@ -116,6 +116,17 @@ struct PatchActionPanel: View {
 
                 stepCard(number: 3, title: "Commit to git", isActive: workflowPhase == .committed) {
                     VStack(alignment: .leading, spacing: 8) {
+                        if let context = pendingCommitContext, !context.evidenceFiles.isEmpty {
+                            Text("Includes \(context.changedFiles.count) patched file(s) plus \(context.evidenceFiles.count) evidence file(s) (reviews/tasks).")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            ForEach(context.evidenceFiles, id: \.self) { path in
+                                Text(path)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+                        }
                         TextField("Commit message", text: $commitMessage)
                         Button(isRunningPatchCommand ? "Committing…" : "Commit to Git") {
                             onCommit()

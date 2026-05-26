@@ -864,7 +864,7 @@ struct PatchReviewView: View {
                 Task { await commitAppliedChanges() }
             }
         } message: {
-            Text("BookLoop will run git add on the changed files, then git commit with your message.")
+            Text("BookLoop will run git add on the patched chapter file(s) plus related review and task evidence, then git commit with your message.")
         }
         .alert("Archive patch without applying?", isPresented: $confirmingArchive) {
             Button("Cancel", role: .cancel) {}
@@ -899,6 +899,13 @@ struct PatchReviewView: View {
         }
         guard let proposal else { return "Apply BookLoop patch" }
         return "Apply BookLoop patch: \(proposal.rootStem)"
+    }
+
+    private func evidenceSummary(for evidence: PatchEvidence, applied fileCount: Int) -> String {
+        if evidence.allPaths.isEmpty {
+            return "Patch applied to \(fileCount) book file(s). Ready to commit."
+        }
+        return "Patch applied to \(fileCount) book file(s). Commit will also include \(evidence.reviewFiles.count) review(s) and \(evidence.taskFiles.count) task(s) as evidence."
     }
 
     private func appendActivity(_ message: String) {
@@ -1126,15 +1133,20 @@ struct PatchReviewView: View {
         do {
             let result = try await PatchApplier().applyAsync(patch: proposal, book: activeBook)
             if result.exitCode == 0 {
+                let evidence = PatchEvidenceResolver.resolve(book: activeBook, proposal: proposal)
                 pendingCommitContext = PendingPatchCommitContext(
                     changedFiles: proposal.changedFiles,
+                    evidenceFiles: evidence.allPaths,
                     rootStem: proposal.rootStem
                 )
                 workflowPhase = .appliedToDisk
                 commitMessage = defaultCommitMessage(for: proposal)
                 let archived = try archiveAppliedPatches(sourcePath: proposal.filePath, appliedReviewedPath: nil)
-                statusMessage = "Full patch applied to book files."
+                statusMessage = evidenceSummary(for: evidence, applied: proposal.changedFiles.count)
                 appendActivity("Applied full patch \(proposal.rootStem) (\(proposal.changedFiles.count) files)")
+                if !evidence.allPaths.isEmpty {
+                    appendActivity("Evidence for commit: \(evidence.allPaths.joined(separator: ", "))")
+                }
                 if !archived.isEmpty {
                     appendActivity("Archived: \(archived.joined(separator: ", "))")
                 }
@@ -1163,15 +1175,20 @@ struct PatchReviewView: View {
             let reviewedPatchPath = try writeAcceptedPatchToDisk()
             let result = try await PatchApplier().applyPatchFileAsync(path: reviewedPatchPath, book: activeBook)
             if result.exitCode == 0 {
+                let evidence = PatchEvidenceResolver.resolve(book: activeBook, proposal: sourceProposal)
                 pendingCommitContext = PendingPatchCommitContext(
                     changedFiles: sourceProposal.changedFiles,
+                    evidenceFiles: evidence.allPaths,
                     rootStem: sourceProposal.rootStem
                 )
                 workflowPhase = .appliedToDisk
                 commitMessage = defaultCommitMessage(for: sourceProposal)
                 let archived = try archiveAppliedPatches(sourcePath: sourcePath, appliedReviewedPath: reviewedPatchPath)
-                statusMessage = "Accepted changes applied to book files. Ready to commit."
+                statusMessage = evidenceSummary(for: evidence, applied: sourceProposal.changedFiles.count)
                 appendActivity("Applied \(sourceProposal.rootStem) (\(sourceProposal.changedFiles.count) files)")
+                if !evidence.allPaths.isEmpty {
+                    appendActivity("Evidence for commit: \(evidence.allPaths.joined(separator: ", "))")
+                }
                 if !archived.isEmpty {
                     appendActivity("Archived: \(archived.joined(separator: ", "))")
                 }
@@ -1261,7 +1278,7 @@ struct PatchReviewView: View {
     }
 
     private func copyCommitCommand() {
-        let paths = pendingCommitContext?.changedFiles ?? patchStore.selectedProposal?.changedFiles ?? []
+        let paths = pendingCommitContext?.allCommitPaths ?? patchStore.selectedProposal?.changedFiles ?? []
         let command = PatchApplier.suggestedCommitCommand(
             message: commitMessage.nilIfBlank ?? defaultCommitMessage(for: patchStore.selectedProposal),
             changedPaths: paths,
@@ -1285,11 +1302,17 @@ struct PatchReviewView: View {
         defer { isRunningPatchCommand = false }
         do {
             let message = commitMessage.nilIfBlank ?? "Apply BookLoop patch: \(context.rootStem)"
-            let result = try await PatchApplier().gitCommit(message: message, changedPaths: context.changedFiles, book: activeBook)
+            let result = try await PatchApplier().gitCommit(message: message, changedPaths: context.allCommitPaths, book: activeBook)
             if result.exitCode == 0 {
                 workflowPhase = .committed
-                statusMessage = "Committed successfully."
+                let evidenceCount = context.evidenceFiles.count
+                statusMessage = evidenceCount > 0
+                    ? "Committed successfully (\(context.changedFiles.count) book file(s), \(evidenceCount) evidence file(s))."
+                    : "Committed successfully."
                 appendActivity("Committed: \(message)")
+                if !context.evidenceFiles.isEmpty {
+                    appendActivity("Included evidence: \(context.evidenceFiles.joined(separator: ", "))")
+                }
                 appendActivity("git status: \(gitWorkingTree == "Working tree clean." ? "clean" : "updated")")
                 pendingCommitContext = nil
             } else {
