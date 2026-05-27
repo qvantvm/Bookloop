@@ -1802,6 +1802,303 @@ final class MarkdownHTMLRenderer {
     }
 }
 
+enum ReviewItemMarkdownLoader {
+    static func bodyMarkdown(for item: ReviewItem) -> String {
+        if let content = try? String(contentsOfFile: item.filePath, encoding: .utf8) {
+            let stripped = stripFrontmatter(content).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !stripped.isEmpty {
+                return stripped
+            }
+        }
+        return fallbackMarkdown(for: item)
+    }
+
+    private static func stripFrontmatter(_ content: String) -> String {
+        guard content.hasPrefix("---") else { return content }
+        let lines = content.components(separatedBy: .newlines)
+        guard let endIndex = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) else {
+            return content
+        }
+        return lines[(endIndex + 1)...].joined(separator: "\n")
+    }
+
+    private static func fallbackMarkdown(for item: ReviewItem) -> String {
+        var parts = ["# \(item.title)", ""]
+        if let body = item.body?.nilIfBlank {
+            parts.append(body)
+        }
+        if let fix = item.suggestedFix?.nilIfBlank {
+            parts.append("")
+            parts.append("## Suggested Fix")
+            parts.append("")
+            parts.append(fix)
+        }
+        return parts.joined(separator: "\n")
+    }
+}
+
+final class ReviewItemMarkdownRenderer {
+    func renderDocument(markdown: String, title: String? = nil) -> String {
+        let body = renderBody(markdown)
+        let safeTitle = escapeHTML(title ?? "Review Item")
+        return """
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="color-scheme" content="light dark">
+          <style>
+            :root {
+              color-scheme: light dark;
+              --accent: #007aff;
+              --user-accent: #5856d6;
+              --assistant-accent: #34c759;
+              --surface: rgba(127, 127, 127, 0.08);
+              --border: rgba(127, 127, 127, 0.22);
+              --muted: #636366;
+            }
+            body {
+              font: -apple-system-body;
+              margin: 0;
+              padding: 16px 18px 24px;
+              line-height: 1.55;
+              color: CanvasText;
+              background: Canvas;
+            }
+            h1, h2, h3, h4 { margin: 0.85em 0 0.4em; line-height: 1.25; }
+            h1 { font-size: 1.35rem; margin-top: 0; }
+            h2 { font-size: 1.1rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em; }
+            h3 { font-size: 1rem; }
+            p { margin: 0.5em 0; }
+            blockquote {
+              border-left: 3px solid var(--muted);
+              color: var(--muted);
+              margin: 0.65em 0;
+              padding: 0.15em 0 0.15em 0.85em;
+            }
+            pre {
+              background: var(--surface);
+              border: 1px solid var(--border);
+              border-radius: 8px;
+              overflow-x: auto;
+              padding: 10px 12px;
+            }
+            code {
+              font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+              font-size: 0.92em;
+            }
+            p code, li code {
+              background: var(--surface);
+              border-radius: 4px;
+              padding: 1px 5px;
+            }
+            ul, ol { padding-left: 1.35em; margin: 0.45em 0; }
+            .speaker-block {
+              margin: 12px 0;
+              padding: 10px 12px 10px 14px;
+              border-radius: 10px;
+              border: 1px solid var(--border);
+              background: var(--surface);
+            }
+            .speaker-block.user { border-left: 3px solid var(--user-accent); }
+            .speaker-block.assistant { border-left: 3px solid var(--assistant-accent); }
+            .speaker-label {
+              font-size: 0.72rem;
+              font-weight: 700;
+              letter-spacing: 0.06em;
+              text-transform: uppercase;
+              color: var(--muted);
+              margin-bottom: 6px;
+            }
+            .speaker-block.user .speaker-label { color: var(--user-accent); }
+            .speaker-block.assistant .speaker-label { color: var(--assistant-accent); }
+            .empty { color: var(--muted); font-style: italic; }
+          </style>
+          <title>\(safeTitle)</title>
+        </head>
+        <body>\(body)</body>
+        </html>
+        """
+    }
+
+    private func renderBody(_ markdown: String) -> String {
+        let lines = markdown.components(separatedBy: .newlines)
+        var html: [String] = []
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("```") {
+                html.append(renderCodeBlock(lines: lines, startIndex: &index))
+                continue
+            }
+
+            if let speaker = speakerLabel(for: trimmed) {
+                html.append(renderSpeakerBlock(label: speaker, lines: lines, startIndex: &index))
+                continue
+            }
+
+            if trimmed.isEmpty {
+                index += 1
+                continue
+            }
+
+            if let heading = headingHTML(for: trimmed) {
+                html.append(heading)
+                index += 1
+                continue
+            }
+
+            if trimmed.hasPrefix(">") {
+                let quote = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+                html.append("<blockquote>\(renderInline(String(quote)))</blockquote>")
+                index += 1
+                continue
+            }
+
+            if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
+                html.append(renderList(lines: lines, startIndex: &index, ordered: false))
+                continue
+            }
+
+            if trimmed.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil {
+                html.append(renderList(lines: lines, startIndex: &index, ordered: true))
+                continue
+            }
+
+            var paragraphLines = [trimmed]
+            index += 1
+            while index < lines.count {
+                let next = lines[index].trimmingCharacters(in: .whitespaces)
+                if next.isEmpty || next.hasPrefix("#") || next.hasPrefix("```") || next.hasPrefix(">")
+                    || next.hasPrefix("- ") || next.hasPrefix("* ")
+                    || speakerLabel(for: next) != nil
+                    || next.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil {
+                    break
+                }
+                paragraphLines.append(next)
+                index += 1
+            }
+            html.append("<p>\(renderInline(paragraphLines.joined(separator: " ")))</p>")
+        }
+
+        if html.isEmpty {
+            return "<p class=\"empty\">No review content.</p>"
+        }
+        return html.joined(separator: "\n")
+    }
+
+    private func speakerLabel(for line: String) -> String? {
+        guard line.hasPrefix("### ") else { return nil }
+        let label = String(line.dropFirst(4)).trimmingCharacters(in: .whitespaces).lowercased()
+        if label == "user" || label == "assistant" {
+            return label
+        }
+        return nil
+    }
+
+    private func renderSpeakerBlock(label: String, lines: [String], startIndex: inout Int) -> String {
+        startIndex += 1
+        var blockLines: [String] = []
+        while startIndex < lines.count {
+            let trimmed = lines[startIndex].trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("### ") || trimmed.hasPrefix("## ") {
+                break
+            }
+            if trimmed.isEmpty && !blockLines.isEmpty {
+                let nextIndex = startIndex + 1
+                if nextIndex < lines.count {
+                    let next = lines[nextIndex].trimmingCharacters(in: .whitespaces)
+                    if next.hasPrefix("### ") || next.hasPrefix("## ") {
+                        break
+                    }
+                }
+            }
+            blockLines.append(lines[startIndex])
+            startIndex += 1
+        }
+
+        let innerMarkdown = blockLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        let innerHTML = innerMarkdown.isEmpty ? "<p class=\"empty\">No content.</p>" : renderBody(innerMarkdown)
+        let displayLabel = label.capitalized
+        return """
+        <section class="speaker-block \(label)">
+          <div class="speaker-label">\(displayLabel)</div>
+          \(innerHTML)
+        </section>
+        """
+    }
+
+    private func renderCodeBlock(lines: [String], startIndex: inout Int) -> String {
+        startIndex += 1
+        var codeLines: [String] = []
+        while startIndex < lines.count {
+            let line = lines[startIndex]
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                startIndex += 1
+                break
+            }
+            codeLines.append(line)
+            startIndex += 1
+        }
+        return "<pre><code>\(escapeHTML(codeLines.joined(separator: "\n")))</code></pre>"
+    }
+
+    private func renderList(lines: [String], startIndex: inout Int, ordered: Bool) -> String {
+        var items: [String] = []
+        let itemPattern = ordered ? #"^\d+\.\s"# : #"^[-*]\s"#
+        while startIndex < lines.count {
+            let trimmed = lines[startIndex].trimmingCharacters(in: .whitespaces)
+            guard trimmed.range(of: itemPattern, options: .regularExpression) != nil else { break }
+            let content = ordered
+                ? trimmed.replacingOccurrences(of: #"^\d+\.\s"#, with: "", options: .regularExpression)
+                : String(trimmed.dropFirst(2))
+            items.append("<li>\(renderInline(content))</li>")
+            startIndex += 1
+        }
+        let tag = ordered ? "ol" : "ul"
+        return "<\(tag)>\(items.joined())</\(tag)>"
+    }
+
+    private func headingHTML(for line: String) -> String? {
+        let level = line.prefix { $0 == "#" }.count
+        guard (1...4).contains(level), line.dropFirst(level).first == " " else { return nil }
+        let text = line.dropFirst(level + 1)
+        return "<h\(level)>\(renderInline(String(text)))</h\(level)>"
+    }
+
+    private func renderInline(_ markdown: String) -> String {
+        var text = escapeHTML(markdown)
+        text = text.replacingOccurrences(
+            of: #"\*\*(.+?)\*\*"#,
+            with: "<strong>$1</strong>",
+            options: .regularExpression
+        )
+        text = text.replacingOccurrences(
+            of: #"`([^`]+)`"#,
+            with: "<code>$1</code>",
+            options: .regularExpression
+        )
+        text = text.replacingOccurrences(
+            of: #"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)"#,
+            with: "<em>$1</em>",
+            options: .regularExpression
+        )
+        return text
+    }
+
+    private func escapeHTML(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+    }
+}
+
 final class ReviewSummaryMarkdownRenderer {
     func renderDocument(markdown: String) -> String {
         let body = renderBody(markdown)

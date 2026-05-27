@@ -314,36 +314,72 @@ struct ReviewBrowserView: View {
 
     private var reviewItemsPane: some View {
         Group {
-            if reviewStore.items.isEmpty {
-                EmptyStateView(title: "No Review Items", message: "BookLoop could not find Markdown reviews in reviews/review_items.", systemImage: "quote.bubble")
+            if reviewStore.filteredItems.isEmpty {
+                EmptyStateView(
+                    title: "No Review Items",
+                    message: reviewStore.items.isEmpty
+                        ? "BookLoop could not find Markdown reviews in reviews/review_items or reviews/resolved."
+                        : "No reviews match the current filters.",
+                    systemImage: "quote.bubble"
+                )
             } else {
                 HSplitView {
-                    List(selection: $reviewStore.selectedIDs) {
-                        ForEach(groupedSections) { section in
-                            if grouping == .none {
-                                ForEach(section.items) { item in
-                                    ReviewRow(item: item)
-                                        .tag(item.id)
-                                        .onTapGesture { selectedDetailID = item.id }
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            ForEach(groupedSections) { section in
+                                if grouping != .none {
+                                    Text(section.id)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.secondary)
+                                        .textCase(.uppercase)
+                                        .padding(.top, 4)
                                 }
-                            } else {
-                                Section(section.id) {
-                                    ForEach(section.items) { item in
-                                        ReviewRow(item: item)
-                                            .tag(item.id)
-                                            .onTapGesture { selectedDetailID = item.id }
-                                    }
+                                ForEach(section.items) { item in
+                                    ReviewItemCardView(
+                                        item: item,
+                                        isSelected: selectedDetailID == item.id,
+                                        isChecked: reviewStore.selectedIDs.contains(item.id),
+                                        onSelect: { selectedDetailID = item.id },
+                                        onToggleChecked: { toggleReviewSelection(item.id) }
+                                    )
                                 }
                             }
                         }
+                        .padding()
                     }
-                    .frame(minWidth: 320)
+                    .frame(minWidth: 300, idealWidth: 340, maxWidth: 420)
 
                     ReviewDetailView(item: selectedReview, book: book)
-                        .frame(minWidth: 320)
+                        .frame(minWidth: 360)
+                }
+                .onAppear {
+                    ensureDetailSelection()
+                }
+                .onChange(of: reviewStore.filteredItems.map(\.id)) {
+                    ensureDetailSelection()
                 }
             }
         }
+    }
+
+    private func toggleReviewSelection(_ id: String) {
+        if reviewStore.selectedIDs.contains(id) {
+            reviewStore.selectedIDs.remove(id)
+        } else {
+            reviewStore.selectedIDs.insert(id)
+        }
+    }
+
+    private func ensureDetailSelection() {
+        guard !reviewStore.filteredItems.isEmpty else {
+            selectedDetailID = nil
+            return
+        }
+        if let selectedDetailID,
+           reviewStore.filteredItems.contains(where: { $0.id == selectedDetailID }) {
+            return
+        }
+        selectedDetailID = reviewStore.filteredItems.first?.id
     }
 
     private var groupedSections: [ReviewItemSection] {
@@ -731,44 +767,108 @@ private struct ReviewIndexEntryCard: View {
     }
 }
 
-struct ReviewRow: View {
+struct ReviewItemCardView: View {
     let item: ReviewItem
+    let isSelected: Bool
+    let isChecked: Bool
+    let onSelect: () -> Void
+    let onToggleChecked: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(item.title)
-                    .fontWeight(.medium)
-                    .lineLimit(2)
-                if item.status == .resolved {
-                    Text("RESOLVED")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 4)
-                        .background(Color.green.opacity(0.15))
-                        .foregroundStyle(.green)
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
+        HStack(alignment: .top, spacing: 10) {
+            Toggle(isOn: Binding(
+                get: { isChecked },
+                set: { _ in onToggleChecked() }
+            )) {
+                EmptyView()
+            }
+            .toggleStyle(.checkbox)
+            .labelsHidden()
+
+            Button(action: onSelect) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .top) {
+                        Text(item.title)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        statusBadge
+                    }
+
+                    HStack(spacing: 6) {
+                        if let severity = item.severity?.nilIfBlank {
+                            pill(severity.uppercased(), color: severityColor(severity))
+                        }
+                        if let type = item.type?.nilIfBlank {
+                            pill(type, color: .accentColor)
+                        }
+                    }
+
+                    HStack(spacing: 8) {
+                        Text(item.chapter ?? "Unknown chapter")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        if let createdAt = item.createdAt {
+                            Text(DateFormatting.display.string(from: createdAt))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if let preview = previewText {
+                        Text(preview)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                    }
                 }
             }
-            HStack {
-                if let severity = item.severity {
-                    Text(severity.uppercased())
-                        .font(.caption2)
-                        .padding(.horizontal, 4)
-                        .background(Color.orange.opacity(0.15))
-                        .clipShape(RoundedRectangle(cornerRadius: 3))
-                }
-                if let type = item.type {
-                    Text(type)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Text(item.chapter ?? "Unknown chapter")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+            .buttonStyle(.plain)
         }
-        .padding(.vertical, 4)
+        .padding(12)
+        .background(Color.secondary.opacity(isSelected ? 0.12 : 0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(isSelected ? Color.accentColor.opacity(0.45) : Color.clear, lineWidth: 1.5)
+        )
+    }
+
+    private var previewText: String? {
+        guard let body = item.body?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank else { return nil }
+        let singleLine = body.replacingOccurrences(of: "\n", with: " ")
+        return singleLine.count > 120 ? String(singleLine.prefix(120)) + "…" : singleLine
+    }
+
+    private var statusBadge: some View {
+        Text(item.status == .resolved ? "RESOLVED" : "OPEN")
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background((item.status == .resolved ? Color.green : Color.orange).opacity(0.18))
+            .foregroundStyle(item.status == .resolved ? .green : .orange)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+
+    private func pill(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.14))
+            .foregroundStyle(color)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+
+    private func severityColor(_ severity: String) -> Color {
+        switch severity.lowercased() {
+        case FeedbackSeverity.critical.rawValue: return .red
+        case FeedbackSeverity.high.rawValue: return .orange
+        case FeedbackSeverity.low.rawValue: return .green
+        default: return .orange
+        }
     }
 }
 
@@ -779,68 +879,137 @@ struct ReviewDetailView: View {
     @EnvironmentObject private var reviewStore: ReviewStore
     @State private var isReopening = false
     @State private var isResolving = false
+    @State private var showsRawMarkdown = false
 
     var body: some View {
         if let item {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(item.title)
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                    LabeledContent("ID", value: item.id)
-                    LabeledContent("Chapter", value: item.chapter ?? "Unknown")
-                    LabeledContent("Type", value: item.type ?? "Unknown")
-                    LabeledContent("Severity", value: item.severity ?? "Unknown")
-                    LabeledContent("Status", value: item.status.rawValue)
-                    if let body = item.body {
-                        Text("Body").font(.headline)
-                        Text(body).textSelection(.enabled)
-                    }
-                    if let fix = item.suggestedFix {
-                        Text("Suggested Fix").font(.headline)
-                        Text(fix).textSelection(.enabled)
-                    }
-                    HStack {
-                        Button("Open in Finder") {
-                            FileHelpers.openInFinder(path: item.filePath)
-                        }
-                        Button("Copy ID") {
-                            FileHelpers.copyToPasteboard(item.id)
-                        }
-                        if item.status.isOpenForWorkflow {
-                            Button(isResolving ? "Marking Resolved…" : "Mark Resolved") {
-                                Task {
-                                    isResolving = true
-                                    defer { isResolving = false }
-                                    do {
-                                        try await Task(priority: .userInitiated) {
-                                            _ = try ReviewItemResolver.resolveOpenReviews(ids: [item.id], book: book)
-                                        }.value
-                                        reviewStore.refresh(book: book)
-                                    } catch {
-                                        reviewStore.errorMessage = error.localizedDescription
-                                    }
-                                }
-                            }
-                            .disabled(isResolving)
-                        }
-                        if item.status == .resolved {
-                            Button(isReopening ? "Reopening…" : "Reopen Review") {
-                                Task {
-                                    isReopening = true
-                                    defer { isReopening = false }
-                                    await reviewStore.reopenReview(id: item.id, book: book)
-                                }
-                            }
-                            .disabled(isReopening)
-                        }
-                    }
+            VStack(spacing: 0) {
+                reviewHeader(item)
+                Divider()
+                if let markdown = renderedMarkdown(for: item) {
+                    HTMLStringView(html: ReviewItemMarkdownRenderer().renderDocument(markdown: markdown, title: item.title))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    EmptyStateView(
+                        title: "No Content",
+                        message: "Could not load review markdown.",
+                        systemImage: "doc.text"
+                    )
                 }
-                .padding()
+                Divider()
+                DisclosureGroup("Show raw markdown", isExpanded: $showsRawMarkdown) {
+                    ScrollView {
+                        Text(ReviewItemMarkdownLoader.bodyMarkdown(for: item))
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4)
+                    }
+                    .frame(maxHeight: 160)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
         } else {
             EmptyStateView(title: "Select a Review", message: "Choose a review item to inspect details.", systemImage: "doc.text")
         }
+    }
+
+    private func reviewHeader(_ item: ReviewItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(item.title)
+                .font(.title3.weight(.semibold))
+
+            HStack(spacing: 6) {
+                statusPill(item.status == .resolved ? "resolved" : "open",
+                           color: item.status == .resolved ? .green : .orange)
+                if let severity = item.severity?.nilIfBlank {
+                    statusPill(severity, color: .orange)
+                }
+                if let type = item.type?.nilIfBlank {
+                    statusPill(type, color: .accentColor)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                metadataRow("Chapter", item.chapter ?? "Unknown")
+                if let section = item.section?.nilIfBlank {
+                    metadataRow("Section", section)
+                }
+                if let sourceFile = item.sourceFile?.nilIfBlank {
+                    metadataRow("Source", sourceFile)
+                }
+                if let createdAt = item.createdAt {
+                    metadataRow("Created", DateFormatting.display.string(from: createdAt))
+                }
+                metadataRow("ID", item.id)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
+            HStack {
+                Button("Open in Finder") {
+                    FileHelpers.openInFinder(path: item.filePath)
+                }
+                Button("Copy ID") {
+                    FileHelpers.copyToPasteboard(item.id)
+                }
+                if item.status.isOpenForWorkflow {
+                    Button(isResolving ? "Marking Resolved…" : "Mark Resolved") {
+                        Task {
+                            isResolving = true
+                            defer { isResolving = false }
+                            do {
+                                try await Task(priority: .userInitiated) {
+                                    _ = try ReviewItemResolver.resolveOpenReviews(ids: [item.id], book: book)
+                                }.value
+                                reviewStore.refresh(book: book)
+                            } catch {
+                                reviewStore.errorMessage = error.localizedDescription
+                            }
+                        }
+                    }
+                    .disabled(isResolving)
+                }
+                if item.status == .resolved {
+                    Button(isReopening ? "Reopening…" : "Reopen Review") {
+                        Task {
+                            isReopening = true
+                            defer { isReopening = false }
+                            await reviewStore.reopenReview(id: item.id, book: book)
+                        }
+                    }
+                    .disabled(isReopening)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+    }
+
+    private func metadataRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text("\(label):")
+                .fontWeight(.medium)
+            Text(value)
+                .textSelection(.enabled)
+        }
+    }
+
+    private func statusPill(_ text: String, color: Color) -> some View {
+        Text(text.uppercased())
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.16))
+            .foregroundStyle(color)
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+    }
+
+    private func renderedMarkdown(for item: ReviewItem) -> String? {
+        ReviewItemMarkdownLoader.bodyMarkdown(for: item)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfBlank
     }
 }
 
