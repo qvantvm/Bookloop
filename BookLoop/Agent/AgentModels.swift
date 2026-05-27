@@ -1,22 +1,95 @@
 import Foundation
 
+enum AgentTaskCategory: String, CaseIterable {
+    case reviewsAndContent
+    case assetsAndLinks
+    case explore
+
+    var sectionTitle: String {
+        switch self {
+        case .reviewsAndContent: return "Reviews & content"
+        case .assetsAndLinks: return "Assets & links"
+        case .explore: return "Explore"
+        }
+    }
+}
+
 enum AgentTaskType: String, Codable, CaseIterable, Identifiable {
     case summarizeProject
     case applyReviewFeedback
     case improveCurrentChapter
-    case fixBuildErrors
+    case fixBrokenLinks
     case custom
 
     var id: String { rawValue }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        switch raw {
+        case "fixBuildErrors":
+            self = .fixBrokenLinks
+        default:
+            guard let value = AgentTaskType(rawValue: raw) else {
+                throw DecodingError.dataCorruptedError(
+                    in: container,
+                    debugDescription: "Unknown AgentTaskType: \(raw)"
+                )
+            }
+            self = value
+        }
+    }
 
     var displayName: String {
         switch self {
         case .summarizeProject: return "Summarize Project"
         case .applyReviewFeedback: return "Apply Review Feedback"
         case .improveCurrentChapter: return "Improve Current Chapter"
-        case .fixBuildErrors: return "Fix Build Errors"
+        case .fixBrokenLinks: return "Fix Broken Links"
         case .custom: return "Custom Task"
         }
+    }
+
+    var category: AgentTaskCategory? {
+        switch self {
+        case .applyReviewFeedback, .improveCurrentChapter: return .reviewsAndContent
+        case .fixBrokenLinks: return .assetsAndLinks
+        case .summarizeProject: return .explore
+        case .custom: return nil
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .summarizeProject: return "doc.text.magnifyingglass"
+        case .applyReviewFeedback: return "text.bubble"
+        case .improveCurrentChapter: return "text.page"
+        case .fixBrokenLinks: return "link.badge.plus"
+        case .custom: return "square.and.pencil"
+        }
+    }
+
+    var taskDescription: String {
+        switch self {
+        case .summarizeProject:
+            return "Scan chapters, reviews, and config to produce a project summary."
+        case .applyReviewFeedback:
+            return "Read open review items and propose chapter edits as a patch."
+        case .improveCurrentChapter:
+            return "Improve the chapter open in Reading mode using the current chapter ID."
+        case .fixBrokenLinks:
+            return "Find broken figure paths, missing local assets, and bad external asset URLs, then propose fixes."
+        case .custom:
+            return "Run with your own instruction using the agent tools."
+        }
+    }
+
+    static var presetTasks: [AgentTaskType] {
+        allCases.filter { $0 != .custom }
+    }
+
+    static func tasks(in category: AgentTaskCategory) -> [AgentTaskType] {
+        presetTasks.filter { $0.category == category }
     }
 }
 
@@ -121,11 +194,14 @@ enum AgentPromptBuilder {
             2. Read the chapter file and any open read_review_items targeting this chapter.
             3. Stage concrete improvements with apply_patch.
             """)
-        case .fixBuildErrors:
+        case .fixBrokenLinks:
             lines.append("""
             Instructions:
-            1. Run run_build and inspect failures.
-            2. Read affected files and stage fixes with apply_patch.
+            1. Call scan_broken_links to list missing figure files, broken local asset paths, stale figures, and external asset URLs that need verification.
+            2. For external HTTPS asset links, call fetch_url to confirm they still work before changing paths.
+            3. Read affected markdown files and use list_files or grep to locate the correct asset paths under docs/ and docs/assets/.
+            4. Stage path fixes with apply_patch. Prefer correcting references to existing files over inventing new assets.
+            5. If an asset is missing but a figure source exists under figures/, note it as an unresolved issue rather than guessing output paths.
             """)
         default:
             break
@@ -193,6 +269,7 @@ enum AgentToolRegistry {
                 "old_text": prop("string", "Exact text to replace"),
                 "new_text": prop("string", "Replacement text")
             ], required: ["path", "old_text", "new_text"]),
+            tool(name: "scan_broken_links", description: "Scan chapter markdown for missing figure files, broken local asset links, stale figures, and external asset URLs.", properties: [:], required: []),
             tool(name: "run_build", description: "Run the configured validation/build command.", properties: [:], required: []),
             tool(name: "get_git_status", description: "Return git status --porcelain.", properties: [:], required: []),
             tool(name: "get_git_diff", description: "Return git diff for the project.", properties: [:], required: [])
@@ -244,6 +321,8 @@ enum AgentToolRegistry {
                   let oldText = args["old_text"] as? String,
                   let newText = args["new_text"] as? String else { throw AgentToolError.unknownTool(name) }
             return encode(try AgentTools.applyPatch(path: path, oldText: oldText, newText: newText, context: &context))
+        case "scan_broken_links":
+            return encode(try AgentTools.scanBrokenLinks(context: context))
         case "run_build":
             return encode(try AgentTools.runBuild(context: context))
         case "get_git_status":

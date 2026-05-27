@@ -135,6 +135,9 @@ struct AgentPanelView: View {
     @Binding var workspaceMode: WorkspaceMode
     @Binding var showingAppSettings: Bool
 
+    @State private var agentSetupExpanded = false
+    @State private var proposalPreviewExpanded = false
+
     private var canRunPresetTasks: Bool {
         !model.isRunning && projectStore.project != nil && settingsStore.hasAPIKey
     }
@@ -152,36 +155,29 @@ struct AgentPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            controls
+            statusHeader
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    if projectStore.configMissing {
-                        missingConfigBanner
-                    } else if let config = projectStore.project?.config {
-                        writePermissionsBanner(config)
-                    }
+                    workflowHint
+                    taskCatalogSection
+                    customTaskSection
+                    agentSetupSection
+
                     if let error = model.errorMessage ?? projectStore.lastError {
-                        Text(error).font(.caption).foregroundStyle(.red)
+                        agentMessageCard(error, style: .error)
                     }
                     if let info = model.infoMessage {
-                        Text(info).font(.caption).foregroundStyle(.secondary)
+                        agentMessageCard(info, style: .info)
                     }
+
                     if !model.liveToolLog.isEmpty {
-                        toolLogSection
+                        activitySection
                     }
                     if let result = model.result {
-                        resultSection(result)
-                    } else if !model.isRunning {
-                        Text("Run an agent task to stage edits and write a patch proposal to bookloop/patches/. Book files stay unchanged until you apply the patch in Tools → Patches.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text("Model: \(settingsStore.openAIModel) via OpenAI. The agent can fetch public HTTPS URLs (size limit in App Settings) and read your book repo via local tools. One agent run writes one patch file with multiple diff blocks; long reviews may need higher max iterations in app settings or several agent runs.")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                        Text("Limitations: exact-text apply_patch (single match), grep/search over text files, simple build command parsing, HTTPS-only fetch (no auth/cookies).")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
+                        resultCards(result)
+                    } else if !model.isRunning && model.liveToolLog.isEmpty {
+                        emptyStateCard
                     }
                 }
                 .padding()
@@ -193,22 +189,30 @@ struct AgentPanelView: View {
         }
     }
 
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                ForEach(AgentTaskType.allCases.filter { $0 != .custom }) { taskType in
-                    Button(taskType.displayName) {
-                        Task {
-                            await model.run(
-                                type: taskType,
-                                projectStore: projectStore,
-                                patchStore: patchStore,
-                                settingsStore: settingsStore
-                            )
-                        }
+    // MARK: - Status header
+
+    private var statusHeader: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if let project = projectStore.project {
+                        Text(project.book.displayName)
+                            .font(.headline)
+                        Text(project.projectMap.compactSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("No book selected")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
                     }
-                    .disabled(!canRunPresetTasks)
+                    Text("Model: \(settingsStore.openAIModel) · Max iterations: \(settingsStore.maxAgentIterations)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
+
+                Spacer()
+
                 if model.isRunning {
                     Button("Cancel", role: .destructive) { model.cancel() }
                 }
@@ -225,16 +229,65 @@ struct AgentPanelView: View {
                     }
                 }
             }
+        }
+        .padding(10)
+    }
 
-            TextField("Custom task instruction (required)", text: $model.customInstruction, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(1...3)
+    private var workflowHint: some View {
+        Text("Agent stages edits only → review in Patches → apply → commit.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
 
-            if canRunPresetTasks && !canRunCustomTask {
-                Text("Enter a custom task instruction above.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    // MARK: - Task catalog
+
+    private var taskCatalogSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(AgentTaskCategory.allCases, id: \.self) { category in
+                let tasks = AgentTaskType.tasks(in: category)
+                if !tasks.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(category.sectionTitle)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(tasks) { taskType in
+                            AgentTaskCardView(
+                                taskType: taskType,
+                                isRunning: model.isRunning,
+                                canRun: canRunPresetTasks,
+                                onRun: {
+                                    Task {
+                                        await model.run(
+                                            type: taskType,
+                                            projectStore: projectStore,
+                                            patchStore: patchStore,
+                                            settingsStore: settingsStore
+                                        )
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
             }
+        }
+    }
+
+    // MARK: - Custom task
+
+    private var customTaskSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Custom task")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            TextField(
+                "Describe what the agent should do, e.g. “Fix typos in chapter 3” or “Add a glossary entry for LLM”",
+                text: $model.customInstruction,
+                axis: .vertical
+            )
+            .textFieldStyle(.roundedBorder)
+            .lineLimit(2...5)
 
             HStack {
                 Button("Run Custom Task") {
@@ -249,23 +302,62 @@ struct AgentPanelView: View {
                 }
                 .disabled(!canRunCustomTask)
 
-                if model.result?.patchProposalPath != nil {
-                    Button("Delete Proposal Patch", role: .destructive) {
-                        model.deleteProposal(projectStore: projectStore, patchStore: patchStore)
-                    }
-                }
-
-                Spacer()
-
-                if let project = projectStore.project {
-                    Text(project.projectMap.compactSummary)
+                if canRunPresetTasks && !canRunCustomTask {
+                    Text("Enter an instruction above.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
         }
-        .padding(10)
+        .padding(12)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
+
+    // MARK: - Agent setup
+
+    private var agentSetupSection: some View {
+        DisclosureGroup("Agent setup", isExpanded: $agentSetupExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                if projectStore.configMissing {
+                    missingConfigBanner
+                } else if let config = projectStore.project?.config {
+                    writePermissionsBanner(config)
+                } else {
+                    Text("Select a book to view agent configuration.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.top, 6)
+        }
+        .font(.subheadline.weight(.semibold))
+    }
+
+    // MARK: - Empty state
+
+    private var emptyStateCard: some View {
+        agentCard(title: "Get started", systemImage: "sparkles") {
+            VStack(alignment: .leading, spacing: 8) {
+                stepRow(number: 1, text: "Pick a preset task or enter a custom instruction.")
+                stepRow(number: 2, text: "The agent inspects your book and writes a patch proposal.")
+                stepRow(number: 3, text: "Open Tools → Patches to review, apply, and commit changes.")
+            }
+        }
+    }
+
+    private func stepRow(number: Int, text: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("\(number).")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 16, alignment: .trailing)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - Banners
 
     private var missingConfigBanner: some View {
         HStack {
@@ -298,67 +390,252 @@ struct AgentPanelView: View {
         .background(Color.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private var toolLogSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Tool Log").font(.headline)
-            ForEach(model.liveToolLog) { entry in
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: entry.succeeded ? "checkmark.circle" : "xmark.circle")
-                        .foregroundStyle(entry.succeeded ? .green : .red)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.toolName).font(.caption.weight(.semibold))
-                        Text(entry.resultSummary).font(.caption).foregroundStyle(.secondary).lineLimit(3)
-                    }
+    // MARK: - Activity
+
+    private var activitySection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text("Activity")
+                    .font(.subheadline.weight(.semibold))
+                if model.isRunning {
+                    ProgressView()
+                        .controlSize(.small)
                 }
+            }
+
+            ForEach(model.liveToolLog) { entry in
+                AgentToolLogCardView(entry: entry)
             }
         }
     }
 
-    private func resultSection(_ result: AgentResult) -> some View {
+    // MARK: - Results
+
+    private func resultCards(_ result: AgentResult) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Summary").font(.headline)
-            Text(result.summary).textSelection(.enabled)
+            agentCard(title: "Summary", systemImage: "text.alignleft") {
+                HTMLStringView(html: MarkdownHTMLRenderer().renderDocument(markdown: result.summary, title: "Agent Summary"))
+                    .frame(minHeight: 60, maxHeight: 200)
+            }
 
             if !result.changedFiles.isEmpty {
-                Text("Staged Files").font(.headline)
-                ForEach(result.changedFiles, id: \.self) { path in
-                    Text(path).font(.caption.monospaced())
+                agentCard(title: "Staged files", systemImage: "doc.on.doc") {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(result.changedFiles, id: \.self) { path in
+                            HStack(alignment: .top, spacing: 6) {
+                                Text("•")
+                                    .foregroundStyle(.secondary)
+                                Text(path)
+                                    .font(.caption.monospaced())
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let buildResult = result.buildResult {
+                agentCard(
+                    title: "Build result",
+                    systemImage: buildResult.succeeded ? "checkmark.circle" : "xmark.circle",
+                    iconColor: buildResult.succeeded ? .green : .red
+                ) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(buildResult.command)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                            Spacer()
+                            Text(buildResult.succeeded ? "Succeeded" : "Failed")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(buildResult.succeeded ? .green : .red)
+                        }
+                        if buildResult.timedOut {
+                            Text("Build timed out.")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        } else {
+                            Text("Exit code: \(buildResult.exitCode)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        if !buildResult.combinedOutput.isEmpty {
+                            ScrollView {
+                                Text(buildResult.combinedOutput)
+                                    .font(.system(.caption2, design: .monospaced))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .frame(maxHeight: 160)
+                        }
+                    }
                 }
             }
 
             if let patchPath = result.patchProposalPath {
-                Text("Patch Proposal").font(.headline)
-                Text(patchPath).font(.caption.monospaced()).textSelection(.enabled)
-                HStack {
-                    Button("Open Patches Tab") {
-                        workspaceMode = .tool(.patches)
-                    }
-                    Button("Reveal in Finder") {
-                        if let absolute = result.patchProposalAbsolutePath {
-                            FileHelpers.openInFinder(path: absolute)
+                agentCard(title: "Patch proposal", systemImage: "doc.badge.plus") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(patchPath)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                        HStack {
+                            Button("Open Patches Tab") {
+                                workspaceMode = .tool(.patches)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Button("Reveal in Finder") {
+                                if let absolute = result.patchProposalAbsolutePath {
+                                    FileHelpers.openInFinder(path: absolute)
+                                }
+                            }
+                            Button("Copy Path") {
+                                FileHelpers.copyToPasteboard(patchPath)
+                            }
                         }
                     }
                 }
             }
 
             if let proposalPatch = result.proposalPatch {
-                Text("Proposal Preview").font(.headline)
-                ScrollView {
-                    Text(proposalPatch)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                DisclosureGroup("Proposal preview", isExpanded: $proposalPreviewExpanded) {
+                    ScrollView {
+                        Text(proposalPatch)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 220)
+                    .padding(.top, 6)
                 }
-                .frame(maxHeight: 220)
+                .font(.subheadline.weight(.semibold))
+                .padding(12)
+                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
 
-            Button("Copy Summary") {
-                FileHelpers.copyToPasteboard(result.summary)
+            HStack(spacing: 12) {
+                Button("Copy Summary") {
+                    FileHelpers.copyToPasteboard(result.summary)
+                }
+                Button("Open Session Folder") {
+                    FileHelpers.openInFinder(path: result.sessionDirectory.path)
+                }
+                if result.patchProposalPath != nil {
+                    Button("Delete Proposal Patch", role: .destructive) {
+                        model.deleteProposal(projectStore: projectStore, patchStore: patchStore)
+                    }
+                }
+            }
+            .font(.caption)
+        }
+    }
+
+    // MARK: - Shared card chrome
+
+    private enum AgentMessageStyle {
+        case error, info
+    }
+
+    private func agentMessageCard(_ message: String, style: AgentMessageStyle) -> some View {
+        Text(message)
+            .font(.caption)
+            .foregroundStyle(style == .error ? .red : .secondary)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                (style == .error ? Color.red : Color.secondary).opacity(0.08),
+                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+            )
+    }
+
+    private func agentCard<Content: View>(
+        title: String,
+        systemImage: String,
+        iconColor: Color = .accentColor,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .foregroundStyle(iconColor)
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+            }
+            content()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+// MARK: - Task card
+
+struct AgentTaskCardView: View {
+    let taskType: AgentTaskType
+    let isRunning: Bool
+    let canRun: Bool
+    let onRun: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: taskType.systemImage)
+                .font(.title3)
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(taskType.displayName)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+
+                Text(taskType.taskDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
             }
 
-            Button("Open Session Folder") {
-                FileHelpers.openInFinder(path: result.sessionDirectory.path)
+            Spacer(minLength: 8)
+
+            Button("Run") {
+                onRun()
+            }
+            .disabled(!canRun || isRunning)
+            .buttonStyle(.bordered)
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+// MARK: - Tool log card
+
+struct AgentToolLogCardView: View {
+    let entry: AgentToolLogEntry
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: entry.succeeded ? "checkmark.circle.fill" : "xmark.circle.fill")
+                .foregroundStyle(entry.succeeded ? .green : .red)
+                .font(.body)
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(entry.toolName)
+                        .font(.caption.weight(.semibold))
+                    Spacer()
+                    Text(DateFormatting.display.string(from: entry.timestamp))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                Text(entry.resultSummary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+                    .multilineTextAlignment(.leading)
             }
         }
+        .padding(12)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }

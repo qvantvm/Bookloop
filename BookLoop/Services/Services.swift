@@ -1647,6 +1647,241 @@ final class FigureScanner {
     }
 }
 
+struct BrokenLinkIssue: Codable, Equatable {
+    enum Kind: String, Codable {
+        case missingFigure
+        case staleFigure
+        case brokenLocalLink
+        case externalAssetLink
+    }
+
+    var kind: Kind
+    var markdownFile: String
+    var line: Int
+    var reference: String
+    var resolvedPath: String?
+    var message: String
+}
+
+struct BrokenLinkScanResult: Codable, Equatable {
+    var issueCount: Int
+    var issues: [BrokenLinkIssue]
+    var summary: String
+}
+
+final class BrokenLinkScanner {
+    private static let assetExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "svg", "pdf", "webp", "mp4", "mov", "webm"
+    ]
+
+    private static let markdownLinkRegex = try? NSRegularExpression(
+        pattern: #"(!?)\[([^\]]*)\]\(([^)]+)\)"#
+    )
+
+    func scan(book: BookConfig) throws -> BrokenLinkScanResult {
+        var issues: [BrokenLinkIssue] = []
+        var seen = Set<String>()
+
+        let figures = try FigureScanner().scan(book: book)
+        for figure in figures {
+            switch figure.status {
+            case .missingOutput:
+                appendFigureIssues(
+                    figure: figure,
+                    kind: .missingFigure,
+                    message: "Referenced figure file is missing on disk.",
+                    issues: &issues,
+                    seen: &seen,
+                    book: book
+                )
+            case .stale:
+                appendFigureIssues(
+                    figure: figure,
+                    kind: .staleFigure,
+                    message: "Figure output is older than its source script.",
+                    issues: &issues,
+                    seen: &seen,
+                    book: book
+                )
+            default:
+                break
+            }
+        }
+
+        issues.append(contentsOf: scanMarkdownLinks(book: book, seen: &seen))
+        let sorted = issues.sorted {
+            if $0.markdownFile != $1.markdownFile {
+                return $0.markdownFile.localizedStandardCompare($1.markdownFile) == .orderedAscending
+            }
+            if $0.line != $1.line {
+                return $0.line < $1.line
+            }
+            return $0.reference.localizedStandardCompare($1.reference) == .orderedAscending
+        }
+
+        let summary: String
+        if sorted.isEmpty {
+            summary = "No broken figure paths or local asset links found."
+        } else {
+            let missing = sorted.filter { $0.kind == .missingFigure }.count
+            let broken = sorted.filter { $0.kind == .brokenLocalLink }.count
+            let external = sorted.filter { $0.kind == .externalAssetLink }.count
+            let stale = sorted.filter { $0.kind == .staleFigure }.count
+            summary = "Found \(sorted.count) issue(s): \(missing) missing figure(s), \(broken) broken local link(s), \(external) external asset URL(s), \(stale) stale figure(s)."
+        }
+
+        return BrokenLinkScanResult(issueCount: sorted.count, issues: sorted, summary: summary)
+    }
+
+    private func appendFigureIssues(
+        figure: FigureItem,
+        kind: BrokenLinkIssue.Kind,
+        message: String,
+        issues: inout [BrokenLinkIssue],
+        seen: inout Set<String>,
+        book: BookConfig
+    ) {
+        let resolved = relativePath(for: figure.outputPath, book: book)
+        let references = figure.referencedFrom.isEmpty ? [""] : figure.referencedFrom
+        for markdownPath in references {
+            let markdownFile = markdownPath.isEmpty ? "unknown" : relativePath(for: markdownPath, book: book)
+            let key = "\(kind.rawValue)|\(markdownFile)|\(resolved)"
+            guard seen.insert(key).inserted else { continue }
+            issues.append(BrokenLinkIssue(
+                kind: kind,
+                markdownFile: markdownFile,
+                line: 0,
+                reference: resolved,
+                resolvedPath: resolved,
+                message: message
+            ))
+        }
+    }
+
+    private func scanMarkdownLinks(book: BookConfig, seen: inout Set<String>) -> [BrokenLinkIssue] {
+        let docsPath = book.docsPath ?? book.suggestedPath("docs")
+        let docsURL = URL(fileURLWithPath: docsPath, isDirectory: true)
+        guard let enumerator = FileManager.default.enumerator(at: docsURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]),
+              let regex = Self.markdownLinkRegex else { return [] }
+
+        var issues: [BrokenLinkIssue] = []
+        for case let markdownURL as URL in enumerator where markdownURL.pathExtension.lowercased() == "md" {
+            guard let content = try? String(contentsOf: markdownURL, encoding: .utf8) else { continue }
+            let markdownFile = relativePath(for: markdownURL.path, book: book)
+            let ns = content as NSString
+            let matches = regex.matches(in: content, range: NSRange(location: 0, length: ns.length))
+
+            for match in matches where match.numberOfRanges >= 4 {
+                let isImage = !ns.substring(with: match.range(at: 1)).isEmpty
+                let rawTarget = ns.substring(with: match.range(at: 3))
+                let target = cleanedTarget(rawTarget)
+                guard !target.isEmpty else { continue }
+
+                let line = lineNumber(in: content, range: match.range)
+                if let issue = issue(
+                    for: target,
+                    isImage: isImage,
+                    markdownFile: markdownFile,
+                    markdownPath: markdownURL.path,
+                    line: line,
+                    book: book
+                ) {
+                    let key = "\(issue.kind.rawValue)|\(issue.markdownFile)|\(issue.line)|\(issue.reference)"
+                    if seen.insert(key).inserted {
+                        issues.append(issue)
+                    }
+                }
+            }
+        }
+        return issues
+    }
+
+    private func issue(
+        for target: String,
+        isImage: Bool,
+        markdownFile: String,
+        markdownPath: String,
+        line: Int,
+        book: BookConfig
+    ) -> BrokenLinkIssue? {
+        let lowered = target.lowercased()
+        if lowered.hasPrefix("mailto:") { return nil }
+        if target.hasPrefix("#") { return nil }
+
+        let pathPart = target.split(separator: "#", maxSplits: 1).first.map(String.init) ?? target
+        if pathPart.isEmpty { return nil }
+
+        if lowered.hasPrefix("http://") || lowered.hasPrefix("https://") {
+            guard isImage || isAssetReference(pathPart) else { return nil }
+            return BrokenLinkIssue(
+                kind: .externalAssetLink,
+                markdownFile: markdownFile,
+                line: line,
+                reference: target,
+                resolvedPath: nil,
+                message: "External asset URL — verify with fetch_url before changing."
+            )
+        }
+
+        let resolved = resolve(pathPart, fromMarkdown: markdownPath, book: book)
+        let resolvedRelative = relativePath(for: resolved, book: book)
+        guard !FileManager.default.fileExists(atPath: resolved) else { return nil }
+
+        let message = isImage
+            ? "Image reference points to a missing local file."
+            : "Markdown link points to a missing local file."
+        return BrokenLinkIssue(
+            kind: .brokenLocalLink,
+            markdownFile: markdownFile,
+            line: line,
+            reference: target,
+            resolvedPath: resolvedRelative,
+            message: message
+        )
+    }
+
+    private func cleanedTarget(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "<>\"'"))
+            .components(separatedBy: " ").first ?? ""
+    }
+
+    private func isAssetReference(_ value: String) -> Bool {
+        let ext = URL(string: value)?.pathExtension.lowercased()
+            ?? URL(fileURLWithPath: value).pathExtension.lowercased()
+        return Self.assetExtensions.contains(ext)
+    }
+
+    private func lineNumber(in content: String, range: NSRange) -> Int {
+        let prefix = (content as NSString).substring(to: range.location)
+        return prefix.components(separatedBy: "\n").count
+    }
+
+    private func resolve(_ reference: String, fromMarkdown markdownPath: String, book: BookConfig) -> String {
+        let cleaned = reference.trimmingCharacters(in: CharacterSet(charactersIn: "<>\"'"))
+        if cleaned.hasPrefix("/") {
+            return URL(fileURLWithPath: book.docsPath ?? book.suggestedPath("docs"), isDirectory: true)
+                .appendingPathComponent(String(cleaned.dropFirst()))
+                .standardizedFileURL
+                .path
+        }
+        return URL(fileURLWithPath: markdownPath)
+            .deletingLastPathComponent()
+            .appendingPathComponent(cleaned)
+            .standardizedFileURL
+            .path
+    }
+
+    private func relativePath(for absolutePath: String, book: BookConfig) -> String {
+        let root = URL(fileURLWithPath: book.projectRootPath, isDirectory: true).standardizedFileURL.path
+        let absolute = URL(fileURLWithPath: absolutePath).standardizedFileURL.path
+        if absolute.hasPrefix(root + "/") {
+            return String(absolute.dropFirst(root.count + 1))
+        }
+        return absolutePath
+    }
+}
+
 
 final class MarkdownHTMLRenderer {
     func renderDocument(markdown: String, title: String? = nil) -> String {

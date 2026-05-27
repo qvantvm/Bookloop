@@ -282,6 +282,12 @@ enum AgentTools {
         }
     }
 
+    static func scanBrokenLinks(context: AgentToolContext) throws -> BrokenLinkScanResult {
+        try context.project.withSecurityScoped {
+            try BrokenLinkScanner().scan(book: context.project.book)
+        }
+    }
+
     static func runBuild(context: AgentToolContext) throws -> BuildResult {
         let command = context.project.config.buildCommand.trimmingCharacters(in: .whitespacesAndNewlines)
         guard command == context.project.config.buildCommand else {
