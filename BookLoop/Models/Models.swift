@@ -559,6 +559,7 @@ struct RenderedPatchBlock: Identifiable, Equatable {
 enum WorkspaceTab: String, CaseIterable, Identifiable {
     case preview = "Preview"
     case agent = "Agent"
+    case search = "Search"
     case reviews = "Reviews"
     case figures = "Figures"
     case tasks = "Tasks"

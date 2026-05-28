@@ -14,6 +14,7 @@ struct ContentView: View {
     @StateObject private var previewModel = BookPreviewModel()
     @StateObject private var chatModel = ChatPanelModel()
     @StateObject private var agentPanelModel = AgentPanelModel()
+    @StateObject private var searchPanelModel = SearchPanelModel()
 
     @State private var workspaceMode: WorkspaceMode = .reading
     @State private var editingBook: BookConfig?
@@ -134,6 +135,7 @@ struct ContentView: View {
             .environmentObject(previewModel)
             .environmentObject(settingsStore)
             .environmentObject(agentPanelModel)
+            .environmentObject(searchPanelModel)
             .frame(minWidth: 500)
         }
     }
@@ -227,6 +229,7 @@ struct ToolWorkspaceView: View {
     @EnvironmentObject private var previewModel: BookPreviewModel
     @EnvironmentObject private var settingsStore: AppSettingsStore
     @EnvironmentObject private var agentPanelModel: AgentPanelModel
+    @EnvironmentObject private var searchPanelModel: SearchPanelModel
 
     @Binding var workspaceMode: WorkspaceMode
     let tool: WorkspaceTab
@@ -294,6 +297,15 @@ struct ToolWorkspaceView: View {
             )
                 .environmentObject(library)
                 .environmentObject(patchStore)
+        case .search:
+            SearchPanelView(
+                projectStore: bookProjectStore,
+                settingsStore: settingsStore,
+                model: searchPanelModel,
+                previewModel: previewModel,
+                workspaceMode: $workspaceMode,
+                showingAppSettings: $showingAppSettings
+            )
         case .reviews:
             ReviewBrowserView(book: book)
                 .environmentObject(reviewStore)

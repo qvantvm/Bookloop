@@ -83,6 +83,7 @@ extension WorkspaceTab {
         switch self {
         case .preview: return "book.fill"
         case .agent: return "cpu"
+        case .search: return "magnifyingglass"
         case .reviews: return "quote.bubble"
         case .figures: return "photo"
         case .tasks: return "checklist"
