@@ -31,6 +31,7 @@ struct ContentView: View {
                 workspaceMode: $workspaceMode,
                 showingAppSettings: $showingAppSettings
             )
+            .environmentObject(patchStore)
             libraryColumn
             centerColumn
             chatColumn
@@ -65,6 +66,11 @@ struct ContentView: View {
         .onAppear {
             settingsStore.load()
             refreshProjectState()
+            SystemBadgeNotifier.requestAuthorizationIfNeeded()
+            SystemBadgeNotifier.updatePendingPatchBadge(count: patchStore.pendingAttentionCount)
+        }
+        .onChange(of: patchStore.proposals) { _, proposals in
+            SystemBadgeNotifier.updatePendingPatchBadge(count: proposals.count)
         }
         .onChange(of: library.selectedBookID) {
             workspaceMode = .reading

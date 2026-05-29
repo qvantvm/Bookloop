@@ -78,8 +78,8 @@ struct BookPreviewView: View {
                 goBackToken: model.goBackToken,
                 goForwardToken: model.goForwardToken,
                 onPageLoaded: { webView in
-                    model.handlePageLoaded(webView)
-                    Task {
+                    Task { @MainActor in
+                        model.handlePageLoaded(webView)
                         await refreshPageContext(from: webView)
                         await refreshAnnotations()
                     }
@@ -314,6 +314,7 @@ struct BookPreviewView: View {
             ?? projectStore.chapters.first { $0.id == model.detectedChapterID }
     }
 
+    @MainActor
     private func refreshPageContext(from webView: WKWebView) async {
         let chapterID = await WebView.detectChapterID(in: webView)
         let pageTitle = await WebView.detectPageTitle(in: webView)

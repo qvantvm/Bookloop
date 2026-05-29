@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct WorkspaceToolbarView: View {
+    @EnvironmentObject private var patchStore: PatchStore
+
     @Binding var workspaceMode: WorkspaceMode
     @Binding var showingAppSettings: Bool
 
@@ -22,7 +24,8 @@ struct WorkspaceToolbarView: View {
                 toolbarButton(
                     icon: tab.toolbarIcon,
                     isSelected: isToolSelected(tab),
-                    help: tab.rawValue
+                    help: tabHelp(for: tab),
+                    badgeCount: tab == .patches ? patchStore.pendingAttentionCount : 0
                 ) {
                     workspaceMode = .tool(tab)
                 }
@@ -46,21 +49,41 @@ struct WorkspaceToolbarView: View {
         }
     }
 
+    private func tabHelp(for tab: WorkspaceTab) -> String {
+        if tab == .patches, patchStore.pendingAttentionCount > 0 {
+            return "\(tab.rawValue) (\(patchStore.pendingAttentionCount) pending)"
+        }
+        return tab.rawValue
+    }
+
     private func toolbarButton(
         icon: String,
         isSelected: Bool,
         help: String,
+        badgeCount: Int = 0,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(isSelected ? Color.accentColor : Color.primary.opacity(0.75))
-                .frame(width: 36, height: 36)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
-                )
+            ZStack(alignment: .topTrailing) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .medium))
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary.opacity(0.75))
+                    .frame(width: 36, height: 36)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(isSelected ? Color.accentColor.opacity(0.18) : Color.clear)
+                    )
+
+                if badgeCount > 0 {
+                    Text(badgeCount > 99 ? "99+" : "\(badgeCount)")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, badgeCount > 9 ? 4 : 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.red))
+                        .offset(x: 8, y: -2)
+                }
+            }
         }
         .buttonStyle(.plain)
         .help(help)

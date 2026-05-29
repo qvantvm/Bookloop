@@ -236,7 +236,7 @@ final class ReviewStore: ObservableObject {
     private func scheduleDeferredRepairIfNeeded(book: BookConfig) {
         deferredRepairTask?.cancel()
         guard artifactsHealth.needsRepair else { return }
-        deferredRepairTask = Task {
+        deferredRepairTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard !Task.isCancelled else { return }
             await repairArtifactsIfNeeded(book: book, force: false)
@@ -421,6 +421,10 @@ final class PatchStore: ObservableObject {
     var selectedProposal: PatchProposal? {
         guard let selectedProposalID else { return proposals.first }
         return proposals.first { $0.id == selectedProposalID }
+    }
+
+    var pendingAttentionCount: Int {
+        proposals.count
     }
 
     func refresh(book: BookConfig?) {

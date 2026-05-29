@@ -61,16 +61,24 @@ final class AgentPanelModel: ObservableObject {
                 allowReviewEdits: settingsStore.allowAgentReviewEdits,
                 isCancelled: { self.shouldCancel },
                 onToolLogUpdate: { [weak self] log in
-                    self?.liveToolLog = log
+                    Task { @MainActor in
+                        self?.liveToolLog = log
+                    }
                 }
             )
             result = agentResult
             liveToolLog = agentResult.toolLog
             projectStore.refresh(book: project.book, currentChapterID: project.currentChapterID)
             patchStore.refresh(book: project.book)
+            SystemBadgeNotifier.updatePendingPatchBadge(count: patchStore.pendingAttentionCount)
             if (try? projectStore.ensureGitignore(for: project.book)) == true {
                 infoMessage = "Added BookLoop ignores to .gitignore (session logs will not appear in git)."
             }
+            SystemBadgeNotifier.notifyAgentTaskCompleted(
+                bookName: project.book.displayName,
+                summary: agentResult.summary,
+                createdPatch: agentResult.patchProposalPath != nil
+            )
         } catch is CancellationError {
             errorMessage = "Agent run cancelled."
         } catch {

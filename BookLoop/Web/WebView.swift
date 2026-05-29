@@ -19,22 +19,22 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageH
               let body = message.body as? [String: Any],
               body["type"] as? String == "click",
               let id = body["id"] as? String else { return }
-        parent.onAnnotationClicked?(id)
+        let callback = parent.onAnnotationClicked
+        Task { @MainActor in
+            callback?(id)
+        }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        updateNavigationState(webView)
-        parent.onPageLoaded?(webView)
+        deliverNavigationUpdate(for: webView)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        updateNavigationState(webView)
-        parent.onPageLoaded?(webView)
+        deliverNavigationUpdate(for: webView)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        updateNavigationState(webView)
-        parent.onPageLoaded?(webView)
+        deliverNavigationUpdate(for: webView)
     }
 
     func webView(
@@ -48,7 +48,10 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageH
         }
 
         if url.scheme == "bookloop", url.host == "chapter" {
-            parent.onInternalChapterLink?(url)
+            let callback = parent.onInternalChapterLink
+            Task { @MainActor in
+                callback?(url)
+            }
             decisionHandler(.cancel)
             return
         }
@@ -62,7 +65,10 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageH
         }
 
         if url.isFileURL, url.pathExtension.lowercased() == "md" {
-            parent.onInternalChapterLink?(url)
+            let callback = parent.onInternalChapterLink
+            Task { @MainActor in
+                callback?(url)
+            }
             decisionHandler(.cancel)
             return
         }
@@ -70,10 +76,17 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageH
         decisionHandler(.allow)
     }
 
-    private func updateNavigationState(_ webView: WKWebView) {
-        parent.currentURL = webView.url
-        parent.canGoBack = webView.canGoBack
-        parent.canGoForward = webView.canGoForward
+    private func deliverNavigationUpdate(for webView: WKWebView) {
+        let url = webView.url
+        let canGoBack = webView.canGoBack
+        let canGoForward = webView.canGoForward
+        let onPageLoaded = parent.onPageLoaded
+        Task { @MainActor in
+            parent.currentURL = url
+            parent.canGoBack = canGoBack
+            parent.canGoForward = canGoForward
+            onPageLoaded?(webView)
+        }
     }
 }
 
@@ -378,7 +391,7 @@ final class BookPreviewModel: ObservableObject {
         autoRefreshEnabled = enabled
         autoRefreshTask?.cancel()
         guard enabled else { return }
-        autoRefreshTask = Task { [weak self] in
+        autoRefreshTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
                 await self?.pollForChapterChanges()
