@@ -1248,8 +1248,8 @@ struct PatchReviewView: View {
     @State private var workflowPhase: PatchWorkflowPhase = .reviewing
     @State private var pendingCommitContext: PendingPatchCommitContext?
     @State private var patchApplicabilityStatus: PatchApplicabilityStatus = .unknown
-    @State private var gitWorkingTree = "Loading git status…"
-    @State private var latestCommit = ""
+    @State private var gitHistory = GitHistorySnapshot.loading
+    @State private var gitChanges = GitChangesSnapshot.loading
     @State private var activityLog: [PatchActivityEntry] = []
     @State private var statusMessage: String?
     @State private var showAdvanced = false
@@ -1288,8 +1288,8 @@ struct PatchReviewView: View {
                         blocks: renderedBlocks,
                         decisions: $blockDecisions,
                         workflowPhase: workflowPhase,
-                        gitWorkingTree: gitWorkingTree,
-                        latestCommit: latestCommit,
+                        gitHistory: gitHistory,
+                        gitChanges: gitChanges,
                         activityLog: activityLog,
                         patchApplicabilityStatus: patchApplicabilityStatus,
                         isRunningPatchCommand: isRunningPatchCommand,
@@ -1312,6 +1312,9 @@ struct PatchReviewView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: activeBook.projectRootPath) {
+            await refreshGitPanel()
+        }
         .onChange(of: patchStore.selectedProposalID) {
             resetForSelectedPatch()
         }
@@ -1359,10 +1362,7 @@ struct PatchReviewView: View {
             commitMessage = defaultCommitMessage(for: patchStore.selectedProposal)
         }
         patchApplicabilityStatus = .unknown
-        Task {
-            await checkSelectedPatchApplicability()
-            await refreshGitPanel()
-        }
+        Task { await checkSelectedPatchApplicability() }
     }
 
     private func defaultCommitMessage(for proposal: PatchProposal?) -> String {
@@ -1399,15 +1399,12 @@ struct PatchReviewView: View {
         }
     }
 
+    @MainActor
     private func refreshGitPanel() async {
-        do {
-            let status = try await PatchApplier().gitStatus(book: activeBook)
-            gitWorkingTree = status.combinedOutput.nilIfBlank ?? "Working tree clean."
-            let log = try await PatchApplier().gitLog(book: activeBook, limit: 1)
-            latestCommit = log.combinedOutput.nilIfBlank ?? ""
-        } catch {
-            gitWorkingTree = error.localizedDescription
-        }
+        async let history = PatchApplier().gitHistory(book: activeBook)
+        async let changes = PatchApplier().gitChanges(book: activeBook)
+        gitHistory = await history
+        gitChanges = await changes
 
         if workflowPhase == .reviewing, case .alreadyApplied = patchApplicabilityStatus {
             workflowPhase = .alreadyApplied
@@ -1797,7 +1794,7 @@ struct PatchReviewView: View {
                 } catch {
                     appendActivity("Review resolve failed: \(error.localizedDescription)")
                 }
-                appendActivity("git status: \(gitWorkingTree == "Working tree clean." ? "clean" : "updated")")
+                appendActivity("Commit history refreshed")
                 pendingCommitContext = nil
             } else {
                 statusMessage = "Commit failed (exit \(result.exitCode)).\n\(result.combinedOutput)"

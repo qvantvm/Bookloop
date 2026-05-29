@@ -2135,6 +2135,247 @@ final class MarkdownHTMLRenderer {
     }
 }
 
+final class TaskBriefMarkdownRenderer {
+    func renderDocument(markdown: String, title: String? = nil) -> String {
+        let body = renderBody(prepareMarkdown(markdown))
+        let safeTitle = escapeHTML(title ?? "Task Brief")
+        return """
+        <!doctype html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="color-scheme" content="light dark">
+          <style>
+            :root {
+              color-scheme: light dark;
+              --accent: #007aff;
+              --surface: rgba(127, 127, 127, 0.08);
+              --surface-strong: rgba(127, 127, 127, 0.12);
+              --border: rgba(127, 127, 127, 0.22);
+              --muted: #636366;
+            }
+            body {
+              font: -apple-system-body;
+              margin: 0;
+              padding: 16px 18px 24px;
+              line-height: 1.55;
+              color: CanvasText;
+              background: Canvas;
+            }
+            h1, h2, h3, h4 { margin: 0.85em 0 0.4em; line-height: 1.25; }
+            h2 {
+              margin-top: 1.35em;
+              padding: 8px 12px;
+              background: var(--surface);
+              border: 1px solid var(--border);
+              border-radius: 8px;
+              font-size: 0.78rem;
+              font-weight: 700;
+              letter-spacing: 0.05em;
+              text-transform: uppercase;
+              color: var(--muted);
+            }
+            h2:first-of-type { margin-top: 0; }
+            h3 {
+              margin-top: 1.1em;
+              padding: 8px 10px 8px 12px;
+              border-left: 3px solid var(--accent);
+              background: var(--surface-strong);
+              border-radius: 0 8px 8px 0;
+              font-size: 0.95rem;
+            }
+            p { margin: 0.5em 0; }
+            p.meta {
+              font-size: 0.82rem;
+              color: var(--muted);
+              margin: 0 0 1em;
+            }
+            blockquote {
+              border-left: 3px solid var(--muted);
+              color: var(--muted);
+              margin: 0.65em 0;
+              padding: 0.15em 0 0.15em 0.85em;
+            }
+            pre {
+              background: var(--surface);
+              border: 1px solid var(--border);
+              border-radius: 8px;
+              overflow-x: auto;
+              padding: 10px 12px;
+            }
+            code {
+              font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+              font-size: 0.92em;
+            }
+            p code, li code {
+              background: var(--surface);
+              border-radius: 4px;
+              padding: 1px 5px;
+            }
+            ul, ol { padding-left: 1.35em; margin: 0.45em 0; }
+            li { margin: 0.2em 0; }
+            .empty { color: var(--muted); font-style: italic; }
+          </style>
+          <title>\(safeTitle)</title>
+        </head>
+        <body>\(body)</body>
+        </html>
+        """
+    }
+
+    private func prepareMarkdown(_ markdown: String) -> String {
+        var lines = markdown.components(separatedBy: .newlines)
+        while let first = lines.first?.trimmingCharacters(in: .whitespaces), first.isEmpty {
+            lines.removeFirst()
+        }
+        if let first = lines.first?.trimmingCharacters(in: .whitespaces),
+           first == "# BookLoop Revision Task" || first.hasPrefix("# BookLoop Revision Task ") {
+            lines.removeFirst()
+            while let next = lines.first?.trimmingCharacters(in: .whitespaces), next.isEmpty {
+                lines.removeFirst()
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private func renderBody(_ markdown: String) -> String {
+        let lines = markdown.components(separatedBy: .newlines)
+        var html: [String] = []
+        var index = 0
+
+        while index < lines.count {
+            let line = lines[index]
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("```") {
+                html.append(renderCodeBlock(lines: lines, startIndex: &index))
+                continue
+            }
+
+            if trimmed.isEmpty {
+                index += 1
+                continue
+            }
+
+            if trimmed.hasPrefix("Created:") {
+                html.append("<p class=\"meta\">\(renderInline(trimmed))</p>")
+                index += 1
+                continue
+            }
+
+            if let heading = headingHTML(for: trimmed) {
+                html.append(heading)
+                index += 1
+                continue
+            }
+
+            if trimmed.hasPrefix(">") {
+                let quote = trimmed.dropFirst().trimmingCharacters(in: .whitespaces)
+                html.append("<blockquote>\(renderInline(String(quote)))</blockquote>")
+                index += 1
+                continue
+            }
+
+            if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
+                html.append(renderList(lines: lines, startIndex: &index, ordered: false))
+                continue
+            }
+
+            if trimmed.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil {
+                html.append(renderList(lines: lines, startIndex: &index, ordered: true))
+                continue
+            }
+
+            var paragraphLines = [trimmed]
+            index += 1
+            while index < lines.count {
+                let next = lines[index].trimmingCharacters(in: .whitespaces)
+                if next.isEmpty || next.hasPrefix("#") || next.hasPrefix("```") || next.hasPrefix(">")
+                    || next.hasPrefix("- ") || next.hasPrefix("* ")
+                    || next.hasPrefix("Created:")
+                    || next.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil {
+                    break
+                }
+                paragraphLines.append(next)
+                index += 1
+            }
+            html.append("<p>\(renderInline(paragraphLines.joined(separator: " ")))</p>")
+        }
+
+        if html.isEmpty {
+            return "<p class=\"empty\">No task content.</p>"
+        }
+        return html.joined(separator: "\n")
+    }
+
+    private func renderCodeBlock(lines: [String], startIndex: inout Int) -> String {
+        startIndex += 1
+        var codeLines: [String] = []
+        while startIndex < lines.count {
+            let line = lines[startIndex]
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                startIndex += 1
+                break
+            }
+            codeLines.append(line)
+            startIndex += 1
+        }
+        return "<pre><code>\(escapeHTML(codeLines.joined(separator: "\n")))</code></pre>"
+    }
+
+    private func renderList(lines: [String], startIndex: inout Int, ordered: Bool) -> String {
+        var items: [String] = []
+        let itemPattern = ordered ? #"^\d+\.\s"# : #"^[-*]\s"#
+        while startIndex < lines.count {
+            let trimmed = lines[startIndex].trimmingCharacters(in: .whitespaces)
+            guard trimmed.range(of: itemPattern, options: .regularExpression) != nil else { break }
+            let content = ordered
+                ? trimmed.replacingOccurrences(of: #"^\d+\.\s"#, with: "", options: .regularExpression)
+                : String(trimmed.dropFirst(2))
+            items.append("<li>\(renderInline(content))</li>")
+            startIndex += 1
+        }
+        let tag = ordered ? "ol" : "ul"
+        return "<\(tag)>\(items.joined())</\(tag)>"
+    }
+
+    private func headingHTML(for line: String) -> String? {
+        let level = line.prefix { $0 == "#" }.count
+        guard (1...4).contains(level), line.dropFirst(level).first == " " else { return nil }
+        let text = line.dropFirst(level + 1)
+        return "<h\(level)>\(renderInline(String(text)))</h\(level)>"
+    }
+
+    private func renderInline(_ markdown: String) -> String {
+        var text = escapeHTML(markdown)
+        text = text.replacingOccurrences(
+            of: #"\*\*(.+?)\*\*"#,
+            with: "<strong>$1</strong>",
+            options: .regularExpression
+        )
+        text = text.replacingOccurrences(
+            of: #"`([^`]+)`"#,
+            with: "<code>$1</code>",
+            options: .regularExpression
+        )
+        text = text.replacingOccurrences(
+            of: #"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)"#,
+            with: "<em>$1</em>",
+            options: .regularExpression
+        )
+        return text
+    }
+
+    private func escapeHTML(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+    }
+}
+
 enum ReviewItemMarkdownLoader {
     static func bodyMarkdown(for item: ReviewItem) -> String {
         if let content = try? String(contentsOfFile: item.filePath, encoding: .utf8) {
@@ -3351,6 +3592,35 @@ final class PatchApplier {
         return try await ShellCommandRunner().runAsync(command: "git log -\(safeLimit) --oneline", book: book)
     }
 
+    func gitHistory(book: BookConfig, limit: Int = 35) async -> GitHistorySnapshot {
+        let safeLimit = max(5, min(limit, 60))
+        let bookSnapshot = book
+        return await Task.detached(priority: .userInitiated) {
+            do {
+                return try bookSnapshot.withSecurityScopedProjectRoot {
+                    let root = URL(fileURLWithPath: bookSnapshot.projectRootPath, isDirectory: true)
+                    return try GitHistoryLoader.load(root: root, limit: safeLimit)
+                }
+            } catch {
+                return GitHistorySnapshot(errorMessage: error.localizedDescription)
+            }
+        }.value
+    }
+
+    func gitChanges(book: BookConfig) async -> GitChangesSnapshot {
+        let bookSnapshot = book
+        return await Task.detached(priority: .userInitiated) {
+            do {
+                return try bookSnapshot.withSecurityScopedProjectRoot {
+                    let root = URL(fileURLWithPath: bookSnapshot.projectRootPath, isDirectory: true)
+                    return try GitChangesLoader.load(root: root)
+                }
+            } catch {
+                return GitChangesSnapshot(errorMessage: error.localizedDescription)
+            }
+        }.value
+    }
+
     func gitCommit(message: String, changedPaths: [String], book: BookConfig) async throws -> ShellCommandResult {
         guard book.allowsPatchGitCommands else {
             throw PatchReviewError.shellCommandsDisabled
@@ -3393,6 +3663,283 @@ final class PatchApplier {
 
     private func shellQuoted(_ path: String) -> String {
         "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+}
+
+enum GitHistoryLoader {
+    private static let commitSeparator = "\u{1E}"
+
+    static func load(root: URL, limit: Int) throws -> GitHistorySnapshot {
+        let runner = ProcessRunner()
+
+        guard isGitRepository(root: root, runner: runner) else {
+            return GitHistorySnapshot(errorMessage: "This book folder is not a git repository.")
+        }
+
+        let branchResult = try runner.runGit(["rev-parse", "--abbrev-ref", "HEAD"], workingDirectory: root)
+        let currentBranch = branchResult.succeeded
+            ? branchResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+            : nil
+
+        let refsResult = try runner.runGit(
+            ["for-each-ref", "--format=%(objectname)\u{1F}%(refname:short)\u{1F}%(refname)", "refs/heads", "refs/remotes"],
+            workingDirectory: root
+        )
+        let refsByCommit = parseRefs(refsResult.combinedOutput)
+
+        let logResult = try runner.runGit(
+            [
+                "log", "--all", "--topo-order", "-\(limit)",
+                "--date=iso-strict",
+                "--pretty=format:\(commitSeparator)%H\(commitSeparator)%P\(commitSeparator)%s\(commitSeparator)%ci\(commitSeparator)%an"
+            ],
+            workingDirectory: root
+        )
+        guard logResult.succeeded else {
+            return GitHistorySnapshot(
+                currentBranch: currentBranch,
+                errorMessage: logResult.combinedOutput.nilIfBlank ?? "Could not read git history."
+            )
+        }
+
+        let commits = parseCommits(logResult.stdout, refsByCommit: refsByCommit)
+        let rows = GitGraphLayouter.layout(commits: commits)
+        if rows.isEmpty {
+            return GitHistorySnapshot(
+                currentBranch: currentBranch,
+                errorMessage: "No commits found in this repository."
+            )
+        }
+        return GitHistorySnapshot(currentBranch: currentBranch, rows: rows)
+    }
+
+    fileprivate static func isGitRepository(root: URL, runner: ProcessRunner) -> Bool {
+        (try? runner.runGit(["rev-parse", "--git-dir"], workingDirectory: root))?.succeeded == true
+    }
+
+    private static func parseRefs(_ output: String) -> [String: [GitRefLabel]] {
+        var refsByCommit: [String: [GitRefLabel]] = [:]
+        for line in output.components(separatedBy: .newlines) where !line.isEmpty {
+            let parts = line.split(separator: "\u{1F}", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 3 else { continue }
+            let object = parts[0]
+            let shortName = parts[1]
+            let fullName = parts[2]
+            let kind: GitRefKind
+            if fullName.hasPrefix("refs/heads/") {
+                kind = .branch
+            } else if fullName.hasPrefix("refs/remotes/") {
+                kind = .remote
+            } else if fullName.hasPrefix("refs/tags/") {
+                kind = .tag
+            } else {
+                kind = .head
+            }
+            let label = GitRefLabel(name: shortName, fullName: fullName, kind: kind)
+            refsByCommit[object, default: []].append(label)
+        }
+        for key in refsByCommit.keys {
+            refsByCommit[key]?.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        }
+        return refsByCommit
+    }
+
+    private static func parseCommits(_ output: String, refsByCommit: [String: [GitRefLabel]]) -> [GitCommitRecord] {
+        let chunks = output.components(separatedBy: commitSeparator).filter { !$0.isEmpty }
+        var commits: [GitCommitRecord] = []
+        commits.reserveCapacity(chunks.count / 5)
+
+        var index = 0
+        while index + 4 < chunks.count {
+            let hash = chunks[index]
+            let parents = chunks[index + 1]
+                .split(whereSeparator: \.isWhitespace)
+                .map(String.init)
+                .filter { !$0.isEmpty }
+            let subject = chunks[index + 2]
+            let dateString = chunks[index + 3]
+            let author = chunks[index + 4]
+            index += 5
+
+            guard hash.count >= 7 else { continue }
+            let date = parseGitDate(dateString)
+
+            commits.append(
+                GitCommitRecord(
+                    hash: hash,
+                    shortHash: String(hash.prefix(7)),
+                    parents: parents,
+                    subject: subject,
+                    author: author,
+                    date: date,
+                    refs: refsByCommit[hash] ?? []
+                )
+            )
+        }
+        return commits
+    }
+
+    private static func parseGitDate(_ string: String) -> Date {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = iso.date(from: string) { return date }
+        iso.formatOptions = [.withInternetDateTime]
+        if let date = iso.date(from: string) { return date }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        for format in ["yyyy-MM-dd HH:mm:ss Z", "yyyy-MM-dd'T'HH:mm:ssZ", "yyyy-MM-dd'T'HH:mm:ssXXXXX"] {
+            formatter.dateFormat = format
+            if let date = formatter.date(from: string) { return date }
+        }
+        return Date(timeIntervalSince1970: 0)
+    }
+}
+
+enum GitGraphLayouter {
+    static func layout(commits: [GitCommitRecord]) -> [GitGraphRow] {
+        guard !commits.isEmpty else { return [] }
+
+        var rows: [GitGraphRow] = []
+        var lanes: [String?] = []
+
+        for commit in commits {
+            var branchLines: [GitGraphBranchLine] = []
+
+            let commitColumn: Int
+            if let existing = lanes.firstIndex(where: { $0 == commit.hash }) {
+                commitColumn = existing
+            } else if let empty = lanes.firstIndex(where: { $0 == nil }) {
+                commitColumn = empty
+            } else {
+                commitColumn = lanes.count
+                lanes.append(nil)
+            }
+
+            let lanesBefore = Array(Set(lanes.enumerated().compactMap { index, value -> Int? in
+                value != nil || index == commitColumn ? index : nil
+            })).sorted()
+
+            if commit.parents.isEmpty {
+                lanes[commitColumn] = nil
+            } else {
+                lanes[commitColumn] = commit.parents[0]
+                for parent in commit.parents.dropFirst() {
+                    if let empty = lanes.firstIndex(where: { $0 == nil }) {
+                        lanes[empty] = parent
+                        branchLines.append(GitGraphBranchLine(from: commitColumn, to: empty))
+                    } else {
+                        let newColumn = lanes.count
+                        lanes.append(parent)
+                        branchLines.append(GitGraphBranchLine(from: commitColumn, to: newColumn))
+                    }
+                }
+            }
+
+            while lanes.count > 1, lanes.last == nil {
+                lanes.removeLast()
+            }
+
+            let lanesAfter = lanes.enumerated().compactMap { index, value -> Int? in
+                value != nil ? index : nil
+            }
+            let columnCount = max(lanes.count, commitColumn + 1, 1)
+
+            rows.append(
+                GitGraphRow(
+                    commit: commit,
+                    column: commitColumn,
+                    columnCount: columnCount,
+                    lanesBefore: lanesBefore,
+                    lanesAfter: lanesAfter,
+                    branchLines: branchLines
+                )
+            )
+        }
+
+        return rows
+    }
+}
+
+enum GitChangesLoader {
+    static func load(root: URL) throws -> GitChangesSnapshot {
+        let runner = ProcessRunner()
+        guard GitHistoryLoader.isGitRepository(root: root, runner: runner) else {
+            return GitChangesSnapshot(errorMessage: "This book folder is not a git repository.")
+        }
+
+        let result = try runner.runGit(["status", "--porcelain=v1"], workingDirectory: root)
+        guard result.succeeded else {
+            let message = result.combinedOutput.nilIfBlank ?? "Could not read git status."
+            return GitChangesSnapshot(errorMessage: message)
+        }
+        return parsePorcelain(result.stdout)
+    }
+
+    private static func parsePorcelain(_ output: String) -> GitChangesSnapshot {
+        var staged: [GitFileChange] = []
+        var unstaged: [GitFileChange] = []
+
+        for line in output.components(separatedBy: .newlines) where line.count >= 3 {
+            if line.hasPrefix("## ") { continue }
+
+            let indexStatus = line[line.startIndex]
+            let worktreeStatus = line[line.index(after: line.startIndex)]
+            guard indexStatus != "?" || worktreeStatus != "?" else { continue }
+
+            let remainder = String(line.dropFirst(3))
+            let (path, oldPath) = parsePaths(remainder)
+
+            if indexStatus != " " {
+                staged.append(
+                    GitFileChange(
+                        path: path,
+                        oldPath: oldPath,
+                        kind: kind(for: indexStatus, isRename: oldPath != nil)
+                    )
+                )
+            }
+
+            if worktreeStatus != " " {
+                unstaged.append(
+                    GitFileChange(
+                        path: path,
+                        oldPath: oldPath,
+                        kind: kind(for: worktreeStatus, isRename: oldPath != nil)
+                    )
+                )
+            }
+        }
+
+        staged.sort { $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending }
+        unstaged.sort { $0.path.localizedCaseInsensitiveCompare($1.path) == .orderedAscending }
+        return GitChangesSnapshot(staged: staged, unstaged: unstaged)
+    }
+
+    private static func parsePaths(_ remainder: String) -> (path: String, oldPath: String?) {
+        if remainder.contains(" -> ") {
+            let parts = remainder.components(separatedBy: " -> ")
+            if parts.count == 2 {
+                return (parts[1].trimmingCharacters(in: .whitespaces), parts[0].trimmingCharacters(in: .whitespaces))
+            }
+        }
+
+        let components = remainder.split(separator: " ", maxSplits: 1).map(String.init)
+        if components.count == 2, components[0] != components[1] {
+            return (components[1], components[0])
+        }
+
+        return (remainder.trimmingCharacters(in: CharacterSet(charactersIn: "\"")), nil)
+    }
+
+    private static func kind(for status: Character, isRename: Bool) -> GitFileChangeKind {
+        switch status {
+        case "A": return .added
+        case "D": return .deleted
+        case "R": return .renamed
+        case "C": return .copied
+        case "M", "U": return isRename ? .renamed : .modified
+        default: return .modified
+        }
     }
 }
 

@@ -19,6 +19,7 @@ struct TaskPanelView: View {
     @State private var isRunningValidation = false
     @State private var showingNewTaskSheet = false
     @State private var validationExpanded = false
+    @State private var showsRawMarkdown = false
 
     private var taskSummaries: [TaskFileSummary] {
         taskStore.taskFiles.map { TaskFileSummary.parse($0) }
@@ -66,6 +67,9 @@ struct TaskPanelView: View {
         .onChange(of: taskStore.taskFiles) { _, files in
             if let selectedURL, files.contains(selectedURL) { return }
             selectedURL = files.first
+        }
+        .onChange(of: selectedURL) { _, _ in
+            showsRawMarkdown = false
         }
         .sheet(isPresented: $showingNewTaskSheet) {
             NewTaskSheet(book: book) { url in
@@ -215,13 +219,35 @@ struct TaskPanelView: View {
                 detailHeader(summary: summary)
                 Divider()
 
-                ScrollView {
-                    Text((try? String(contentsOf: selectedURL, encoding: .utf8)) ?? "")
-                        .font(.system(.body, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
+                if let markdown = selectedTaskText?.trimmingCharacters(in: .whitespacesAndNewlines), !markdown.isEmpty {
+                    HTMLStringView(html: TaskBriefMarkdownRenderer().renderDocument(
+                        markdown: markdown,
+                        title: summary.displayTitle
+                    ))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    EmptyStateView(
+                        title: "Empty Task Brief",
+                        message: "This task file has no content to preview.",
+                        systemImage: "doc.text"
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
+
+                Divider()
+
+                DisclosureGroup("Show raw markdown", isExpanded: $showsRawMarkdown) {
+                    ScrollView {
+                        Text(selectedTaskText ?? "")
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 4)
+                    }
+                    .frame(maxHeight: 160)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
 
                 Divider()
 

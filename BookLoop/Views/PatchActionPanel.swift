@@ -7,8 +7,8 @@ struct PatchActionPanel: View {
     let blocks: [RenderedPatchBlock]
     @Binding var decisions: [String: PatchBlockDecision]
     let workflowPhase: PatchWorkflowPhase
-    let gitWorkingTree: String
-    let latestCommit: String
+    let gitHistory: GitHistorySnapshot
+    let gitChanges: GitChangesSnapshot
     let activityLog: [PatchActivityEntry]
     let patchApplicabilityStatus: PatchApplicabilityStatus
     let isRunningPatchCommand: Bool
@@ -225,26 +225,19 @@ struct PatchActionPanel: View {
     }
 
     private var gitPanel: some View {
-        GroupBox("Git") {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Working tree")
-                    .font(.caption.weight(.semibold))
-                Text(gitWorkingTree.isEmpty ? "Working tree clean." : gitWorkingTree)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                if !latestCommit.isEmpty {
-                    Text("Latest commit")
-                        .font(.caption.weight(.semibold))
-                    Text(latestCommit)
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                GitWorkingChangesView(snapshot: gitChanges)
+
+                Divider()
+
+                GitBranchTreeView(snapshot: gitHistory)
+
                 if !activityLog.isEmpty {
+                    Divider()
                     Text("Activity")
                         .font(.caption.weight(.semibold))
-                    ForEach(activityLog.prefix(8)) { entry in
+                    ForEach(activityLog.prefix(6)) { entry in
                         HStack(alignment: .top, spacing: 6) {
                             Text(DateFormatting.display.string(from: entry.timestamp))
                                 .font(.caption2.monospaced())
@@ -258,6 +251,8 @@ struct PatchActionPanel: View {
                 }
             }
             .padding(.vertical, 4)
+        } label: {
+            Label("Git", systemImage: "arrow.triangle.branch")
         }
     }
 

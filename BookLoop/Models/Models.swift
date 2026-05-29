@@ -624,6 +624,148 @@ struct PatchActivityEntry: Identifiable, Codable, Equatable {
     var message: String
 }
 
+enum GitRefKind: String, Equatable {
+    case branch
+    case remote
+    case tag
+    case head
+}
+
+struct GitRefLabel: Identifiable, Equatable {
+    var id: String { fullName }
+    let name: String
+    let fullName: String
+    let kind: GitRefKind
+
+    var displayName: String {
+        if kind == .remote, name.hasPrefix("origin/") {
+            return String(name.dropFirst("origin/".count))
+        }
+        return name
+    }
+
+    var isRemote: Bool { kind == .remote }
+}
+
+struct GitCommitRecord: Identifiable, Equatable {
+    var id: String { hash }
+    let hash: String
+    let shortHash: String
+    let parents: [String]
+    let subject: String
+    let author: String
+    let date: Date
+    let refs: [GitRefLabel]
+
+    var isMerge: Bool { parents.count > 1 }
+}
+
+struct GitGraphBranchLine: Equatable {
+    let from: Int
+    let to: Int
+}
+
+struct GitGraphRow: Identifiable, Equatable {
+    var id: String { commit.hash }
+    let commit: GitCommitRecord
+    let column: Int
+    let columnCount: Int
+    let lanesBefore: [Int]
+    let lanesAfter: [Int]
+    let branchLines: [GitGraphBranchLine]
+}
+
+struct GitHistorySnapshot: Equatable {
+    var currentBranch: String?
+    var rows: [GitGraphRow]
+    var errorMessage: String?
+    var isLoading: Bool
+
+    init(
+        currentBranch: String? = nil,
+        rows: [GitGraphRow] = [],
+        errorMessage: String? = nil,
+        isLoading: Bool = false
+    ) {
+        self.currentBranch = currentBranch
+        self.rows = rows
+        self.errorMessage = errorMessage
+        self.isLoading = isLoading
+    }
+
+    static let loading = GitHistorySnapshot(isLoading: true)
+}
+
+enum GitFileChangeKind: String, Equatable {
+    case added
+    case modified
+    case deleted
+    case renamed
+    case copied
+
+    var label: String {
+        switch self {
+        case .added: return "Added"
+        case .modified: return "Modified"
+        case .deleted: return "Deleted"
+        case .renamed: return "Renamed"
+        case .copied: return "Copied"
+        }
+    }
+
+    var badge: String {
+        switch self {
+        case .added: return "A"
+        case .modified: return "M"
+        case .deleted: return "D"
+        case .renamed: return "R"
+        case .copied: return "C"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .added: return "plus.circle.fill"
+        case .modified: return "pencil.circle.fill"
+        case .deleted: return "minus.circle.fill"
+        case .renamed: return "arrow.right.circle.fill"
+        case .copied: return "doc.on.doc.fill"
+        }
+    }
+}
+
+struct GitFileChange: Identifiable, Equatable {
+    var id: String { "\(path)|\(oldPath ?? "")|\(kind.rawValue)" }
+    let path: String
+    let oldPath: String?
+    let kind: GitFileChangeKind
+}
+
+struct GitChangesSnapshot: Equatable {
+    var staged: [GitFileChange]
+    var unstaged: [GitFileChange]
+    var errorMessage: String?
+    var isLoading: Bool
+
+    init(
+        staged: [GitFileChange] = [],
+        unstaged: [GitFileChange] = [],
+        errorMessage: String? = nil,
+        isLoading: Bool = false
+    ) {
+        self.staged = staged
+        self.unstaged = unstaged
+        self.errorMessage = errorMessage
+        self.isLoading = isLoading
+    }
+
+    var isClean: Bool {
+        staged.isEmpty && unstaged.isEmpty && errorMessage == nil && !isLoading
+    }
+
+    static let loading = GitChangesSnapshot(isLoading: true)
+}
+
 struct PendingPatchCommitContext: Equatable {
     var changedFiles: [String]
     var evidenceFiles: [String]

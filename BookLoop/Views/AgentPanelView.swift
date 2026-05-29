@@ -12,6 +12,9 @@ final class AgentPanelModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var infoMessage: String?
     @Published var queuedTaskCount = 0
+    @Published private(set) var currentTaskTitle = ""
+    @Published private(set) var currentTaskDetail = ""
+    @Published private(set) var currentTaskType: AgentTaskType?
 
     private let agent = BookAgent()
     private var shouldCancel = false
@@ -82,6 +85,9 @@ final class AgentPanelModel: ObservableObject {
 
         let task = AgentTask(type: type, instruction: instruction)
         let taskTitle = type == .custom ? "Custom task" : type.displayName
+        currentTaskType = type
+        currentTaskTitle = taskTitle
+        currentTaskDetail = instruction.nilIfBlank ?? type.taskDescription
         runStatus = AgentRunStatus(
             phase: .preparing,
             taskTitle: taskTitle,
@@ -301,13 +307,19 @@ struct AgentPanelView: View {
 
     private var activityColumn: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Activity")
-                    .font(.headline)
-                Spacer()
-                if model.isRunning && !model.isStopping {
-                    ProgressView()
-                        .controlSize(.small)
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Activity")
+                        .font(.headline)
+                    Spacer()
+                    if model.isRunning && !model.isStopping {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+
+                if !model.currentTaskTitle.isEmpty {
+                    activityTaskHeader
                 }
             }
             .padding(12)
@@ -347,6 +359,61 @@ struct AgentPanelView: View {
             }
         }
         .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private var activityTaskHeader: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 8) {
+                if let taskType = model.currentTaskType {
+                    Image(systemName: taskType.systemImage)
+                        .font(.body)
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 22)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text(model.isRunning || model.isStopping ? "Executing" : "Last task")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(model.isRunning || model.isStopping ? Color.accentColor : .secondary)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(
+                                (model.isRunning || model.isStopping ? Color.accentColor : Color.secondary)
+                                    .opacity(0.12),
+                                in: Capsule()
+                            )
+
+                        Text(model.currentTaskTitle)
+                            .font(.subheadline.weight(.semibold))
+                            .lineLimit(2)
+                    }
+
+                    if !model.currentTaskDetail.isEmpty {
+                        Text(model.currentTaskDetail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                    }
+
+                    if model.isRunning || model.isStopping {
+                        Text(model.isStopping ? "Stopping after the current step…" : model.runStatus.headline)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(2)
+                    }
+
+                    if model.queuedTaskCount > 0 {
+                        Text("\(model.queuedTaskCount) more task\(model.queuedTaskCount == 1 ? "" : "s") queued")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(0.06), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     // MARK: - Status header
@@ -616,19 +683,12 @@ struct AgentPanelView: View {
 
     private var activitySection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if model.runStatus.toolsCompleted > 0 || model.isRunning {
+            if model.runStatus.toolsCompleted > 0 {
                 HStack {
-                    if !model.runStatus.headline.isEmpty {
-                        Text(model.runStatus.headline)
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                    }
                     Spacer()
-                    if model.runStatus.toolsCompleted > 0 {
-                        Text("\(model.runStatus.toolsCompleted) step\(model.runStatus.toolsCompleted == 1 ? "" : "s")")
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
+                    Text("\(model.runStatus.toolsCompleted) step\(model.runStatus.toolsCompleted == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
 
