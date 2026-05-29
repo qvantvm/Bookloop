@@ -57,8 +57,18 @@ final class BookAgent {
         fetchURLMaxBytes: Int,
         allowReviewEdits: Bool,
         isCancelled: @escaping () -> Bool,
-        onToolLogUpdate: (([AgentToolLogEntry]) -> Void)? = nil
+        onToolLogUpdate: (([AgentToolLogEntry]) -> Void)? = nil,
+        onStatusUpdate: ((AgentRunStatus) -> Void)? = nil
     ) async throws -> AgentResult {
+        func report(_ status: AgentRunStatus) {
+            onStatusUpdate?(status)
+        }
+
+        func checkCancelled() throws {
+            try Task.checkCancellation()
+            if isCancelled() { throw CancellationError() }
+        }
+
         let sessionID = UUID()
         let sessionDir = project.sessionsDirectory.appendingPathComponent(sessionID.uuidString, isDirectory: true)
         var context = AgentToolContext(
@@ -80,9 +90,27 @@ final class BookAgent {
         var toolLog: [AgentToolLogEntry] = []
         var finalSummary = ""
         let model = project.config.resolvedModel(appDefault: appModel)
+        let startedAt = Date()
 
-        for _ in 0..<maxIterations {
-            if isCancelled() { throw CancellationError() }
+        report(AgentRunStatus(
+            phase: .preparing,
+            taskTitle: task.type.displayName,
+            detail: task.instruction.nilIfBlank ?? task.type.taskDescription,
+            startedAt: startedAt,
+            maxIterations: maxIterations
+        ))
+
+        for iteration in 1...maxIterations {
+            try checkCancelled()
+
+            report(AgentRunStatus(
+                phase: .waitingForModel,
+                taskTitle: task.type.displayName,
+                startedAt: startedAt,
+                iteration: iteration,
+                maxIterations: maxIterations,
+                toolsCompleted: toolLog.count
+            ))
 
             let response = try await client.sendChatWithTools(
                 apiKey: apiKey,
@@ -94,8 +122,17 @@ final class BookAgent {
             if let toolCalls = response.tool_calls, !toolCalls.isEmpty {
                 messages.append(response)
                 for call in toolCalls {
-                    if isCancelled() { throw CancellationError() }
+                    try checkCancelled()
                     let entryStart = Date()
+                    report(AgentRunStatus(
+                        phase: .runningTool,
+                        taskTitle: task.type.displayName,
+                        startedAt: startedAt,
+                        iteration: iteration,
+                        maxIterations: maxIterations,
+                        toolsCompleted: toolLog.count,
+                        currentToolName: call.function.name
+                    ))
                     do {
                         let result = try await AgentToolRegistry.execute(
                             name: call.function.name,
@@ -185,6 +222,14 @@ final class BookAgent {
 
         var exportResult: AgentPatchExporter.ExportResult?
         if !context.stagedChanges.isEmpty {
+            report(AgentRunStatus(
+                phase: .exportingPatch,
+                taskTitle: task.type.displayName,
+                startedAt: startedAt,
+                iteration: maxIterations,
+                maxIterations: maxIterations,
+                toolsCompleted: toolLog.count
+            ))
             exportResult = try AgentPatchExporter.export(
                 changes: context.stagedChanges,
                 project: project,
@@ -198,6 +243,14 @@ final class BookAgent {
         }
 
         let proposalPatch = exportResult?.rawPatch ?? ""
+        report(AgentRunStatus(
+            phase: .savingSession,
+            taskTitle: task.type.displayName,
+            startedAt: startedAt,
+            iteration: maxIterations,
+            maxIterations: maxIterations,
+            toolsCompleted: toolLog.count
+        ))
         try logger.writeSession(
             sessionID: sessionID,
             project: project,

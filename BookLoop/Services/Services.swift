@@ -95,6 +95,79 @@ final class ReviewItemWriter {
     }
 }
 
+enum AnnotationReviewConverter {
+    static func reviewRequest(
+        quote: PreviewSelectionQuote,
+        note: String,
+        chapterPath: String,
+        chapterID: String?,
+        book: BookConfig,
+        chapters: [Chapter],
+        currentURL: URL?
+    ) -> ReviewRequest {
+        let rawChapter = chapterID?.nilIfBlank
+            ?? ChapterResolver.normalizedAPIChapterID(chapterPath, book: book)
+        let chapter = ChapterResolver.feedbackAPIChapterID(
+            rawChapter,
+            book: book,
+            chapters: chapters,
+            currentURL: currentURL
+        )
+
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedExact = quote.exact.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let title: String
+        if !trimmedNote.isEmpty {
+            title = String(trimmedNote.prefix(80))
+        } else if !trimmedExact.isEmpty {
+            title = String(trimmedExact.prefix(80))
+        } else {
+            title = "Reading note"
+        }
+
+        var bodyLines = ["## Highlighted passage", ""]
+        if !trimmedExact.isEmpty {
+            bodyLines.append(
+                trimmedExact
+                    .components(separatedBy: .newlines)
+                    .map { "> \($0)" }
+                    .joined(separator: "\n")
+            )
+        }
+        if !trimmedNote.isEmpty {
+            bodyLines += ["", "## Note", "", trimmedNote]
+        }
+
+        return ReviewRequest(
+            chapter: chapter,
+            type: FeedbackType.implementationNote.rawValue,
+            severity: FeedbackSeverity.low.rawValue,
+            title: title,
+            body: bodyLines.joined(separator: "\n"),
+            section: String(trimmedExact.prefix(120)).nilIfBlank,
+            suggested_fix: nil
+        )
+    }
+
+    static func reviewRequest(
+        for annotation: PreviewAnnotation,
+        book: BookConfig,
+        chapters: [Chapter],
+        currentURL: URL?
+    ) -> ReviewRequest {
+        reviewRequest(
+            quote: annotation.quote,
+            note: annotation.note,
+            chapterPath: annotation.chapterPath,
+            chapterID: annotation.chapterID,
+            book: book,
+            chapters: chapters,
+            currentURL: currentURL
+        )
+    }
+}
+
 final class PreviewHealthChecker {
     func check(book: BookConfig) -> LocalAPIStatus {
         let docsPath = book.docsPath ?? book.suggestedPath("docs")

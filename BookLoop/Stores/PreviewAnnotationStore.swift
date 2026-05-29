@@ -128,6 +128,95 @@ final class PreviewAnnotationStore: ObservableObject {
         try persist(book: book)
     }
 
+    @discardableResult
+    func saveAsReview(
+        annotationID: UUID,
+        book: BookConfig,
+        chapters: [Chapter],
+        currentURL: URL?,
+        reviewStore: ReviewStore
+    ) throws -> ReviewResponse {
+        guard let index = annotations.firstIndex(where: { $0.id == annotationID }) else {
+            throw PreviewAnnotationStoreError.annotationNotFound
+        }
+        var annotation = annotations[index]
+        if annotation.isSavedAsReview {
+            throw PreviewAnnotationStoreError.alreadySavedAsReview
+        }
+
+        let request = AnnotationReviewConverter.reviewRequest(
+            for: annotation,
+            book: book,
+            chapters: chapters,
+            currentURL: currentURL
+        )
+        let response = try ReviewItemWriter().write(request: request, book: book)
+
+        annotation.savedReviewID = response.id
+        annotation.savedReviewFile = response.file
+        annotations[index] = annotation
+        try persist(book: book)
+        reviewStore.refresh(book: book)
+        lastError = nil
+        return response
+    }
+
+    @discardableResult
+    func saveDraftAsReview(
+        book: BookConfig,
+        chapterPath: String,
+        chapterID: String?,
+        chapters: [Chapter],
+        currentURL: URL?,
+        reviewStore: ReviewStore
+    ) throws -> ReviewResponse {
+        let saved = try saveDraft(book: book, chapterPath: chapterPath, chapterID: chapterID)
+        if saved.isSavedAsReview {
+            throw PreviewAnnotationStoreError.alreadySavedAsReview
+        }
+        return try saveAsReview(
+            annotationID: saved.id,
+            book: book,
+            chapters: chapters,
+            currentURL: currentURL,
+            reviewStore: reviewStore
+        )
+    }
+
+    func saveAllAsReviews(
+        chapterPath: String,
+        book: BookConfig,
+        chapters: [Chapter],
+        currentURL: URL?,
+        reviewStore: ReviewStore
+    ) -> AnnotationReviewBatchResult {
+        let candidates = annotations(for: chapterPath).filter { !$0.isSavedAsReview }
+        var savedCount = 0
+        var errors: [String] = []
+
+        for annotation in candidates {
+            do {
+                _ = try saveAsReview(
+                    annotationID: annotation.id,
+                    book: book,
+                    chapters: chapters,
+                    currentURL: currentURL,
+                    reviewStore: reviewStore
+                )
+                savedCount += 1
+            } catch {
+                errors.append("\(annotationTitle(annotation)): \(error.localizedDescription)")
+            }
+        }
+
+        return AnnotationReviewBatchResult(savedCount: savedCount, errors: errors)
+    }
+
+    private func annotationTitle(_ annotation: PreviewAnnotation) -> String {
+        annotation.note.nilIfBlank.map { String($0.prefix(40)) }
+            ?? String(annotation.exact.prefix(40))
+    }
+
     private func loadDocument(book: BookConfig) throws -> PreviewAnnotationDocument {
         try book.withSecurityScopedProjectRoot {
             let url = annotationsFileURL(book: book)
@@ -161,11 +250,22 @@ final class PreviewAnnotationStore: ObservableObject {
 
 enum PreviewAnnotationStoreError: LocalizedError {
     case missingSelection
+    case annotationNotFound
+    case alreadySavedAsReview
 
     var errorDescription: String? {
         switch self {
         case .missingSelection:
             return "Select text in the preview first."
+        case .annotationNotFound:
+            return "Annotation not found."
+        case .alreadySavedAsReview:
+            return "This note is already saved as a review."
         }
     }
+}
+
+struct AnnotationReviewBatchResult {
+    var savedCount: Int
+    var errors: [String]
 }

@@ -5,6 +5,7 @@ struct BookPreviewView: View {
     @EnvironmentObject private var projectStore: ProjectContentStore
     @EnvironmentObject private var settingsStore: AppSettingsStore
     @EnvironmentObject private var annotationStore: PreviewAnnotationStore
+    @EnvironmentObject private var reviewStore: ReviewStore
     @ObservedObject var model: BookPreviewModel
     @ObservedObject var chatModel: ChatPanelModel
     @Binding var isSidebarVisible: Bool
@@ -12,6 +13,10 @@ struct BookPreviewView: View {
     @Binding var showAnnotationsPanel: Bool
 
     @State private var editorError: String?
+    @State private var reviewSaveMessage: String?
+    @State private var reviewSaveIsError = false
+    @State private var savingReviewAnnotationID: UUID?
+    @State private var isSavingAllReviews = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -124,6 +129,29 @@ struct BookPreviewView: View {
             }
             .padding(10)
 
+            if unsavedReviewCount > 0, model.book != nil {
+                HStack {
+                    Button(isSavingAllReviews ? "Saving…" : "Save All as Reviews") {
+                        saveAllAnnotationsAsReviews()
+                    }
+                    .disabled(isSavingAllReviews || savingReviewAnnotationID != nil)
+                    Spacer()
+                    Text("\(unsavedReviewCount) unsaved")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(.horizontal, 10)
+                .padding(.bottom, 8)
+            }
+
+            if let reviewSaveMessage {
+                Text(reviewSaveMessage)
+                    .font(.caption)
+                    .foregroundStyle(reviewSaveIsError ? .red : .green)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 8)
+            }
+
             Divider()
 
             if chapterAnnotations.isEmpty {
@@ -132,6 +160,9 @@ struct BookPreviewView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text("Select text in the preview, then click Highlight & Note.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text("Save highlights or notes as reviews for the Agent to act on.")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
@@ -170,6 +201,17 @@ struct BookPreviewView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 Spacer()
+                if annotation.isSavedAsReview {
+                    Label("In Reviews", systemImage: "checkmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                } else if let book = model.book {
+                    Button(savingReviewAnnotationID == annotation.id ? "Saving…" : "Save as Review") {
+                        saveAnnotationAsReview(annotation, book: book)
+                    }
+                    .disabled(savingReviewAnnotationID != nil || isSavingAllReviews)
+                    .font(.caption)
+                }
                 Button("Edit") {
                     annotationStore.beginEdit(annotation)
                 }
@@ -228,6 +270,10 @@ struct BookPreviewView: View {
                     annotationStore.cancelEditor()
                 }
                 Spacer()
+                Button("Save as Review") {
+                    saveDraftAsReview()
+                }
+                .disabled(savingReviewAnnotationID != nil)
                 Button(annotationStore.editingAnnotationID == nil ? "Save Highlight" : "Save") {
                     saveAnnotation()
                 }
@@ -308,6 +354,10 @@ struct BookPreviewView: View {
         return annotationStore.annotations(for: path)
     }
 
+    private var unsavedReviewCount: Int {
+        chapterAnnotations.filter { !$0.isSavedAsReview }.count
+    }
+
     private var currentChapter: Chapter? {
         guard let path = model.currentChapterPath else { return nil }
         return projectStore.chapters.first { $0.relativePath == path }
@@ -350,6 +400,80 @@ struct BookPreviewView: View {
             Task { await refreshAnnotations() }
         } catch {
             editorError = error.localizedDescription
+        }
+    }
+
+    private func saveDraftAsReview() {
+        guard let book = model.book, let path = model.currentChapterPath else { return }
+        savingReviewAnnotationID = annotationStore.editingAnnotationID ?? UUID()
+        reviewSaveMessage = nil
+        do {
+            let response = try annotationStore.saveDraftAsReview(
+                book: book,
+                chapterPath: path,
+                chapterID: model.detectedChapterID,
+                chapters: projectStore.chapters,
+                currentURL: model.currentURL,
+                reviewStore: reviewStore
+            )
+            editorError = nil
+            reviewSaveMessage = "Saved review: \(response.file)"
+            reviewSaveIsError = false
+            Task { await refreshAnnotations() }
+        } catch {
+            editorError = error.localizedDescription
+            reviewSaveMessage = error.localizedDescription
+            reviewSaveIsError = true
+        }
+        savingReviewAnnotationID = nil
+    }
+
+    private func saveAnnotationAsReview(_ annotation: PreviewAnnotation, book: BookConfig) {
+        savingReviewAnnotationID = annotation.id
+        reviewSaveMessage = nil
+        do {
+            let response = try annotationStore.saveAsReview(
+                annotationID: annotation.id,
+                book: book,
+                chapters: projectStore.chapters,
+                currentURL: model.currentURL,
+                reviewStore: reviewStore
+            )
+            reviewSaveMessage = "Saved review: \(response.file)"
+            reviewSaveIsError = false
+        } catch {
+            reviewSaveMessage = error.localizedDescription
+            reviewSaveIsError = true
+        }
+        savingReviewAnnotationID = nil
+    }
+
+    private func saveAllAnnotationsAsReviews() {
+        guard let book = model.book, let path = model.currentChapterPath else { return }
+        isSavingAllReviews = true
+        reviewSaveMessage = nil
+        defer { isSavingAllReviews = false }
+
+        let result = annotationStore.saveAllAsReviews(
+            chapterPath: path,
+            book: book,
+            chapters: projectStore.chapters,
+            currentURL: model.currentURL,
+            reviewStore: reviewStore
+        )
+
+        if result.savedCount > 0, result.errors.isEmpty {
+            reviewSaveMessage = "Saved \(result.savedCount) review\(result.savedCount == 1 ? "" : "s"). Open the Reviews tab to see them."
+            reviewSaveIsError = false
+        } else if result.savedCount > 0 {
+            reviewSaveMessage = "Saved \(result.savedCount) review\(result.savedCount == 1 ? "" : "s"). \(result.errors.count) failed."
+            reviewSaveIsError = true
+        } else if let firstError = result.errors.first {
+            reviewSaveMessage = firstError
+            reviewSaveIsError = true
+        } else {
+            reviewSaveMessage = "No annotations to save."
+            reviewSaveIsError = false
         }
     }
 

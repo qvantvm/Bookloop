@@ -5,6 +5,8 @@ import SwiftUI
 final class AgentPanelModel: ObservableObject {
     @Published var customInstruction = ""
     @Published var isRunning = false
+    @Published var isStopping = false
+    @Published var runStatus = AgentRunStatus()
     @Published var liveToolLog: [AgentToolLogEntry] = []
     @Published var result: AgentResult?
     @Published var errorMessage: String?
@@ -14,9 +16,39 @@ final class AgentPanelModel: ObservableObject {
     private let agent = BookAgent()
     private var shouldCancel = false
     private var taskInstructionQueue: [String] = []
+    private var activeRunTask: Task<Void, Never>?
+
+    func stop(clearQueue: Bool = true) {
+        guard isRunning || isStopping else { return }
+        shouldCancel = true
+        isStopping = true
+        if clearQueue, !taskInstructionQueue.isEmpty {
+            taskInstructionQueue.removeAll()
+            queuedTaskCount = 0
+            infoMessage = "Queued tasks cleared."
+        }
+        activeRunTask?.cancel()
+    }
 
     func cancel() {
-        shouldCancel = true
+        stop(clearQueue: false)
+    }
+
+    func startRun(
+        type: AgentTaskType,
+        projectStore: BookProjectStore,
+        patchStore: PatchStore,
+        settingsStore: AppSettingsStore
+    ) {
+        activeRunTask?.cancel()
+        activeRunTask = Task { [weak self] in
+            await self?.run(
+                type: type,
+                projectStore: projectStore,
+                patchStore: patchStore,
+                settingsStore: settingsStore
+            )
+        }
     }
 
     func run(
@@ -42,11 +74,21 @@ final class AgentPanelModel: ObservableObject {
 
         shouldCancel = false
         isRunning = true
+        isStopping = false
         errorMessage = nil
+        infoMessage = nil
         liveToolLog = []
         result = nil
 
         let task = AgentTask(type: type, instruction: instruction)
+        let taskTitle = type == .custom ? "Custom task" : type.displayName
+        runStatus = AgentRunStatus(
+            phase: .preparing,
+            taskTitle: taskTitle,
+            detail: instruction.nilIfBlank ?? type.taskDescription,
+            startedAt: Date(),
+            maxIterations: settingsStore.maxAgentIterations
+        )
 
         do {
             let agentResult = try await agent.run(
@@ -64,6 +106,11 @@ final class AgentPanelModel: ObservableObject {
                     Task { @MainActor in
                         self?.liveToolLog = log
                     }
+                },
+                onStatusUpdate: { [weak self] status in
+                    Task { @MainActor in
+                        self?.runStatus = status
+                    }
                 }
             )
             result = agentResult
@@ -80,12 +127,18 @@ final class AgentPanelModel: ObservableObject {
                 createdPatch: agentResult.patchProposalPath != nil
             )
         } catch is CancellationError {
-            errorMessage = "Agent run cancelled."
+            errorMessage = isStopping || shouldCancel
+                ? "Agent run stopped."
+                : "Agent run cancelled."
+        } catch let error as OpenAIError {
+            errorMessage = error.errorDescription
         } catch {
             errorMessage = error.localizedDescription
         }
 
         isRunning = false
+        isStopping = false
+        runStatus = AgentRunStatus()
         await drainTaskQueue(projectStore: projectStore, patchStore: patchStore, settingsStore: settingsStore)
     }
 
@@ -106,7 +159,7 @@ final class AgentPanelModel: ObservableObject {
         }
 
         customInstruction = text
-        await run(type: .custom, projectStore: projectStore, patchStore: patchStore, settingsStore: settingsStore)
+        startRun(type: .custom, projectStore: projectStore, patchStore: patchStore, settingsStore: settingsStore)
     }
 
     private func drainTaskQueue(
@@ -114,11 +167,13 @@ final class AgentPanelModel: ObservableObject {
         patchStore: PatchStore,
         settingsStore: AppSettingsStore
     ) async {
-        while !taskInstructionQueue.isEmpty, !isRunning {
+        guard !shouldCancel else { return }
+        while !taskInstructionQueue.isEmpty {
             let next = taskInstructionQueue.removeFirst()
             queuedTaskCount = taskInstructionQueue.count
             customInstruction = next
             await run(type: .custom, projectStore: projectStore, patchStore: patchStore, settingsStore: settingsStore)
+            if shouldCancel { break }
         }
         queuedTaskCount = taskInstructionQueue.count
     }
@@ -192,7 +247,11 @@ struct AgentPanelView: View {
     }
 
     private var agentDisabledReason: String? {
-        if model.isRunning { return "Agent is running. Click Cancel to stop the current run." }
+        if model.isRunning {
+            return model.isStopping
+                ? "Stopping the agent after the current network request or tool finishes…"
+                : nil
+        }
         if projectStore.project == nil { return "Select a book in the sidebar first." }
         if !settingsStore.hasAPIKey { return "Add your OpenAI API key in App Settings (gear icon in the sidebar)." }
         return nil
@@ -201,31 +260,43 @@ struct AgentPanelView: View {
     var body: some View {
         VStack(spacing: 0) {
             statusHeader
+            if model.isRunning || model.isStopping {
+                runningBanner
+            }
             Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    workflowHint
-                    taskCatalogSection
-                    customTaskSection
-                    agentSetupSection
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        if model.isRunning || model.isStopping || !model.liveToolLog.isEmpty {
+                            activitySection
+                                .id("agent-activity")
+                        }
 
-                    if let error = model.errorMessage ?? projectStore.lastError {
-                        agentMessageCard(error, style: .error)
-                    }
-                    if let info = model.infoMessage {
-                        agentMessageCard(info, style: .info)
-                    }
+                        workflowHint
+                        taskCatalogSection
+                        customTaskSection
+                        agentSetupSection
 
-                    if !model.liveToolLog.isEmpty {
-                        activitySection
+                        if let error = model.errorMessage ?? projectStore.lastError {
+                            agentMessageCard(error, style: .error)
+                        }
+                        if let info = model.infoMessage {
+                            agentMessageCard(info, style: .info)
+                        }
+
+                        if let result = model.result {
+                            resultCards(result)
+                        } else if !model.isRunning && !model.isStopping && model.liveToolLog.isEmpty {
+                            emptyStateCard
+                        }
                     }
-                    if let result = model.result {
-                        resultCards(result)
-                    } else if !model.isRunning && model.liveToolLog.isEmpty {
-                        emptyStateCard
+                    .padding()
+                }
+                .onChange(of: model.liveToolLog.count) { _, _ in
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo("agent-activity", anchor: .top)
                     }
                 }
-                .padding()
             }
         }
         .onAppear {
@@ -259,13 +330,23 @@ struct AgentPanelView: View {
                 Spacer()
 
                 if model.queuedTaskCount > 0 {
-                    Text("\(model.queuedTaskCount) task(s) queued")
+                    Text("\(model.queuedTaskCount) queued")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
                 }
 
-                if model.isRunning {
-                    Button("Cancel", role: .destructive) { model.cancel() }
+                if model.isRunning || model.isStopping {
+                    Button {
+                        model.stop()
+                    } label: {
+                        Label(model.isStopping ? "Stopping…" : "Stop Agent", systemImage: "stop.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .disabled(model.isStopping)
                 }
             }
 
@@ -282,6 +363,52 @@ struct AgentPanelView: View {
             }
         }
         .padding(10)
+    }
+
+    private var runningBanner: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ProgressView()
+                .controlSize(.regular)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(model.runStatus.headline.isEmpty ? "Agent running…" : model.runStatus.headline)
+                    .font(.subheadline.weight(.semibold))
+
+                if !model.runStatus.taskTitle.isEmpty {
+                    Text(model.runStatus.taskTitle)
+                        .font(.caption.weight(.medium))
+                }
+
+                Text(model.isStopping ? "Finishing the current step, then stopping…" : model.runStatus.subheadline)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                if let startedAt = model.runStatus.startedAt {
+                    TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                        Text("Elapsed \(AgentPanelView.elapsedString(since: startedAt, now: context.date))")
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .padding(.horizontal, 10)
+        .padding(.bottom, 8)
+    }
+
+    private static func elapsedString(since start: Date, now: Date) -> String {
+        let seconds = max(0, Int(now.timeIntervalSince(start)))
+        let minutes = seconds / 60
+        let remainder = seconds % 60
+        if minutes > 0 {
+            return String(format: "%d:%02d", minutes, remainder)
+        }
+        return "\(seconds)s"
     }
 
     private var workflowHint: some View {
@@ -307,14 +434,12 @@ struct AgentPanelView: View {
                                 isRunning: model.isRunning,
                                 canRun: canRunPresetTasks,
                                 onRun: {
-                                    Task {
-                                        await model.run(
-                                            type: taskType,
-                                            projectStore: projectStore,
-                                            patchStore: patchStore,
-                                            settingsStore: settingsStore
-                                        )
-                                    }
+                                    model.startRun(
+                                        type: taskType,
+                                        projectStore: projectStore,
+                                        patchStore: patchStore,
+                                        settingsStore: settingsStore
+                                    )
                                 }
                             )
                         }
@@ -342,18 +467,20 @@ struct AgentPanelView: View {
 
             HStack {
                 Button("Run Custom Task") {
-                    Task {
-                        await model.run(
-                            type: .custom,
-                            projectStore: projectStore,
-                            patchStore: patchStore,
-                            settingsStore: settingsStore
-                        )
-                    }
+                    model.startRun(
+                        type: .custom,
+                        projectStore: projectStore,
+                        patchStore: patchStore,
+                        settingsStore: settingsStore
+                    )
                 }
                 .disabled(!canRunCustomTask)
 
-                if canRunPresetTasks && !canRunCustomTask {
+                if model.isRunning || model.isStopping {
+                    Text(model.isStopping ? "Stopping…" : "Running…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if canRunPresetTasks && !canRunCustomTask {
                     Text("Enter an instruction above.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -448,14 +575,39 @@ struct AgentPanelView: View {
             HStack(spacing: 8) {
                 Text("Activity")
                     .font(.subheadline.weight(.semibold))
-                if model.isRunning {
+                if model.isRunning && !model.isStopping {
                     ProgressView()
                         .controlSize(.small)
                 }
+                Spacer()
+                if model.runStatus.toolsCompleted > 0 {
+                    Text("\(model.runStatus.toolsCompleted) step\(model.runStatus.toolsCompleted == 1 ? "" : "s")")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            if model.liveToolLog.isEmpty && (model.isRunning || model.isStopping) {
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(model.runStatus.headline.isEmpty ? "Starting…" : model.runStatus.headline)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
 
             ForEach(model.liveToolLog) { entry in
                 AgentToolLogCardView(entry: entry)
+            }
+
+            if model.runStatus.phase == .runningTool,
+               let toolName = model.runStatus.currentToolName,
+               model.isRunning {
+                AgentInProgressToolRow(toolName: toolName)
             }
         }
     }
@@ -672,7 +824,7 @@ struct AgentToolLogCardView: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(entry.toolName)
+                    Text(entry.toolName.replacingOccurrences(of: "_", with: " "))
                         .font(.caption.weight(.semibold))
                     Spacer()
                     Text(DateFormatting.display.string(from: entry.timestamp))
@@ -688,5 +840,22 @@ struct AgentToolLogCardView: View {
         }
         .padding(12)
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+struct AgentInProgressToolRow: View {
+    let toolName: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+                .controlSize(.small)
+            Text("Running \(toolName.replacingOccurrences(of: "_", with: " "))…")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(12)
+        .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 }

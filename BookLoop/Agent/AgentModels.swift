@@ -107,6 +107,67 @@ struct AgentToolLogEntry: Codable, Equatable, Identifiable {
     var timestamp: Date
 }
 
+enum AgentRunPhase: Equatable {
+    case idle
+    case preparing
+    case waitingForModel
+    case runningTool
+    case exportingPatch
+    case savingSession
+}
+
+struct AgentRunStatus: Equatable {
+    var phase: AgentRunPhase = .idle
+    var taskTitle: String = ""
+    var detail: String = ""
+    var startedAt: Date?
+    var iteration: Int = 0
+    var maxIterations: Int = 0
+    var toolsCompleted: Int = 0
+    var currentToolName: String?
+
+    var isActive: Bool {
+        phase != .idle
+    }
+
+    var headline: String {
+        switch phase {
+        case .idle:
+            return ""
+        case .preparing:
+            return "Starting agent…"
+        case .waitingForModel:
+            if maxIterations > 0 {
+                return "Waiting for model (step \(iteration) of \(maxIterations))…"
+            }
+            return "Waiting for model…"
+        case .runningTool:
+            if let currentToolName {
+                return "Running \(currentToolName.agentToolDisplayName)…"
+            }
+            return "Running tool…"
+        case .exportingPatch:
+            return "Writing patch proposal…"
+        case .savingSession:
+            return "Saving session log…"
+        }
+    }
+
+    var subheadline: String {
+        if !detail.isEmpty { return detail }
+        if toolsCompleted > 0 {
+            return "\(toolsCompleted) tool call\(toolsCompleted == 1 ? "" : "s") completed"
+        }
+        return "This can take a minute while the model reads your book."
+    }
+}
+
+private extension String {
+    var agentToolDisplayName: String {
+        replacingOccurrences(of: "_", with: " ")
+    }
+}
+
 struct AgentResult: Equatable {
     var sessionID: UUID
     var summary: String

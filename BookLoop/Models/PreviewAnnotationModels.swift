@@ -16,9 +16,15 @@ struct PreviewAnnotation: Identifiable, Codable, Equatable {
     var note: String
     var createdAt: Date
     var updatedAt: Date
+    var savedReviewID: String?
+    var savedReviewFile: String?
 
     var quote: PreviewSelectionQuote {
         PreviewSelectionQuote(exact: exact, prefix: prefix, suffix: suffix)
+    }
+
+    var isSavedAsReview: Bool {
+        savedReviewID?.nilIfBlank != nil
     }
 }
 
