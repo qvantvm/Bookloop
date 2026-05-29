@@ -172,6 +172,7 @@
       mark.className = "bookloop-highlight";
       if (options.pending) mark.classList.add("bookloop-highlight-pending");
       if (options.selected) mark.classList.add("bookloop-highlight-selected");
+      if (options.hover) mark.classList.add("bookloop-highlight-hover");
       mark.dataset.annotationId = id;
       if (note) mark.title = note;
 
@@ -232,6 +233,7 @@
     applyHighlights: function (annotations, options) {
       options = options || {};
       const selectedId = options.selectedId || null;
+      const hoveredId = options.hoveredId || null;
       const pending = options.pending || null;
       const root = window.BookLoopPreview.contentRoot();
       if (!root) return { applied: 0, failed: 0 };
@@ -264,6 +266,7 @@
       (annotations || []).forEach(function (annotation) {
         applyOne(annotation, {
           selected: selectedId && annotation.id === selectedId,
+          hover: hoveredId && annotation.id === hoveredId,
           savedAsReview: !!annotation.savedAsReview,
           pending: false
         });
@@ -283,6 +286,19 @@
       }
 
       return { applied: applied, failed: failed };
+    },
+
+    setHighlightState: function (options) {
+      options = options || {};
+      const selectedId = options.selectedId || null;
+      const hoveredId = options.hoveredId || null;
+      const root = window.BookLoopPreview.contentRoot();
+      if (!root) return;
+      root.querySelectorAll("mark.bookloop-highlight").forEach(function (mark) {
+        const id = mark.dataset.annotationId;
+        mark.classList.toggle("bookloop-highlight-selected", !!selectedId && id === selectedId);
+        mark.classList.toggle("bookloop-highlight-hover", !!hoveredId && id === hoveredId);
+      });
     },
 
     scrollToAnnotation: function (id) {

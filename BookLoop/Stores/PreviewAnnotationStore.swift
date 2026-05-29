@@ -4,6 +4,7 @@ import Foundation
 final class PreviewAnnotationStore: ObservableObject {
     @Published private(set) var annotations: [PreviewAnnotation] = []
     @Published var selectedAnnotationID: UUID?
+    @Published var hoveredAnnotationID: UUID?
     @Published var isEditorPresented = false
     @Published var draftNote = ""
     @Published var draftQuote: PreviewSelectionQuote?
@@ -23,20 +24,30 @@ final class PreviewAnnotationStore: ObservableObject {
             loadedBookID = nil
             return
         }
+
+        let previousBookID = loadedBookID
         loadedBookID = book.id
+
         do {
-            annotations = try loadDocument(book: book).annotations
+            let loaded = try loadDocument(book: book)
+            annotations = loaded.annotations.map { normalizePaths($0) }
+            if !annotations.isEmpty,
+               !FileManager.default.fileExists(atPath: Self.appSupportFileURL(bookID: book.id).path) {
+                try persist(book: book)
+            }
             lastError = nil
         } catch {
-            annotations = []
+            if previousBookID != book.id {
+                annotations = []
+            }
             lastError = error.localizedDescription
         }
     }
 
     func annotations(for chapterPath: String) -> [PreviewAnnotation] {
-        let normalized = chapterPath.replacingOccurrences(of: "\\", with: "/")
+        let normalized = normalizedChapterPath(chapterPath)
         return annotations
-            .filter { $0.chapterPath.replacingOccurrences(of: "\\", with: "/") == normalized }
+            .filter { normalizedChapterPath($0.chapterPath) == normalized }
             .sorted { $0.createdAt > $1.createdAt }
     }
 
@@ -84,7 +95,7 @@ final class PreviewAnnotationStore: ObservableObject {
         }
 
         let now = Date()
-        let normalizedPath = chapterPath.replacingOccurrences(of: "\\", with: "/")
+        let normalizedPath = normalizedChapterPath(chapterPath)
         let note = draftNote.trimmingCharacters(in: .whitespacesAndNewlines)
 
         let saved: PreviewAnnotation
@@ -95,6 +106,8 @@ final class PreviewAnnotationStore: ObservableObject {
             updated.prefix = quote.prefix
             updated.suffix = quote.suffix
             updated.note = note
+            updated.chapterPath = normalizedPath
+            updated.chapterID = chapterID
             updated.updatedAt = now
             annotations[index] = updated
             saved = updated
@@ -129,6 +142,9 @@ final class PreviewAnnotationStore: ObservableObject {
         annotations.removeAll { $0.id == id }
         if selectedAnnotationID == id {
             selectedAnnotationID = nil
+        }
+        if hoveredAnnotationID == id {
+            hoveredAnnotationID = nil
         }
         try persist(book: book)
     }
@@ -222,34 +238,75 @@ final class PreviewAnnotationStore: ObservableObject {
             ?? String(annotation.exact.prefix(40))
     }
 
+    private func normalizedChapterPath(_ path: String) -> String {
+        ChapterResolver.normalizedDocsRelativeMarkdownPath(
+            path.replacingOccurrences(of: "\\", with: "/")
+        )
+    }
+
+    private func normalizePaths(_ annotation: PreviewAnnotation) -> PreviewAnnotation {
+        var copy = annotation
+        copy.chapterPath = normalizedChapterPath(annotation.chapterPath)
+        return copy
+    }
+
     private func loadDocument(book: BookConfig) throws -> PreviewAnnotationDocument {
-        try book.withSecurityScopedProjectRoot {
-            let url = annotationsFileURL(book: book)
-            guard FileManager.default.fileExists(atPath: url.path) else {
-                return .empty()
-            }
-            let data = try Data(contentsOf: url)
-            let document = try JSONDecoder().decode(PreviewAnnotationDocument.self, from: data)
-            if document.version == PreviewAnnotationDocument.currentVersion {
-                return document
-            }
-            return PreviewAnnotationDocument(version: PreviewAnnotationDocument.currentVersion, annotations: document.annotations)
+        let appSupportURL = Self.appSupportFileURL(bookID: book.id)
+        if FileManager.default.fileExists(atPath: appSupportURL.path),
+           let cached = try? loadExistingDocument(from: appSupportURL) {
+            return cached
         }
+
+        let projectDoc = try? book.withSecurityScopedProjectRoot {
+            let projectURL = projectAnnotationsFileURL(book: book)
+            guard FileManager.default.fileExists(atPath: projectURL.path) else { return PreviewAnnotationDocument.empty() }
+            return try loadExistingDocument(from: projectURL)
+        }
+
+        return projectDoc ?? .empty()
+    }
+
+    private func loadExistingDocument(from url: URL) throws -> PreviewAnnotationDocument {
+        let data = try Data(contentsOf: url)
+        let document = try JSONDecoder.flexibleDates.decode(PreviewAnnotationDocument.self, from: data)
+        if document.version == PreviewAnnotationDocument.currentVersion {
+            return document
+        }
+        return PreviewAnnotationDocument(version: PreviewAnnotationDocument.currentVersion, annotations: document.annotations)
     }
 
     private func persist(book: BookConfig) throws {
-        try book.withSecurityScopedProjectRoot {
-            let url = annotationsFileURL(book: book)
-            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let document = PreviewAnnotationDocument(version: PreviewAnnotationDocument.currentVersion, annotations: annotations)
-            let data = try JSONEncoder.pretty.encode(document)
-            try data.write(to: url, options: [.atomic])
+        let document = PreviewAnnotationDocument(version: PreviewAnnotationDocument.currentVersion, annotations: annotations)
+        let data = try JSONEncoder.pretty.encode(document)
+
+        let appSupportURL = Self.appSupportFileURL(bookID: book.id)
+        try FileManager.default.createDirectory(at: appSupportURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: appSupportURL, options: [.atomic])
+
+        do {
+            try book.withSecurityScopedProjectRoot {
+                let projectURL = projectAnnotationsFileURL(book: book)
+                try FileManager.default.createDirectory(at: projectURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: projectURL, options: [.atomic])
+            }
+        } catch {
+            // App Support copy is authoritative; project mirror is best-effort.
         }
+
+        lastError = nil
     }
 
-    private func annotationsFileURL(book: BookConfig) -> URL {
+    private func projectAnnotationsFileURL(book: BookConfig) -> URL {
         URL(fileURLWithPath: book.projectRootPath, isDirectory: true)
             .appendingPathComponent(fileRelativePath)
+    }
+
+    private static func appSupportFileURL(bookID: UUID) -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        return base
+            .appendingPathComponent("BookLoop", isDirectory: true)
+            .appendingPathComponent("annotations", isDirectory: true)
+            .appendingPathComponent("\(bookID.uuidString).json")
     }
 }
 

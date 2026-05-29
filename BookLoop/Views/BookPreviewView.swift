@@ -48,7 +48,10 @@ struct BookPreviewView: View {
             Task { await refreshAnnotations() }
         }
         .onChange(of: annotationStore.selectedAnnotationID) { _, _ in
-            Task { await refreshAnnotations() }
+            Task { await updateAnnotationHighlightState() }
+        }
+        .onChange(of: annotationStore.hoveredAnnotationID) { _, _ in
+            Task { await updateAnnotationHighlightState() }
         }
         .onChange(of: annotationStore.draftHighlightID) { _, _ in
             Task { await refreshAnnotations() }
@@ -171,6 +174,14 @@ struct BookPreviewView: View {
                     .padding(.bottom, 8)
             }
 
+            if let error = annotationStore.lastError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 8)
+            }
+
             Divider()
 
             if chapterAnnotations.isEmpty {
@@ -253,17 +264,31 @@ struct BookPreviewView: View {
         .background(
             annotationStore.selectedAnnotationID == annotation.id
                 ? Color.accentColor.opacity(0.12)
-                : Color.secondary.opacity(0.08),
+                : annotationStore.hoveredAnnotationID == annotation.id
+                    ? Color.orange.opacity(0.10)
+                    : Color.secondary.opacity(0.08),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
         .overlay {
-            if annotationStore.selectedAnnotationID == annotation.id {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(Color.accentColor.opacity(0.45), lineWidth: 1)
-            }
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(
+                    annotationStore.selectedAnnotationID == annotation.id
+                        ? Color.accentColor.opacity(0.45)
+                        : annotationStore.hoveredAnnotationID == annotation.id
+                            ? Color.orange.opacity(0.75)
+                            : Color.clear,
+                    lineWidth: annotationStore.hoveredAnnotationID == annotation.id ? 2 : 1
+                )
         }
         .onTapGesture {
             selectAnnotation(annotation)
+        }
+        .onHover { isHovering in
+            if isHovering {
+                annotationStore.hoveredAnnotationID = annotation.id
+            } else if annotationStore.hoveredAnnotationID == annotation.id {
+                annotationStore.hoveredAnnotationID = nil
+            }
         }
     }
 
@@ -413,7 +438,15 @@ struct BookPreviewView: View {
         await model.applyAnnotations(
             annotations,
             selectedID: annotationStore.selectedAnnotationID,
+            hoveredID: annotationStore.hoveredAnnotationID,
             pendingDraft: pendingDraft
+        )
+    }
+
+    private func updateAnnotationHighlightState() async {
+        await model.updateAnnotationHighlightState(
+            selectedID: annotationStore.selectedAnnotationID,
+            hoveredID: annotationStore.hoveredAnnotationID
         )
     }
 

@@ -264,7 +264,7 @@ struct AgentPanelView: View {
                 runningBanner
             }
             Divider()
-            ScrollViewReader { proxy in
+            HSplitView {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         workflowHint
@@ -284,31 +284,69 @@ struct AgentPanelView: View {
                         } else if !model.isRunning && !model.isStopping && model.liveToolLog.isEmpty {
                             emptyStateCard
                         }
-
-                        if model.isRunning || model.isStopping || !model.liveToolLog.isEmpty {
-                            activitySection
-                                .id("agent-activity")
-                        }
                     }
                     .padding()
                 }
-                .onChange(of: model.liveToolLog.count) { _, _ in
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("agent-activity", anchor: .bottom)
-                    }
-                }
-                .onChange(of: model.isRunning) { _, isRunning in
-                    guard isRunning else { return }
-                    withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("agent-activity", anchor: .bottom)
-                    }
-                }
+                .frame(minWidth: 360)
+
+                activityColumn
+                    .frame(minWidth: 300, idealWidth: 360, maxWidth: 460)
             }
         }
         .onAppear {
             settingsStore.load()
             projectStore.refresh(book: library.selectedBook, currentChapterID: projectStore.project?.currentChapterID)
         }
+    }
+
+    private var activityColumn: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Activity")
+                    .font(.headline)
+                Spacer()
+                if model.isRunning && !model.isStopping {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+            .padding(12)
+
+            Divider()
+
+            if model.isRunning || model.isStopping || !model.liveToolLog.isEmpty {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        activitySection
+                            .padding(12)
+                            .id("agent-activity")
+                    }
+                    .onChange(of: model.liveToolLog.count) { _, _ in
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("agent-activity-bottom", anchor: .bottom)
+                        }
+                    }
+                    .onChange(of: model.isRunning) { _, isRunning in
+                        guard isRunning else { return }
+                        withAnimation(.easeOut(duration: 0.2)) {
+                            proxy.scrollTo("agent-activity-bottom", anchor: .bottom)
+                        }
+                    }
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Agent steps will appear here when a task runs.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Start a preset task or custom instruction on the left.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(12)
+                Spacer()
+            }
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
     // MARK: - Status header
@@ -578,18 +616,19 @@ struct AgentPanelView: View {
 
     private var activitySection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Activity")
-                    .font(.subheadline.weight(.semibold))
-                if model.isRunning && !model.isStopping {
-                    ProgressView()
-                        .controlSize(.small)
-                }
-                Spacer()
-                if model.runStatus.toolsCompleted > 0 {
-                    Text("\(model.runStatus.toolsCompleted) step\(model.runStatus.toolsCompleted == 1 ? "" : "s")")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+            if model.runStatus.toolsCompleted > 0 || model.isRunning {
+                HStack {
+                    if !model.runStatus.headline.isEmpty {
+                        Text(model.runStatus.headline)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if model.runStatus.toolsCompleted > 0 {
+                        Text("\(model.runStatus.toolsCompleted) step\(model.runStatus.toolsCompleted == 1 ? "" : "s")")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 }
             }
 
@@ -615,6 +654,10 @@ struct AgentPanelView: View {
                model.isRunning {
                 AgentInProgressToolRow(toolName: toolName)
             }
+
+            Color.clear
+                .frame(height: 1)
+                .id("agent-activity-bottom")
         }
     }
 

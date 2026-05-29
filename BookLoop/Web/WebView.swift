@@ -218,6 +218,7 @@ struct WebView: NSViewRepresentable {
     static func applyAnnotations(
         _ annotations: [PreviewAnnotation],
         selectedID: UUID?,
+        hoveredID: UUID?,
         pendingDraft: PreviewAnnotationDraftHighlight?,
         in webView: WKWebView
     ) async {
@@ -235,6 +236,9 @@ struct WebView: NSViewRepresentable {
         if let selectedID {
             options["selectedId"] = selectedID.uuidString
         }
+        if let hoveredID {
+            options["hoveredId"] = hoveredID.uuidString
+        }
         if let pendingDraft {
             options["pending"] = [
                 "id": pendingDraft.id.uuidString,
@@ -248,6 +252,24 @@ struct WebView: NSViewRepresentable {
               let optionsData = try? JSONSerialization.data(withJSONObject: options),
               let optionsJSON = String(data: optionsData, encoding: .utf8) else { return }
         let script = "window.BookLoopPreview?.applyHighlights(\(annotationJSON), \(optionsJSON))"
+        _ = try? await webView.evaluateJavaScript(script)
+    }
+
+    static func updateAnnotationHighlightState(
+        selectedID: UUID?,
+        hoveredID: UUID?,
+        in webView: WKWebView
+    ) async {
+        var options: [String: Any] = [:]
+        if let selectedID {
+            options["selectedId"] = selectedID.uuidString
+        }
+        if let hoveredID {
+            options["hoveredId"] = hoveredID.uuidString
+        }
+        guard let optionsData = try? JSONSerialization.data(withJSONObject: options),
+              let optionsJSON = String(data: optionsData, encoding: .utf8) else { return }
+        let script = "window.BookLoopPreview?.setHighlightState(\(optionsJSON))"
         _ = try? await webView.evaluateJavaScript(script)
     }
 
@@ -428,6 +450,7 @@ final class BookPreviewModel: ObservableObject {
     func applyAnnotations(
         _ annotations: [PreviewAnnotation],
         selectedID: UUID? = nil,
+        hoveredID: UUID? = nil,
         pendingDraft: PreviewAnnotationDraftHighlight? = nil
     ) async {
         guard let webView else { return }
@@ -435,7 +458,17 @@ final class BookPreviewModel: ObservableObject {
         await WebView.applyAnnotations(
             annotations,
             selectedID: selectedID,
+            hoveredID: hoveredID,
             pendingDraft: pendingDraft,
+            in: webView
+        )
+    }
+
+    func updateAnnotationHighlightState(selectedID: UUID?, hoveredID: UUID?) async {
+        guard let webView else { return }
+        await WebView.updateAnnotationHighlightState(
+            selectedID: selectedID,
+            hoveredID: hoveredID,
             in: webView
         )
     }
