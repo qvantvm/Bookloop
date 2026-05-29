@@ -146,3 +146,24 @@ html[data-md-color-scheme="dark"] #bookloop-content .admonition.tip { background
 #bookloop-content .task-list-item input { margin-right: 0.4em; }
 
 .katex-display { overflow-x: auto; overflow-y: hidden; }
+
+#bookloop-content mark.bookloop-highlight {
+  background: rgba(255, 214, 10, 0.45);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0.05em 0.1em;
+  cursor: pointer;
+}
+
+#bookloop-content mark.bookloop-highlight:hover {
+  background: rgba(255, 193, 7, 0.65);
+}
+
+@media (prefers-color-scheme: dark) {
+  #bookloop-content mark.bookloop-highlight {
+    background: rgba(255, 193, 7, 0.35);
+  }
+  #bookloop-content mark.bookloop-highlight:hover {
+    background: rgba(255, 193, 7, 0.5);
+  }
+}

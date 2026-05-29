@@ -9,9 +9,11 @@ final class AgentPanelModel: ObservableObject {
     @Published var result: AgentResult?
     @Published var errorMessage: String?
     @Published var infoMessage: String?
+    @Published var queuedTaskCount = 0
 
     private let agent = BookAgent()
     private var shouldCancel = false
+    private var taskInstructionQueue: [String] = []
 
     func cancel() {
         shouldCancel = true
@@ -76,6 +78,41 @@ final class AgentPanelModel: ObservableObject {
         }
 
         isRunning = false
+        await drainTaskQueue(projectStore: projectStore, patchStore: patchStore, settingsStore: settingsStore)
+    }
+
+    func enqueueCustomTask(
+        instruction: String,
+        projectStore: BookProjectStore,
+        patchStore: PatchStore,
+        settingsStore: AppSettingsStore
+    ) async {
+        let text = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        if isRunning {
+            taskInstructionQueue.append(text)
+            queuedTaskCount = taskInstructionQueue.count
+            infoMessage = "Task queued (\(queuedTaskCount) waiting)."
+            return
+        }
+
+        customInstruction = text
+        await run(type: .custom, projectStore: projectStore, patchStore: patchStore, settingsStore: settingsStore)
+    }
+
+    private func drainTaskQueue(
+        projectStore: BookProjectStore,
+        patchStore: PatchStore,
+        settingsStore: AppSettingsStore
+    ) async {
+        while !taskInstructionQueue.isEmpty, !isRunning {
+            let next = taskInstructionQueue.removeFirst()
+            queuedTaskCount = taskInstructionQueue.count
+            customInstruction = next
+            await run(type: .custom, projectStore: projectStore, patchStore: patchStore, settingsStore: settingsStore)
+        }
+        queuedTaskCount = taskInstructionQueue.count
     }
 
     func deleteProposal(projectStore: BookProjectStore, patchStore: PatchStore) {
@@ -212,6 +249,12 @@ struct AgentPanelView: View {
                 }
 
                 Spacer()
+
+                if model.queuedTaskCount > 0 {
+                    Text("\(model.queuedTaskCount) task(s) queued")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 if model.isRunning {
                     Button("Cancel", role: .destructive) { model.cancel() }

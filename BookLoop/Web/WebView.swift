@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import WebKit
 
-final class WebViewCoordinator: NSObject, WKNavigationDelegate {
+final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     var parent: WebView
     var lastGoBackToken: UUID?
     var lastGoForwardToken: UUID?
@@ -12,6 +12,14 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate {
 
     init(parent: WebView) {
         self.parent = parent
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "bookloopAnnotation",
+              let body = message.body as? [String: Any],
+              body["type"] as? String == "click",
+              let id = body["id"] as? String else { return }
+        parent.onAnnotationClicked?(id)
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -83,6 +91,7 @@ struct WebView: NSViewRepresentable {
     var navigateToken: UUID?
     var onPageLoaded: ((WKWebView) -> Void)?
     var onInternalChapterLink: ((URL) -> Void)?
+    var onAnnotationClicked: ((String) -> Void)?
 
     func makeCoordinator() -> WebViewCoordinator {
         WebViewCoordinator(parent: self)
@@ -91,6 +100,7 @@ struct WebView: NSViewRepresentable {
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.preferredContentMode = .desktop
+        configuration.userContentController.add(context.coordinator, name: "bookloopAnnotation")
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
@@ -161,6 +171,47 @@ struct WebView: NSViewRepresentable {
         let script = "window.BookLoopPreview?.setColorSchemeMode(\(encoded))"
         _ = try? await webView.evaluateJavaScript(script)
     }
+
+    static func setupAnnotationHandlers(in webView: WKWebView) async {
+        _ = try? await webView.evaluateJavaScript("window.BookLoopPreview?.setupAnnotationHandlers?.()")
+    }
+
+    static func captureSelectionQuote(in webView: WKWebView) async -> PreviewSelectionQuote? {
+        let script = "window.BookLoopPreview?.captureSelectionQuote?.()"
+        guard let value = try? await webView.evaluateJavaScript(script) else { return nil }
+        guard let dictionary = value as? [String: Any],
+              let exact = dictionary["exact"] as? String,
+              !exact.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return PreviewSelectionQuote(
+            exact: exact,
+            prefix: dictionary["prefix"] as? String ?? "",
+            suffix: dictionary["suffix"] as? String ?? ""
+        )
+    }
+
+    static func applyAnnotations(_ annotations: [PreviewAnnotation], in webView: WKWebView) async {
+        let wire = annotations.map {
+            PreviewAnnotationWire(
+                id: $0.id.uuidString,
+                exact: $0.exact,
+                prefix: $0.prefix,
+                suffix: $0.suffix,
+                note: $0.note
+            )
+        }
+        guard let data = try? JSONEncoder().encode(wire),
+              let json = String(data: data, encoding: .utf8) else { return }
+        let script = "window.BookLoopPreview?.applyHighlights(\(json))"
+        _ = try? await webView.evaluateJavaScript(script)
+    }
+}
+
+private struct PreviewAnnotationWire: Encodable {
+    var id: String
+    var exact: String
+    var prefix: String
+    var suffix: String
+    var note: String
 }
 
 @MainActor
@@ -310,6 +361,17 @@ final class BookPreviewModel: ObservableObject {
         } catch {
             loadError = error.localizedDescription
         }
+    }
+
+    func captureSelectionQuote() async -> PreviewSelectionQuote? {
+        guard let webView else { return nil }
+        return await WebView.captureSelectionQuote(in: webView)
+    }
+
+    func applyAnnotations(_ annotations: [PreviewAnnotation]) async {
+        guard let webView else { return }
+        await WebView.setupAnnotationHandlers(in: webView)
+        await WebView.applyAnnotations(annotations, in: webView)
     }
 
     func setAutoRefreshEnabled(_ enabled: Bool) {

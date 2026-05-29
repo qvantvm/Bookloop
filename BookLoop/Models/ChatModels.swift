@@ -127,3 +127,9 @@ enum WorkspaceMode: Equatable {
     case reading
     case tool(WorkspaceTab)
 }
+
+struct ReadingPanelLayout: Equatable {
+    var isSidebarVisible = true
+    var isChatVisible = true
+    var isAnnotationsPanelVisible = false
+}

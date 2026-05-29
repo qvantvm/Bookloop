@@ -6,7 +6,6 @@ struct LibrarySidebarView: View {
     @EnvironmentObject private var reviewStore: ReviewStore
     @EnvironmentObject private var figureStore: FigureStore
     @EnvironmentObject private var patchStore: PatchStore
-    @EnvironmentObject private var taskStore: TaskStore
 
     @Binding var isSidebarVisible: Bool
     let previewStatus: LocalAPIStatus

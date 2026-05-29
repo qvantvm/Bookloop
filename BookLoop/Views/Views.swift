@@ -188,7 +188,6 @@ struct ReviewBrowserView: View {
     let book: BookConfig
     @State private var selectedDetailID: String?
     @State private var grouping: ReviewGrouping = .chapter
-    @State private var showsFeedbackForm = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -219,13 +218,13 @@ struct ReviewBrowserView: View {
                 Picker("Sort", selection: $reviewStore.sortMode) {
                     ForEach(ReviewStore.SortMode.allCases) { Text($0.rawValue).tag($0) }
                 }
-                Button(showsFeedbackForm ? "Hide Submit Review" : "Submit Review") {
-                    showsFeedbackForm.toggle()
+                Button(reviewStore.showsSubmitReviewForm ? "Hide Submit Review" : "Submit Review") {
+                    reviewStore.showsSubmitReviewForm.toggle()
                 }
             }
             .padding(8)
 
-            if showsFeedbackForm {
+            if reviewStore.showsSubmitReviewForm {
                 Divider()
                 ScrollView {
                     FeedbackPanelView(book: book)
@@ -1200,118 +1199,6 @@ struct FigurePreview: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.secondary.opacity(0.08))
-        }
-    }
-}
-
-struct TaskBrowserView: View {
-    @EnvironmentObject private var taskStore: TaskStore
-    @EnvironmentObject private var reviewStore: ReviewStore
-    @EnvironmentObject private var webModel: WebViewModel
-
-    let book: BookConfig
-    @State private var selectedURL: URL?
-    @State private var validationOutput: String?
-    @State private var confirmingValidation = false
-    @State private var isRunningValidation = false
-
-    var body: some View {
-        HSplitView {
-            VStack {
-                HStack {
-                    Button("Current Chapter Task") {
-                        taskStore.generate(book: book, mode: .proposePatchOnly, chapterID: webModel.detectedChapterID, reviewItems: [], selectedText: webModel.selectedText)
-                    }
-                    Button("Validation Task") {
-                        taskStore.generate(book: book, mode: .validateBook, chapterID: nil, reviewItems: [], selectedText: nil)
-                    }
-                    Button(isRunningValidation ? "Running Validation..." : "Run Validation Command") {
-                        confirmingValidation = true
-                    }
-                    .disabled(isRunningValidation || !book.allowShellCommands || book.validationCommand?.nilIfBlank == nil)
-                    Button("Refresh") {
-                        taskStore.refresh(book: book)
-                    }
-                }
-                .padding(8)
-                List(selection: $selectedURL) {
-                    ForEach(taskStore.taskFiles, id: \.self) { url in
-                        VStack(alignment: .leading) {
-                            Text(url.lastPathComponent)
-                            Text(url.path)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        .tag(url)
-                    }
-                }
-            }
-            .frame(minWidth: 320)
-
-            VStack(alignment: .leading, spacing: 10) {
-                if let selectedURL {
-                    Text(selectedURL.lastPathComponent)
-                        .font(.headline)
-                    ScrollView {
-                        Text((try? String(contentsOf: selectedURL, encoding: .utf8)) ?? "")
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding()
-                    }
-                    HStack {
-                        Button("Open Task in Finder") { FileHelpers.openInFinder(path: selectedURL.path) }
-                        Button("Copy Task Text") {
-                            FileHelpers.copyToPasteboard((try? String(contentsOf: selectedURL, encoding: .utf8)) ?? "")
-                        }
-                    }
-                    .padding([.horizontal, .bottom])
-                    if let validationOutput {
-                        Divider()
-                        Text("Validation Output")
-                            .font(.headline)
-                            .padding(.horizontal)
-                        ScrollView {
-                            Text(validationOutput)
-                                .font(.system(.caption, design: .monospaced))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding()
-                        }
-                        .frame(maxHeight: 180)
-                    }
-                } else {
-                    EmptyStateView(title: "No Task Selected", message: "Generate or select a Cursor-ready task file.", systemImage: "checklist")
-                }
-            }
-            .frame(minWidth: 420)
-        }
-        .onAppear {
-            taskStore.refresh(book: book)
-            selectedURL = taskStore.taskFiles.first
-        }
-        .alert("Run validation command?", isPresented: $confirmingValidation) {
-            Button("Cancel", role: .cancel) {}
-            Button("Run") { Task { await runValidationCommand() } }
-        } message: {
-            Text("BookLoop will run this command in the book root: \(book.validationCommand ?? "")")
-        }
-    }
-
-    private func runValidationCommand() async {
-        guard book.allowShellCommands, let command = book.validationCommand?.nilIfBlank else {
-            validationOutput = "Shell commands are disabled or no validation command is configured."
-            return
-        }
-        isRunningValidation = true
-        validationOutput = "Running: \(command)"
-        defer { isRunningValidation = false }
-        do {
-            let result = try await ShellCommandRunner().runAsync(command: command, book: book)
-            validationOutput = "Command: \(command)\nExit code: \(result.exitCode)\n\(result.combinedOutput)"
-        } catch {
-            validationOutput = error.localizedDescription
         }
     }
 }

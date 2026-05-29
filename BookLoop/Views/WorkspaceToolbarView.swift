@@ -76,7 +76,7 @@ struct WorkspaceToolbarView: View {
 
 extension WorkspaceTab {
     static var toolTabs: [WorkspaceTab] {
-        allCases.filter { $0 != .preview }
+        [.search, .reviews, .tasks, .agent, .patches, .figures, .settings]
     }
 
     var toolbarIcon: String {

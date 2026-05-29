@@ -390,6 +390,22 @@ struct RevisionTask: Identifiable, Codable {
     var expectedOutputs: [String]
 }
 
+enum TaskCategory: String, CaseIterable {
+    case content
+    case reviews
+    case figures
+    case validate
+
+    var sectionTitle: String {
+        switch self {
+        case .content: return "Content"
+        case .reviews: return "Reviews"
+        case .figures: return "Figures"
+        case .validate: return "Validate"
+        }
+    }
+}
+
 enum RevisionTaskMode: String, Codable, CaseIterable, Identifiable {
     case proposePatchOnly = "propose_patch_only"
     case planOnly = "plan_only"
@@ -408,6 +424,118 @@ enum RevisionTaskMode: String, Codable, CaseIterable, Identifiable {
         case .validateBook: return "Validate Book"
         }
     }
+
+    var filenameKey: String {
+        rawValue.replacingOccurrences(of: "_", with: "-")
+    }
+
+    var category: TaskCategory {
+        switch self {
+        case .proposePatchOnly, .planOnly: return .content
+        case .fixReviews: return .reviews
+        case .proposeFigure: return .figures
+        case .validateBook: return .validate
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .proposePatchOnly: return "doc.text"
+        case .planOnly: return "list.bullet.clipboard"
+        case .proposeFigure: return "photo"
+        case .fixReviews: return "text.bubble"
+        case .validateBook: return "checkmark.shield"
+        }
+    }
+
+    var taskDescription: String {
+        switch self {
+        case .proposePatchOnly:
+            return "Ask an external agent to propose edits for the current chapter as a unified diff."
+        case .planOnly:
+            return "Produce a revision plan without editing files or generating a patch."
+        case .proposeFigure:
+            return "Create a reproducible script-based figure and return changes as a patch."
+        case .fixReviews:
+            return "Address selected review items by proposing a unified diff."
+        case .validateBook:
+            return "Run the configured validation command and report issues without modifying files."
+        }
+    }
+
+    var requiresSelectedReviews: Bool {
+        self == .fixReviews
+    }
+
+    static func modes(in category: TaskCategory) -> [RevisionTaskMode] {
+        allCases.filter { $0.category == category }
+    }
+
+    static func from(filenameKey: String) -> RevisionTaskMode? {
+        allCases.first { $0.filenameKey == filenameKey }
+    }
+}
+
+struct TaskFileSummary: Identifiable {
+    var id: URL { url }
+
+    let url: URL
+    let createdAt: Date?
+    let mode: RevisionTaskMode?
+    let chapterSlug: String?
+
+    var displayTitle: String {
+        mode?.displayName ?? url.deletingPathExtension().lastPathComponent
+    }
+
+    var chapterLabel: String? {
+        guard let slug = chapterSlug, slug != "book", !slug.isEmpty else { return nil }
+        return slug.replacingOccurrences(of: "-", with: " ")
+    }
+
+    static func parse(_ url: URL) -> TaskFileSummary {
+        let filename = url.deletingPathExtension().lastPathComponent
+        let createdAt = taskDate(from: filename)
+        var mode: RevisionTaskMode?
+        var chapterSlug: String?
+
+        if filename.count > 16 {
+            let remainder = String(filename.dropFirst(16))
+            let sortedModes = RevisionTaskMode.allCases.sorted { $0.filenameKey.count > $1.filenameKey.count }
+            for candidate in sortedModes {
+                let key = candidate.filenameKey
+                if remainder == key {
+                    mode = candidate
+                    chapterSlug = "book"
+                    break
+                }
+                if remainder.hasPrefix(key + "-") {
+                    mode = candidate
+                    chapterSlug = String(remainder.dropFirst(key.count + 1))
+                    break
+                }
+            }
+        }
+
+        let modifiedAt = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        return TaskFileSummary(
+            url: url,
+            createdAt: createdAt ?? modifiedAt,
+            mode: mode,
+            chapterSlug: chapterSlug
+        )
+    }
+
+    private static func taskDate(from filename: String) -> Date? {
+        guard filename.count >= 15 else { return nil }
+        return DateFormatting.taskFilename.date(from: String(filename.prefix(15)))
+    }
+}
+
+struct PendingAgentTaskRun: Equatable {
+    let url: URL
+    let text: String
+    let mode: RevisionTaskMode
 }
 
 struct FigureItem: Identifiable, Codable, Equatable {
@@ -567,4 +695,20 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
     case settings = "Settings"
 
     var id: String { rawValue }
+}
+
+extension WorkspaceTab {
+    enum SidePanelPolicy {
+        case showBoth
+        case hideBoth
+    }
+
+    var sidePanelPolicy: SidePanelPolicy {
+        switch self {
+        case .reviews:
+            return .showBoth
+        case .preview, .search, .figures, .tasks, .agent, .patches, .settings:
+            return .hideBoth
+        }
+    }
 }

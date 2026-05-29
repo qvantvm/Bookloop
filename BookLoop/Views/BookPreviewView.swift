@@ -4,10 +4,14 @@ import WebKit
 struct BookPreviewView: View {
     @EnvironmentObject private var projectStore: ProjectContentStore
     @EnvironmentObject private var settingsStore: AppSettingsStore
+    @EnvironmentObject private var annotationStore: PreviewAnnotationStore
     @ObservedObject var model: BookPreviewModel
     @ObservedObject var chatModel: ChatPanelModel
     @Binding var isSidebarVisible: Bool
     @Binding var isChatVisible: Bool
+    @Binding var showAnnotationsPanel: Bool
+
+    @State private var editorError: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,17 +25,42 @@ struct BookPreviewView: View {
                     .padding(.bottom, 4)
             }
             Divider()
-            previewContent
+            previewBody
         }
         .onChange(of: model.autoRefreshEnabled) { _, enabled in
             model.setAutoRefreshEnabled(enabled)
         }
         .onAppear {
             model.setColorSchemeMode(settingsStore.previewColorScheme)
+            annotationStore.refresh(book: model.book)
+        }
+        .onChange(of: model.book?.id) { _, _ in
+            annotationStore.refresh(book: model.book)
+            Task { await refreshAnnotations() }
+        }
+        .onChange(of: model.currentChapterPath) { _, _ in
+            Task { await refreshAnnotations() }
         }
         .onChange(of: settingsStore.previewColorScheme) { _, mode in
             model.setColorSchemeMode(mode)
             Task { await model.applyColorSchemeToWebView() }
+        }
+        .sheet(isPresented: $annotationStore.isEditorPresented) {
+            annotationEditorSheet
+                .environmentObject(annotationStore)
+        }
+    }
+
+    @ViewBuilder
+    private var previewBody: some View {
+        HSplitView {
+            previewContent
+                .frame(minWidth: 400)
+
+            if showAnnotationsPanel {
+                annotationsPanel
+                    .frame(minWidth: 240, idealWidth: 280, maxWidth: 340)
+            }
         }
     }
 
@@ -50,10 +79,16 @@ struct BookPreviewView: View {
                 goForwardToken: model.goForwardToken,
                 onPageLoaded: { webView in
                     model.handlePageLoaded(webView)
-                    Task { await refreshPageContext(from: webView) }
+                    Task {
+                        await refreshPageContext(from: webView)
+                        await refreshAnnotations()
+                    }
                 },
                 onInternalChapterLink: { url in
                     model.handleInternalLink(url)
+                },
+                onAnnotationClicked: { annotationID in
+                    handleAnnotationClick(annotationID)
                 }
             )
         } else if let error = model.loadError {
@@ -75,6 +110,132 @@ struct BookPreviewView: View {
                 systemImage: "book.fill"
             )
         }
+    }
+
+    private var annotationsPanel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Annotations")
+                    .font(.headline)
+                Spacer()
+                Text("\(chapterAnnotations.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+
+            Divider()
+
+            if chapterAnnotations.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No highlights on this chapter.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Select text in the preview, then click Highlight & Note.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                .padding(12)
+                Spacer()
+            } else {
+                ScrollView {
+                    VStack(spacing: 8) {
+                        ForEach(chapterAnnotations) { annotation in
+                            annotationCard(annotation)
+                        }
+                    }
+                    .padding(10)
+                }
+            }
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    private func annotationCard(_ annotation: PreviewAnnotation) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(annotation.exact)
+                .font(.caption.weight(.semibold))
+                .lineLimit(3)
+                .foregroundStyle(.primary)
+
+            if !annotation.note.isEmpty {
+                Text(annotation.note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+            }
+
+            HStack {
+                Text(DateFormatting.display.string(from: annotation.updatedAt))
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Button("Edit") {
+                    annotationStore.beginEdit(annotation)
+                }
+                .font(.caption)
+                if let book = model.book {
+                    Button("Delete", role: .destructive) {
+                        Task {
+                            try? annotationStore.delete(id: annotation.id, book: book)
+                            await refreshAnnotations()
+                        }
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            annotationStore.selectedAnnotationID == annotation.id
+                ? Color.accentColor.opacity(0.12)
+                : Color.secondary.opacity(0.08),
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+        .onTapGesture {
+            annotationStore.selectedAnnotationID = annotation.id
+        }
+    }
+
+    private var annotationEditorSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(annotationStore.editingAnnotationID == nil ? "New Highlight" : "Edit Annotation")
+                .font(.headline)
+
+            if let quote = annotationStore.draftQuote {
+                Text(quote.exact)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            TextField("Note (optional)", text: $annotationStore.draftNote, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .lineLimit(3...8)
+
+            if let editorError {
+                Text(editorError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            HStack {
+                Button("Cancel") {
+                    editorError = nil
+                    annotationStore.cancelEditor()
+                }
+                Spacer()
+                Button(annotationStore.editingAnnotationID == nil ? "Save Highlight" : "Save") {
+                    saveAnnotation()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
     }
 
     private var previewToolbar: some View {
@@ -104,6 +265,22 @@ struct BookPreviewView: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
+            Button("Highlight & Note") {
+                Task { await beginHighlightFromSelection() }
+            }
+            .disabled(model.book == nil || model.webView == nil)
+            .help("Select text in the preview, then add a highlight and note.")
+
+            if let editorError {
+                Text(editorError)
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                    .lineLimit(1)
+            }
+
+            Toggle("Annotations", isOn: $showAnnotationsPanel)
+                .toggleStyle(.checkbox)
+
             Toggle("Auto Refresh", isOn: $model.autoRefreshEnabled)
                 .toggleStyle(.checkbox)
 
@@ -126,6 +303,11 @@ struct BookPreviewView: View {
         .padding(10)
     }
 
+    private var chapterAnnotations: [PreviewAnnotation] {
+        guard let path = model.currentChapterPath else { return [] }
+        return annotationStore.annotations(for: path)
+    }
+
     private var currentChapter: Chapter? {
         guard let path = model.currentChapterPath else { return nil }
         return projectStore.chapters.first { $0.relativePath == path }
@@ -138,5 +320,41 @@ struct BookPreviewView: View {
         model.detectedChapterID = chapterID
         model.pageTitle = pageTitle
         chatModel.updatePageContext(chapterID: chapterID, pageTitle: pageTitle, pageURL: model.currentURL)
+    }
+
+    private func refreshAnnotations() async {
+        guard let path = model.currentChapterPath else { return }
+        let annotations = annotationStore.annotations(for: path)
+        await model.applyAnnotations(annotations)
+    }
+
+    private func beginHighlightFromSelection() async {
+        editorError = nil
+        guard let quote = await model.captureSelectionQuote() else {
+            editorError = PreviewAnnotationStoreError.missingSelection.errorDescription
+            return
+        }
+        annotationStore.beginCreate(quote: quote)
+    }
+
+    private func saveAnnotation() {
+        guard let book = model.book, let path = model.currentChapterPath else { return }
+        do {
+            _ = try annotationStore.saveDraft(
+                book: book,
+                chapterPath: path,
+                chapterID: model.detectedChapterID
+            )
+            editorError = nil
+            Task { await refreshAnnotations() }
+        } catch {
+            editorError = error.localizedDescription
+        }
+    }
+
+    private func handleAnnotationClick(_ rawID: String) {
+        guard let uuid = UUID(uuidString: rawID),
+              let annotation = annotationStore.annotation(id: uuid) else { return }
+        annotationStore.beginEdit(annotation)
     }
 }

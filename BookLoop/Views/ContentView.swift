@@ -15,12 +15,15 @@ struct ContentView: View {
     @StateObject private var chatModel = ChatPanelModel()
     @StateObject private var agentPanelModel = AgentPanelModel()
     @StateObject private var searchPanelModel = SearchPanelModel()
+    @StateObject private var annotationStore = PreviewAnnotationStore()
 
     @State private var workspaceMode: WorkspaceMode = .reading
     @State private var editingBook: BookConfig?
     @State private var showingAppSettings = false
     @State private var isSidebarVisible = true
     @State private var isChatVisible = true
+    @State private var showAnnotationsPanel = false
+    @State private var savedReadingLayout = ReadingPanelLayout()
 
     var body: some View {
         HSplitView {
@@ -40,6 +43,8 @@ struct ContentView: View {
         .environmentObject(patchStore)
         .environmentObject(previewModel)
         .environmentObject(agentPanelModel)
+        .environmentObject(annotationStore)
+        .environmentObject(searchPanelModel)
         .sheet(item: $editingBook) { book in
             BookSettingsView(book: book) { updated in
                 var updated = updated
@@ -65,8 +70,30 @@ struct ContentView: View {
             workspaceMode = .reading
             refreshProjectState()
         }
+        .onChange(of: workspaceMode) { previousMode, newMode in
+            applyPanelLayout(for: newMode, leaving: previousMode)
+        }
+        .onChange(of: showAnnotationsPanel) { _, enabled in
+            guard case .reading = workspaceMode else { return }
+            withAnimation {
+                isChatVisible = !enabled
+            }
+        }
         .onChange(of: previewModel.detectedChapterID) { _, newValue in
             bookProjectStore.refresh(book: library.selectedBook, currentChapterID: newValue)
+        }
+        .onChange(of: taskStore.pendingAgentRun) { _, pending in
+            guard let pending else { return }
+            workspaceMode = .tool(.agent)
+            Task {
+                await agentPanelModel.enqueueCustomTask(
+                    instruction: pending.text,
+                    projectStore: bookProjectStore,
+                    patchStore: patchStore,
+                    settingsStore: settingsStore
+                )
+                taskStore.pendingAgentRun = nil
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .bookLoopReloadPreview)) { _ in
             previewModel.reload()
@@ -113,7 +140,8 @@ struct ContentView: View {
                 model: previewModel,
                 chatModel: chatModel,
                 isSidebarVisible: $isSidebarVisible,
-                isChatVisible: $isChatVisible
+                isChatVisible: $isChatVisible,
+                showAnnotationsPanel: $showAnnotationsPanel
             )
             .environmentObject(projectStore)
             .frame(minWidth: 500)
@@ -134,8 +162,6 @@ struct ContentView: View {
             .environmentObject(patchStore)
             .environmentObject(previewModel)
             .environmentObject(settingsStore)
-            .environmentObject(agentPanelModel)
-            .environmentObject(searchPanelModel)
             .frame(minWidth: 500)
         }
     }
@@ -180,6 +206,7 @@ struct ContentView: View {
         taskStore.refresh(book: book)
         patchStore.refresh(book: book)
         bookProjectStore.refresh(book: book, currentChapterID: previewModel.detectedChapterID)
+        annotationStore.refresh(book: book)
 
         guard let book else {
             previewModel.reset()
@@ -215,6 +242,37 @@ struct ContentView: View {
         guard let book = library.selectedBook else { return }
         library.deleteBook(book)
         refreshProjectState()
+    }
+
+    private func applyPanelLayout(for mode: WorkspaceMode, leaving previousMode: WorkspaceMode) {
+        if case .reading = previousMode {
+            savedReadingLayout = ReadingPanelLayout(
+                isSidebarVisible: isSidebarVisible,
+                isChatVisible: isChatVisible,
+                isAnnotationsPanelVisible: showAnnotationsPanel
+            )
+        }
+
+        withAnimation {
+            switch mode {
+            case .reading:
+                isSidebarVisible = savedReadingLayout.isSidebarVisible
+                showAnnotationsPanel = savedReadingLayout.isAnnotationsPanelVisible
+                isChatVisible = !savedReadingLayout.isAnnotationsPanelVisible
+            case .tool(let tab):
+                switch tab.sidePanelPolicy {
+                case .showBoth:
+                    isSidebarVisible = true
+                    isChatVisible = true
+                    if tab == .reviews {
+                        reviewStore.showsSubmitReviewForm = false
+                    }
+                case .hideBoth:
+                    isSidebarVisible = false
+                    isChatVisible = false
+                }
+            }
+        }
     }
 }
 
@@ -317,10 +375,18 @@ struct ToolWorkspaceView: View {
                 .environmentObject(figureStore)
                 .environmentObject(taskStore)
         case .tasks:
-            TaskBrowserView(book: book)
+            TaskPanelView(
+                book: book,
+                workspaceMode: $workspaceMode,
+                showingAppSettings: $showingAppSettings
+            )
                 .environmentObject(taskStore)
                 .environmentObject(reviewStore)
                 .environmentObject(previewModel)
+                .environmentObject(agentPanelModel)
+                .environmentObject(bookProjectStore)
+                .environmentObject(settingsStore)
+                .environmentObject(patchStore)
         case .patches:
             PatchReviewView(book: book)
                 .environmentObject(patchStore)

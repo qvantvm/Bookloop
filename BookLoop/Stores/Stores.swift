@@ -144,6 +144,7 @@ final class ReviewStore: ObservableObject {
     @Published var isRepairingArtifacts = false
     @Published var lastArtifactsRepairMessage: String?
     @Published var errorMessage: String?
+    @Published var showsSubmitReviewForm = false
 
     private var maintenanceBook: BookConfig?
     private var maintenanceTimer: Timer?
@@ -377,7 +378,9 @@ final class TaskStore: ObservableObject {
     @Published var taskFiles: [URL] = []
     @Published var lastGeneratedText: String?
     @Published var lastGeneratedPath: String?
+    @Published var lastGeneratedURL: URL?
     @Published var message: String?
+    @Published var pendingAgentRun: PendingAgentTaskRun?
 
     func refresh(book: BookConfig?) {
         guard let book else {
@@ -399,7 +402,9 @@ final class TaskStore: ObservableObject {
             let result = try TaskGenerator().generateTask(book: book, mode: mode, chapterID: chapterID, reviewItems: reviewItems, selectedText: selectedText)
             lastGeneratedText = result.text
             lastGeneratedPath = result.url.path
-            message = "Generated \(result.url.lastPathComponent)"
+            lastGeneratedURL = result.url
+            message = "Generated \(result.url.lastPathComponent) — running in Agent"
+            pendingAgentRun = PendingAgentTaskRun(url: result.url, text: result.text, mode: mode)
             refresh(book: book)
         } catch {
             message = error.localizedDescription
