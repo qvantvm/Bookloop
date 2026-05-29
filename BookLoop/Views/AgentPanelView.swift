@@ -267,11 +267,6 @@ struct AgentPanelView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
-                        if model.isRunning || model.isStopping || !model.liveToolLog.isEmpty {
-                            activitySection
-                                .id("agent-activity")
-                        }
-
                         workflowHint
                         taskCatalogSection
                         customTaskSection
@@ -289,12 +284,23 @@ struct AgentPanelView: View {
                         } else if !model.isRunning && !model.isStopping && model.liveToolLog.isEmpty {
                             emptyStateCard
                         }
+
+                        if model.isRunning || model.isStopping || !model.liveToolLog.isEmpty {
+                            activitySection
+                                .id("agent-activity")
+                        }
                     }
                     .padding()
                 }
                 .onChange(of: model.liveToolLog.count) { _, _ in
                     withAnimation(.easeOut(duration: 0.2)) {
-                        proxy.scrollTo("agent-activity", anchor: .top)
+                        proxy.scrollTo("agent-activity", anchor: .bottom)
+                    }
+                }
+                .onChange(of: model.isRunning) { _, isRunning in
+                    guard isRunning else { return }
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        proxy.scrollTo("agent-activity", anchor: .bottom)
                     }
                 }
             }
@@ -815,31 +821,87 @@ struct AgentTaskCardView: View {
 
 struct AgentToolLogCardView: View {
     let entry: AgentToolLogEntry
+    @State private var isExpanded = false
+
+    private var toolDisplayName: String {
+        entry.toolName.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private var collapsedPreview: String {
+        let trimmed = entry.resultSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "No output" }
+        let firstLine = trimmed.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? trimmed
+        if firstLine.count > 140 {
+            return String(firstLine.prefix(137)) + "…"
+        }
+        return firstLine
+    }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Image(systemName: entry.succeeded ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .foregroundStyle(entry.succeeded ? .green : .red)
-                .font(.body)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(entry.toolName.replacingOccurrences(of: "_", with: " "))
-                        .font(.caption.weight(.semibold))
-                    Spacer()
-                    Text(DateFormatting.display.string(from: entry.timestamp))
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                if !entry.arguments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    detailBlock(title: "Arguments", text: AgentToolLogFormatting.prettyJSON(entry.arguments))
                 }
-                Text(entry.resultSummary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(4)
-                    .multilineTextAlignment(.leading)
+                detailBlock(title: entry.succeeded ? "Result" : "Error", text: entry.resultSummary)
+            }
+            .padding(.top, 8)
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: entry.succeeded ? "checkmark.circle.fill" : "xmark.circle.fill")
+                    .foregroundStyle(entry.succeeded ? .green : .red)
+                    .font(.body)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(toolDisplayName)
+                            .font(.caption.weight(.semibold))
+                        Spacer()
+                        Text(DateFormatting.display.string(from: entry.timestamp))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Text(collapsedPreview)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(isExpanded ? nil : 2)
+                        .multilineTextAlignment(.leading)
+                }
             }
         }
         .padding(12)
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func detailBlock(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ScrollView {
+                Text(text)
+                    .font(.system(.caption2, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 220)
+            .padding(8)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+    }
+}
+
+private enum AgentToolLogFormatting {
+    static func prettyJSON(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data),
+              let prettyData = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
+              let pretty = String(data: prettyData, encoding: .utf8) else {
+            return raw
+        }
+        return pretty
     }
 }
 

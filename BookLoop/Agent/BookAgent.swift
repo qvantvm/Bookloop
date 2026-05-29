@@ -143,7 +143,7 @@ final class BookAgent {
                             id: UUID(),
                             toolName: call.function.name,
                             arguments: call.function.arguments,
-                            resultSummary: String(result.prefix(300)),
+                            resultSummary: result,
                             succeeded: true,
                             timestamp: entryStart
                         ))
