@@ -1462,7 +1462,7 @@ final class TaskGenerator {
         case .fixReviews:
             return "Fix selected reviews by proposing a unified diff. Do not directly apply changes."
         case .validateBook:
-            if book.validationCommand?.nilIfBlank != nil {
+            if book.effectiveValidationCommand != nil {
                 return "Run the configured validation command and report issues. Do not directly modify files."
             }
             return "Use scan_broken_links and review checks to validate the book. Do not run mkdocs or other external build tools. Do not directly modify files."
@@ -1492,7 +1492,7 @@ final class TaskGenerator {
             "",
             "## Validation Checklist",
         ]
-        if book.validationCommand?.nilIfBlank != nil {
+        if book.effectiveValidationCommand != nil {
             lines.append("- Run the configured validation command if possible.")
         } else {
             lines.append("- Use scan_broken_links to find missing figures and broken local asset links.")
@@ -1509,7 +1509,7 @@ final class TaskGenerator {
     }
 
     private func validationConstraintLine(book: BookConfig) -> String? {
-        if book.validationCommand?.nilIfBlank != nil {
+        if book.effectiveValidationCommand != nil {
             return "- Run the configured validation command if possible."
         }
         return "- Use scan_broken_links for link and asset validation; BookLoop preview does not require mkdocs."

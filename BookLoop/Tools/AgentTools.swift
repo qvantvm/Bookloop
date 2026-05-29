@@ -205,12 +205,8 @@ enum AgentTools {
     }
 
     static func runBuild(context: AgentToolContext) throws -> BuildResult {
-        let command = context.project.config.buildCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty else {
+        guard let command = ValidationCommandPolicy.effective(context.project.config.buildCommand) else {
             throw AgentToolError.validationCommandNotConfigured
-        }
-        guard command == context.project.config.buildCommand else {
-            throw ProcessRunnerError.commandNotAllowed(command)
         }
         return try context.project.withSecurityScoped {
             try ProcessRunner().run(

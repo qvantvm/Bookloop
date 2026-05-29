@@ -34,7 +34,7 @@ final class BookLibraryStore: ObservableObject {
             guard FileManager.default.fileExists(atPath: url.path) else { return }
             let data = try Data(contentsOf: url)
             let persisted = try JSONDecoder().decode(PersistedLibrary.self, from: data)
-            books = persisted.books
+            books = persisted.books.map { $0.clearingLegacyMkdocsValidationCommand() }
             selectedBookID = persisted.selectedBookID ?? persisted.books.first?.id
         } catch {
             books = []

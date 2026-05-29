@@ -26,4 +26,5 @@ struct BookLoopApp: App {
 
 extension Notification.Name {
     static let bookLoopReloadPreview = Notification.Name("BookLoopReloadPreview")
+    static let bookLoopRefreshAnnotations = Notification.Name("BookLoopRefreshAnnotations")
 }

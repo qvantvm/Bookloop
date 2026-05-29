@@ -38,12 +38,25 @@ struct BookPreviewView: View {
         .onAppear {
             model.setColorSchemeMode(settingsStore.previewColorScheme)
             annotationStore.refresh(book: model.book)
+            Task { await refreshAnnotations() }
         }
         .onChange(of: model.book?.id) { _, _ in
             annotationStore.refresh(book: model.book)
             Task { await refreshAnnotations() }
         }
         .onChange(of: model.currentChapterPath) { _, _ in
+            Task { await refreshAnnotations() }
+        }
+        .onChange(of: annotationStore.selectedAnnotationID) { _, _ in
+            Task { await refreshAnnotations() }
+        }
+        .onChange(of: annotationStore.draftHighlightID) { _, _ in
+            Task { await refreshAnnotations() }
+        }
+        .onChange(of: annotationStore.isEditorPresented) { _, _ in
+            Task { await refreshAnnotations() }
+        }
+        .onChange(of: annotationStore.annotations.count) { _, _ in
             Task { await refreshAnnotations() }
         }
         .onChange(of: settingsStore.previewColorScheme) { _, mode in
@@ -53,6 +66,9 @@ struct BookPreviewView: View {
         .sheet(isPresented: $annotationStore.isEditorPresented) {
             annotationEditorSheet
                 .environmentObject(annotationStore)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .bookLoopRefreshAnnotations)) { _ in
+            Task { await refreshAnnotations() }
         }
     }
 
@@ -94,6 +110,9 @@ struct BookPreviewView: View {
                 },
                 onAnnotationClicked: { annotationID in
                     handleAnnotationClick(annotationID)
+                },
+                onAnnotationSaveReview: { annotationID in
+                    handleSaveReviewFromBadge(annotationID)
                 }
             )
         } else if let error = model.loadError {
@@ -184,10 +203,23 @@ struct BookPreviewView: View {
 
     private func annotationCard(_ annotation: PreviewAnnotation) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(annotation.exact)
-                .font(.caption.weight(.semibold))
-                .lineLimit(3)
-                .foregroundStyle(.primary)
+            HStack(alignment: .top, spacing: 8) {
+                Text(annotation.exact)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(3)
+                    .foregroundStyle(.primary)
+
+                Spacer(minLength: 0)
+
+                if annotation.isSavedAsReview {
+                    Label("In Reviews", systemImage: "checkmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.green.opacity(0.12), in: Capsule())
+                }
+            }
 
             if !annotation.note.isEmpty {
                 Text(annotation.note)
@@ -201,17 +233,6 @@ struct BookPreviewView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 Spacer()
-                if annotation.isSavedAsReview {
-                    Label("In Reviews", systemImage: "checkmark.circle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.green)
-                } else if let book = model.book {
-                    Button(savingReviewAnnotationID == annotation.id ? "Saving…" : "Save as Review") {
-                        saveAnnotationAsReview(annotation, book: book)
-                    }
-                    .disabled(savingReviewAnnotationID != nil || isSavingAllReviews)
-                    .font(.caption)
-                }
                 Button("Edit") {
                     annotationStore.beginEdit(annotation)
                 }
@@ -235,8 +256,14 @@ struct BookPreviewView: View {
                 : Color.secondary.opacity(0.08),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous)
         )
+        .overlay {
+            if annotationStore.selectedAnnotationID == annotation.id {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(Color.accentColor.opacity(0.45), lineWidth: 1)
+            }
+        }
         .onTapGesture {
-            annotationStore.selectedAnnotationID = annotation.id
+            selectAnnotation(annotation)
         }
     }
 
@@ -376,7 +403,26 @@ struct BookPreviewView: View {
     private func refreshAnnotations() async {
         guard let path = model.currentChapterPath else { return }
         let annotations = annotationStore.annotations(for: path)
-        await model.applyAnnotations(annotations)
+        let pendingDraft: PreviewAnnotationDraftHighlight?
+        if let draftHighlightID = annotationStore.draftHighlightID,
+           let quote = annotationStore.draftQuote {
+            pendingDraft = PreviewAnnotationDraftHighlight(id: draftHighlightID, quote: quote)
+        } else {
+            pendingDraft = nil
+        }
+        await model.applyAnnotations(
+            annotations,
+            selectedID: annotationStore.selectedAnnotationID,
+            pendingDraft: pendingDraft
+        )
+    }
+
+    private func selectAnnotation(_ annotation: PreviewAnnotation) {
+        annotationStore.selectedAnnotationID = annotation.id
+        Task {
+            await refreshAnnotations()
+            await model.scrollToAnnotation(id: annotation.id)
+        }
     }
 
     private func beginHighlightFromSelection() async {
@@ -386,6 +432,7 @@ struct BookPreviewView: View {
             return
         }
         annotationStore.beginCreate(quote: quote)
+        await refreshAnnotations()
     }
 
     private func saveAnnotation() {
@@ -441,11 +488,26 @@ struct BookPreviewView: View {
             )
             reviewSaveMessage = "Saved review: \(response.file)"
             reviewSaveIsError = false
+            Task { await refreshAnnotations() }
         } catch {
             reviewSaveMessage = error.localizedDescription
             reviewSaveIsError = true
         }
         savingReviewAnnotationID = nil
+    }
+
+    private func handleSaveReviewFromBadge(_ rawID: String) {
+        guard let uuid = UUID(uuidString: rawID),
+              let annotation = annotationStore.annotation(id: uuid),
+              let book = model.book else { return }
+        selectAnnotation(annotation)
+        saveAnnotationAsReview(annotation, book: book)
+    }
+
+    private func handleAnnotationClick(_ rawID: String) {
+        guard let uuid = UUID(uuidString: rawID),
+              let annotation = annotationStore.annotation(id: uuid) else { return }
+        selectAnnotation(annotation)
     }
 
     private func saveAllAnnotationsAsReviews() {
@@ -465,9 +527,11 @@ struct BookPreviewView: View {
         if result.savedCount > 0, result.errors.isEmpty {
             reviewSaveMessage = "Saved \(result.savedCount) review\(result.savedCount == 1 ? "" : "s"). Open the Reviews tab to see them."
             reviewSaveIsError = false
+            Task { await refreshAnnotations() }
         } else if result.savedCount > 0 {
             reviewSaveMessage = "Saved \(result.savedCount) review\(result.savedCount == 1 ? "" : "s"). \(result.errors.count) failed."
             reviewSaveIsError = true
+            Task { await refreshAnnotations() }
         } else if let firstError = result.errors.first {
             reviewSaveMessage = firstError
             reviewSaveIsError = true
@@ -475,11 +539,5 @@ struct BookPreviewView: View {
             reviewSaveMessage = "No annotations to save."
             reviewSaveIsError = false
         }
-    }
-
-    private func handleAnnotationClick(_ rawID: String) {
-        guard let uuid = UUID(uuidString: rawID),
-              let annotation = annotationStore.annotation(id: uuid) else { return }
-        annotationStore.beginEdit(annotation)
     }
 }

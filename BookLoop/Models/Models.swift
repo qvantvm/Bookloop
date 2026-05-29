@@ -27,6 +27,18 @@ struct BookConfig: Identifiable, Codable, Equatable {
         allowPatchApply || allowShellCommands
     }
 
+    var effectiveValidationCommand: String? {
+        ValidationCommandPolicy.effective(validationCommand)
+    }
+
+    func clearingLegacyMkdocsValidationCommand() -> BookConfig {
+        var copy = self
+        if ValidationCommandPolicy.isLegacyMkdocsCommand(copy.validationCommand) {
+            copy.validationCommand = nil
+        }
+        return copy
+    }
+
     static func defaults(projectRootPath: String = "") -> BookConfig {
         var book = BookConfig(
             id: UUID(),

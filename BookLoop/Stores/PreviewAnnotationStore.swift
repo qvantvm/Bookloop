@@ -8,6 +8,7 @@ final class PreviewAnnotationStore: ObservableObject {
     @Published var draftNote = ""
     @Published var draftQuote: PreviewSelectionQuote?
     @Published var editingAnnotationID: UUID?
+    @Published var draftHighlightID: UUID?
     @Published var lastError: String?
 
     private var loadedBookID: UUID?
@@ -47,6 +48,7 @@ final class PreviewAnnotationStore: ObservableObject {
         draftQuote = quote
         draftNote = ""
         editingAnnotationID = nil
+        draftHighlightID = UUID()
         isEditorPresented = true
     }
 
@@ -54,6 +56,7 @@ final class PreviewAnnotationStore: ObservableObject {
         draftQuote = annotation.quote
         draftNote = annotation.note
         editingAnnotationID = annotation.id
+        draftHighlightID = nil
         selectedAnnotationID = annotation.id
         isEditorPresented = true
     }
@@ -63,6 +66,7 @@ final class PreviewAnnotationStore: ObservableObject {
         draftQuote = nil
         draftNote = ""
         editingAnnotationID = nil
+        draftHighlightID = nil
     }
 
     @discardableResult
@@ -116,6 +120,7 @@ final class PreviewAnnotationStore: ObservableObject {
         draftQuote = nil
         draftNote = ""
         editingAnnotationID = nil
+        draftHighlightID = nil
         lastError = nil
         return saved
     }

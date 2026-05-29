@@ -150,20 +150,61 @@
       return range;
     },
 
-    wrapRangeWithHighlight: function (range, id, note) {
+    clearHighlights: function (root) {
+      root.querySelectorAll(".bookloop-highlight-wrap").forEach(function (wrap) {
+        const mark = wrap.querySelector("mark.bookloop-highlight");
+        const parent = wrap.parentNode;
+        if (mark) {
+          while (mark.firstChild) parent.insertBefore(mark.firstChild, wrap);
+        }
+        parent.removeChild(wrap);
+        parent.normalize();
+      });
+    },
+
+    wrapRangeWithHighlight: function (range, id, note, options) {
+      options = options || {};
+      const wrap = document.createElement("span");
+      wrap.className = "bookloop-highlight-wrap";
+      wrap.dataset.annotationId = id;
+
       const mark = document.createElement("mark");
       mark.className = "bookloop-highlight";
+      if (options.pending) mark.classList.add("bookloop-highlight-pending");
+      if (options.selected) mark.classList.add("bookloop-highlight-selected");
       mark.dataset.annotationId = id;
       if (note) mark.title = note;
-      try {
-        range.surroundContents(mark);
-        return true;
-      } catch (_error) {
-        const contents = range.extractContents();
-        mark.appendChild(contents);
-        range.insertNode(mark);
-        return true;
+
+      const contents = range.extractContents();
+      mark.appendChild(contents);
+      wrap.appendChild(mark);
+
+      if (!options.pending) {
+        const badge = document.createElement("button");
+        badge.type = "button";
+        badge.className = "bookloop-highlight-badge";
+        if (options.savedAsReview) {
+          badge.classList.add("is-saved");
+          badge.textContent = "In Reviews";
+          badge.disabled = true;
+        } else {
+          badge.textContent = "Save as Review";
+          badge.addEventListener("click", function (event) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.bookloopAnnotation) {
+              window.webkit.messageHandlers.bookloopAnnotation.postMessage({
+                type: "saveReview",
+                id: id
+              });
+            }
+          });
+        }
+        wrap.appendChild(badge);
       }
+
+      range.insertNode(wrap);
+      return wrap;
     },
 
     captureSelectionQuote: function () {
@@ -188,42 +229,71 @@
       return { exact: exact, prefix: prefix, suffix: suffix };
     },
 
-    applyHighlights: function (annotations) {
+    applyHighlights: function (annotations, options) {
+      options = options || {};
+      const selectedId = options.selectedId || null;
+      const pending = options.pending || null;
       const root = window.BookLoopPreview.contentRoot();
       if (!root) return { applied: 0, failed: 0 };
-      root.querySelectorAll("mark.bookloop-highlight").forEach(function (mark) {
-        const parent = mark.parentNode;
-        while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
-        parent.removeChild(mark);
-        parent.normalize();
-      });
+      window.BookLoopPreview.clearHighlights(root);
 
       let applied = 0;
       let failed = 0;
-      (annotations || []).forEach(function (annotation) {
+
+      function applyOne(spec, highlightOptions) {
         const { fullText, segments } = window.BookLoopPreview.getTextNodeSegments(root);
         const start = window.BookLoopPreview.findQuoteOffset(
           fullText,
-          annotation.exact,
-          annotation.prefix,
-          annotation.suffix
+          spec.exact,
+          spec.prefix || "",
+          spec.suffix || ""
         );
         if (start === -1) {
           failed += 1;
           return;
         }
-        const range = window.BookLoopPreview.rangeFromOffsets(segments, start, start + annotation.exact.length);
+        const range = window.BookLoopPreview.rangeFromOffsets(segments, start, start + spec.exact.length);
         if (!range) {
           failed += 1;
           return;
         }
-        if (window.BookLoopPreview.wrapRangeWithHighlight(range, annotation.id, annotation.note)) {
-          applied += 1;
-        } else {
-          failed += 1;
-        }
+        window.BookLoopPreview.wrapRangeWithHighlight(range, spec.id, spec.note || "", highlightOptions);
+        applied += 1;
+      }
+
+      (annotations || []).forEach(function (annotation) {
+        applyOne(annotation, {
+          selected: selectedId && annotation.id === selectedId,
+          savedAsReview: !!annotation.savedAsReview,
+          pending: false
+        });
       });
+
+      if (pending && pending.exact) {
+        applyOne(
+          {
+            id: pending.id,
+            exact: pending.exact,
+            prefix: pending.prefix || "",
+            suffix: pending.suffix || "",
+            note: ""
+          },
+          { pending: true, selected: true }
+        );
+      }
+
       return { applied: applied, failed: failed };
+    },
+
+    scrollToAnnotation: function (id) {
+      const root = window.BookLoopPreview.contentRoot();
+      if (!root || !id) return;
+      const wrap = root.querySelector('.bookloop-highlight-wrap[data-annotation-id="' + id + '"]');
+      const mark = wrap ? wrap.querySelector("mark") : root.querySelector('mark[data-annotation-id="' + id + '"]');
+      const target = wrap || mark;
+      if (target) {
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
     },
 
     setupAnnotationHandlers: function () {
@@ -231,6 +301,7 @@
       if (!root || root.dataset.bookloopAnnotationsBound === "1") return;
       root.dataset.bookloopAnnotationsBound = "1";
       root.addEventListener("click", function (event) {
+        if (event.target.closest(".bookloop-highlight-badge")) return;
         const mark = event.target.closest("mark.bookloop-highlight");
         if (!mark || !mark.dataset.annotationId) return;
         event.preventDefault();

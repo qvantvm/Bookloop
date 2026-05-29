@@ -17,11 +17,23 @@ final class WebViewCoordinator: NSObject, WKNavigationDelegate, WKScriptMessageH
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.name == "bookloopAnnotation",
               let body = message.body as? [String: Any],
-              body["type"] as? String == "click",
-              let id = body["id"] as? String else { return }
-        let callback = parent.onAnnotationClicked
-        Task { @MainActor in
-            callback?(id)
+              let type = body["type"] as? String else { return }
+
+        switch type {
+        case "click":
+            guard let id = body["id"] as? String else { return }
+            let callback = parent.onAnnotationClicked
+            Task { @MainActor in
+                callback?(id)
+            }
+        case "saveReview":
+            guard let id = body["id"] as? String else { return }
+            let callback = parent.onAnnotationSaveReview
+            Task { @MainActor in
+                callback?(id)
+            }
+        default:
+            break
         }
     }
 
@@ -105,6 +117,7 @@ struct WebView: NSViewRepresentable {
     var onPageLoaded: ((WKWebView) -> Void)?
     var onInternalChapterLink: ((URL) -> Void)?
     var onAnnotationClicked: ((String) -> Void)?
+    var onAnnotationSaveReview: ((String) -> Void)?
 
     func makeCoordinator() -> WebViewCoordinator {
         WebViewCoordinator(parent: self)
@@ -202,19 +215,44 @@ struct WebView: NSViewRepresentable {
         )
     }
 
-    static func applyAnnotations(_ annotations: [PreviewAnnotation], in webView: WKWebView) async {
+    static func applyAnnotations(
+        _ annotations: [PreviewAnnotation],
+        selectedID: UUID?,
+        pendingDraft: PreviewAnnotationDraftHighlight?,
+        in webView: WKWebView
+    ) async {
         let wire = annotations.map {
             PreviewAnnotationWire(
                 id: $0.id.uuidString,
                 exact: $0.exact,
                 prefix: $0.prefix,
                 suffix: $0.suffix,
-                note: $0.note
+                note: $0.note,
+                savedAsReview: $0.isSavedAsReview
             )
         }
-        guard let data = try? JSONEncoder().encode(wire),
-              let json = String(data: data, encoding: .utf8) else { return }
-        let script = "window.BookLoopPreview?.applyHighlights(\(json))"
+        var options: [String: Any] = [:]
+        if let selectedID {
+            options["selectedId"] = selectedID.uuidString
+        }
+        if let pendingDraft {
+            options["pending"] = [
+                "id": pendingDraft.id.uuidString,
+                "exact": pendingDraft.quote.exact,
+                "prefix": pendingDraft.quote.prefix,
+                "suffix": pendingDraft.quote.suffix
+            ]
+        }
+        guard let annotationData = try? JSONEncoder().encode(wire),
+              let annotationJSON = String(data: annotationData, encoding: .utf8),
+              let optionsData = try? JSONSerialization.data(withJSONObject: options),
+              let optionsJSON = String(data: optionsData, encoding: .utf8) else { return }
+        let script = "window.BookLoopPreview?.applyHighlights(\(annotationJSON), \(optionsJSON))"
+        _ = try? await webView.evaluateJavaScript(script)
+    }
+
+    static func scrollToAnnotation(id: UUID, in webView: WKWebView) async {
+        let script = "window.BookLoopPreview?.scrollToAnnotation('\(id.uuidString)')"
         _ = try? await webView.evaluateJavaScript(script)
     }
 }
@@ -225,6 +263,12 @@ private struct PreviewAnnotationWire: Encodable {
     var prefix: String
     var suffix: String
     var note: String
+    var savedAsReview: Bool
+}
+
+struct PreviewAnnotationDraftHighlight: Equatable {
+    var id: UUID
+    var quote: PreviewSelectionQuote
 }
 
 @MainActor
@@ -381,10 +425,24 @@ final class BookPreviewModel: ObservableObject {
         return await WebView.captureSelectionQuote(in: webView)
     }
 
-    func applyAnnotations(_ annotations: [PreviewAnnotation]) async {
+    func applyAnnotations(
+        _ annotations: [PreviewAnnotation],
+        selectedID: UUID? = nil,
+        pendingDraft: PreviewAnnotationDraftHighlight? = nil
+    ) async {
         guard let webView else { return }
         await WebView.setupAnnotationHandlers(in: webView)
-        await WebView.applyAnnotations(annotations, in: webView)
+        await WebView.applyAnnotations(
+            annotations,
+            selectedID: selectedID,
+            pendingDraft: pendingDraft,
+            in: webView
+        )
+    }
+
+    func scrollToAnnotation(id: UUID) async {
+        guard let webView else { return }
+        await WebView.scrollToAnnotation(id: id, in: webView)
     }
 
     func setAutoRefreshEnabled(_ enabled: Bool) {

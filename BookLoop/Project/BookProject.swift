@@ -25,7 +25,11 @@ struct BookProject: Equatable {
     }
 
     var hasValidationCommand: Bool {
-        !config.buildCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        ValidationCommandPolicy.effective(config.buildCommand) != nil
+    }
+
+    var effectiveBuildCommand: String? {
+        ValidationCommandPolicy.effective(config.buildCommand)
     }
 }
 

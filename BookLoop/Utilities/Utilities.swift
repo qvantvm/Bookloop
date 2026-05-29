@@ -97,6 +97,24 @@ enum BookLoopGitignore {
     }
 }
 
+enum ValidationCommandPolicy {
+    /// BookLoop preview renders in Swift; mkdocs is not a supported validation command.
+    static func isLegacyMkdocsCommand(_ command: String?) -> Bool {
+        guard let raw = command?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !raw.isEmpty else { return false }
+        return raw.contains("mkdocs")
+    }
+
+    static func effective(_ command: String?) -> String? {
+        guard let raw = command?.nilIfBlank, !isLegacyMkdocsCommand(raw) else { return nil }
+        return raw
+    }
+
+    static func sanitized(_ command: String?) -> String? {
+        effective(command)
+    }
+}
+
 extension String {
     var nilIfBlank: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)

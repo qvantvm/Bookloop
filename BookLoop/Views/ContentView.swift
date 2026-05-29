@@ -78,6 +78,10 @@ struct ContentView: View {
         }
         .onChange(of: workspaceMode) { previousMode, newMode in
             applyPanelLayout(for: newMode, leaving: previousMode)
+            if case .reading = newMode {
+                annotationStore.refresh(book: library.selectedBook)
+                NotificationCenter.default.post(name: .bookLoopRefreshAnnotations, object: nil)
+            }
         }
         .onChange(of: showAnnotationsPanel) { _, enabled in
             guard case .reading = workspaceMode else { return }
@@ -140,8 +144,7 @@ struct ContentView: View {
 
     @ViewBuilder
     private var centerColumn: some View {
-        switch workspaceMode {
-        case .reading:
+        ZStack {
             BookPreviewView(
                 model: previewModel,
                 chatModel: chatModel,
@@ -150,26 +153,37 @@ struct ContentView: View {
                 showAnnotationsPanel: $showAnnotationsPanel
             )
             .environmentObject(projectStore)
-            .frame(minWidth: 500)
-        case .tool(let tab):
-            ToolWorkspaceView(
-                workspaceMode: $workspaceMode,
-                tool: tab,
-                isSidebarVisible: $isSidebarVisible,
-                isChatVisible: $isChatVisible,
-                showingAppSettings: $showingAppSettings
-            )
-            .environmentObject(library)
-            .environmentObject(projectStore)
-            .environmentObject(bookProjectStore)
-            .environmentObject(reviewStore)
-            .environmentObject(figureStore)
-            .environmentObject(taskStore)
-            .environmentObject(patchStore)
-            .environmentObject(previewModel)
-            .environmentObject(settingsStore)
-            .frame(minWidth: 500)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .opacity(isReadingMode ? 1 : 0)
+            .allowsHitTesting(isReadingMode)
+            .accessibilityHidden(!isReadingMode)
+
+            if case .tool(let tab) = workspaceMode {
+                ToolWorkspaceView(
+                    workspaceMode: $workspaceMode,
+                    tool: tab,
+                    isSidebarVisible: $isSidebarVisible,
+                    isChatVisible: $isChatVisible,
+                    showingAppSettings: $showingAppSettings
+                )
+                .environmentObject(library)
+                .environmentObject(projectStore)
+                .environmentObject(bookProjectStore)
+                .environmentObject(reviewStore)
+                .environmentObject(figureStore)
+                .environmentObject(taskStore)
+                .environmentObject(patchStore)
+                .environmentObject(previewModel)
+                .environmentObject(settingsStore)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
+        .frame(minWidth: 500)
+    }
+
+    private var isReadingMode: Bool {
+        if case .reading = workspaceMode { return true }
+        return false
     }
 
     private var chatColumn: some View {
@@ -205,6 +219,13 @@ struct ContentView: View {
     }
 
     private func refreshProjectState() {
+        if let book = library.selectedBook {
+            let cleaned = book.clearingLegacyMkdocsValidationCommand()
+            if cleaned != book {
+                library.updateBook(cleaned)
+            }
+        }
+
         let book = library.selectedBook
         projectStore.refresh(book: book)
         reviewStore.refresh(book: book)

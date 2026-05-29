@@ -202,7 +202,8 @@ enum AgentPromptBuilder {
     - When asked to apply review feedback, read the chapter source file and stage concrete edits that address the review.
     - BookLoop renders chapter preview in Swift (markdown-it + KaTeX). Do not assume mkdocs or another site generator is installed.
     - For validation, prefer scan_broken_links. Only use run_build when this book has a validation command configured AND the task explicitly asks to run that shell command.
-    - Never call run_build when no validation command is configured for this book.
+    - Never call run_build for mkdocs or when no validation command is configured for this book.
+    - run_build is not available for this book unless a non-mkdocs validation command is configured in Settings.
     - Always return a concise summary, staged files, and unresolved issues.
     """
 
@@ -231,8 +232,8 @@ enum AgentPromptBuilder {
         if let relative = BookLLMsContext.relativePath(for: project.book) {
             lines.append("llms.txt: \(relative)")
         }
-        if project.hasValidationCommand {
-            lines.append("Validation command (optional shell): \(project.config.buildCommand)")
+        if project.hasValidationCommand, let command = project.effectiveBuildCommand {
+            lines.append("Validation command (optional shell): \(command)")
         } else {
             lines.append("Validation: use scan_broken_links — no external build command is configured for this book.")
         }

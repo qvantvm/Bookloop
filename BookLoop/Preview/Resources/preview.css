@@ -147,6 +147,12 @@ html[data-md-color-scheme="dark"] #bookloop-content .admonition.tip { background
 
 .katex-display { overflow-x: auto; overflow-y: hidden; }
 
+#bookloop-content .bookloop-highlight-wrap {
+  position: relative;
+  display: inline;
+  white-space: inherit;
+}
+
 #bookloop-content mark.bookloop-highlight {
   background: rgba(255, 214, 10, 0.45);
   color: inherit;
@@ -155,15 +161,73 @@ html[data-md-color-scheme="dark"] #bookloop-content .admonition.tip { background
   cursor: pointer;
 }
 
+#bookloop-content mark.bookloop-highlight-pending {
+  background: rgba(255, 214, 10, 0.55);
+  box-shadow: 0 0 0 2px rgba(255, 193, 7, 0.55);
+}
+
+#bookloop-content mark.bookloop-highlight-selected {
+  background: rgba(56, 139, 253, 0.38);
+  box-shadow: 0 0 0 2px rgba(56, 139, 253, 0.65);
+}
+
 #bookloop-content mark.bookloop-highlight:hover {
   background: rgba(255, 193, 7, 0.65);
+}
+
+#bookloop-content mark.bookloop-highlight-selected:hover {
+  background: rgba(56, 139, 253, 0.48);
+}
+
+#bookloop-content .bookloop-highlight-badge {
+  position: absolute;
+  top: -1.35em;
+  right: 0;
+  z-index: 2;
+  display: none;
+  margin: 0;
+  padding: 0.12rem 0.4rem;
+  border: none;
+  border-radius: 999px;
+  background: #0969da;
+  color: #ffffff;
+  font: 10px/1.2 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+}
+
+#bookloop-content .bookloop-highlight-badge.is-saved {
+  background: #1a7f37;
+  cursor: default;
+}
+
+#bookloop-content .bookloop-highlight-wrap:hover .bookloop-highlight-badge,
+#bookloop-content mark.bookloop-highlight-selected + .bookloop-highlight-badge,
+#bookloop-content .bookloop-highlight-wrap:has(mark.bookloop-highlight-selected) .bookloop-highlight-badge {
+  display: inline-block;
 }
 
 @media (prefers-color-scheme: dark) {
   #bookloop-content mark.bookloop-highlight {
     background: rgba(255, 193, 7, 0.35);
   }
+  #bookloop-content mark.bookloop-highlight-pending {
+    background: rgba(255, 193, 7, 0.42);
+    box-shadow: 0 0 0 2px rgba(255, 193, 7, 0.45);
+  }
+  #bookloop-content mark.bookloop-highlight-selected {
+    background: rgba(56, 139, 253, 0.34);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.55);
+  }
   #bookloop-content mark.bookloop-highlight:hover {
     background: rgba(255, 193, 7, 0.5);
+  }
+  #bookloop-content .bookloop-highlight-badge {
+    background: #4493f8;
+  }
+  #bookloop-content .bookloop-highlight-badge.is-saved {
+    background: #238636;
   }
 }

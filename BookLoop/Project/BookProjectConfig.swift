@@ -40,7 +40,7 @@ struct BookProjectConfig: Codable, Equatable {
             projectName: book.displayName,
             contentRoot: "docs",
             reviewRoot: "reviews/review_items",
-            buildCommand: book.validationCommand?.nilIfBlank ?? "",
+            buildCommand: ValidationCommandPolicy.effective(book.validationCommand) ?? "",
             previewCommand: "",
             protectedPaths: [".git", ".env", "secrets", ".bookloop"],
             allowedWriteGlobs: standardWriteGlobs,
@@ -60,8 +60,13 @@ struct BookProjectConfig: Codable, Equatable {
         let url = configURL(for: book)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         let data = try Data(contentsOf: url)
-        let config = try JSONDecoder().decode(BookProjectConfig.self, from: data)
-        return config.withStandardWriteGlobs()
+        var config = try JSONDecoder().decode(BookProjectConfig.self, from: data)
+        config = config.withStandardWriteGlobs()
+        if ValidationCommandPolicy.isLegacyMkdocsCommand(config.buildCommand) {
+            config.buildCommand = ""
+            try? save(config, book: book)
+        }
+        return config
     }
 
     static func save(_ config: BookProjectConfig, book: BookConfig) throws {

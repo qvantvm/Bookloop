@@ -79,7 +79,7 @@ struct TaskPanelView: View {
             Button("Cancel", role: .cancel) {}
             Button("Run") { Task { await runValidationCommand() } }
         } message: {
-            Text("BookLoop will run this command in the book root: \(book.validationCommand ?? "")")
+            Text("BookLoop will run this command in the book root: \(book.effectiveValidationCommand ?? "")")
         }
     }
 
@@ -189,10 +189,10 @@ struct TaskPanelView: View {
             Button(isRunningValidation ? "Running Validation…" : "Run Validation Command") {
                 confirmingValidation = true
             }
-            .disabled(isRunningValidation || !book.allowShellCommands || book.validationCommand?.nilIfBlank == nil)
+            .disabled(isRunningValidation || !book.allowShellCommands || book.effectiveValidationCommand == nil)
             .buttonStyle(.bordered)
 
-            if book.validationCommand?.nilIfBlank == nil {
+            if book.effectiveValidationCommand == nil {
                 Text("Configure a validation command in book Settings.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
@@ -342,7 +342,7 @@ struct TaskPanelView: View {
     }
 
     private func runValidationCommand() async {
-        guard book.allowShellCommands, let command = book.validationCommand?.nilIfBlank else {
+        guard book.allowShellCommands, let command = book.effectiveValidationCommand else {
             validationOutput = "Shell commands are disabled or no validation command is configured."
             validationExpanded = true
             return

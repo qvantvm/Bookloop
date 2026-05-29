@@ -1991,7 +1991,7 @@ struct BookSettingsView: View {
                 Button("Cancel", action: onCancel)
                 Button("Save") {
                     draft.refreshProjectRootBookmark()
-                    onSave(draft)
+                    onSave(draft.clearingLegacyMkdocsValidationCommand())
                 }
                 .keyboardShortcut(.return, modifiers: [.command])
             }
@@ -2059,7 +2059,7 @@ struct BookSettingsForm: View {
             Section("Commands") {
                 OptionalTextField("Figure generation command", text: $draft.figureGenerationCommand)
                 OptionalTextField("Validation command", text: $draft.validationCommand)
-                Text("Optional shell command for manual validation or legacy mkdocs workflows. BookLoop preview renders in Swift — leave blank to validate with scan_broken_links instead.")
+                Text("Optional shell command for manual validation. BookLoop preview renders in Swift — leave blank to validate with scan_broken_links. Mkdocs commands are ignored.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
