@@ -2059,6 +2059,9 @@ struct BookSettingsForm: View {
             Section("Commands") {
                 OptionalTextField("Figure generation command", text: $draft.figureGenerationCommand)
                 OptionalTextField("Validation command", text: $draft.validationCommand)
+                Text("Optional shell command for manual validation or legacy mkdocs workflows. BookLoop preview renders in Swift — leave blank to validate with scan_broken_links instead.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Safety") {

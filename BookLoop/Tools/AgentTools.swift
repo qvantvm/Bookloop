@@ -206,6 +206,9 @@ enum AgentTools {
 
     static func runBuild(context: AgentToolContext) throws -> BuildResult {
         let command = context.project.config.buildCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else {
+            throw AgentToolError.validationCommandNotConfigured
+        }
         guard command == context.project.config.buildCommand else {
             throw ProcessRunnerError.commandNotAllowed(command)
         }
@@ -249,6 +252,7 @@ enum AgentToolError: LocalizedError {
     case reviewEditsDisabled
     case unknownTool(String)
     case invalidGrepPattern(String)
+    case validationCommandNotConfigured
 
     var errorDescription: String? {
         switch self {
@@ -260,6 +264,8 @@ enum AgentToolError: LocalizedError {
             return "Unknown tool: \(name)"
         case .invalidGrepPattern(let pattern):
             return "Invalid grep regex pattern: \(pattern)"
+        case .validationCommandNotConfigured:
+            return "No validation command is configured for this book. Use scan_broken_links instead — BookLoop preview renders in Swift and does not require mkdocs."
         }
     }
 }

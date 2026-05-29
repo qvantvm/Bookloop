@@ -88,7 +88,7 @@ final class BookAgent {
                 apiKey: apiKey,
                 model: model,
                 messages: messages,
-                tools: AgentToolRegistry.definitions
+                tools: AgentToolRegistry.definitions(for: project)
             )
 
             if let toolCalls = response.tool_calls, !toolCalls.isEmpty {

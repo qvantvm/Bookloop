@@ -139,7 +139,9 @@ enum AgentPromptBuilder {
     - apply_patch stages changes only; book files are not modified on disk until a human applies the patch in Tools → Patches.
     - Open review items often contain actionable guidance in the body or Conversation section even when suggested_fix is empty or says TODO.
     - When asked to apply review feedback, read the chapter source file and stage concrete edits that address the review.
-    - Do not run run_build unless explicitly asked to validate the current committed/working tree.
+    - BookLoop renders chapter preview in Swift (markdown-it + KaTeX). Do not assume mkdocs or another site generator is installed.
+    - For validation, prefer scan_broken_links. Only use run_build when this book has a validation command configured AND the task explicitly asks to run that shell command.
+    - Never call run_build when no validation command is configured for this book.
     - Always return a concise summary, staged files, and unresolved issues.
     """
 
@@ -168,7 +170,11 @@ enum AgentPromptBuilder {
         if let relative = BookLLMsContext.relativePath(for: project.book) {
             lines.append("llms.txt: \(relative)")
         }
-        lines.append("Build command: \(project.config.buildCommand)")
+        if project.hasValidationCommand {
+            lines.append("Validation command (optional shell): \(project.config.buildCommand)")
+        } else {
+            lines.append("Validation: use scan_broken_links — no external build command is configured for this book.")
+        }
         lines.append("Patch output directory: \(project.book.patchDirectoryPath)")
         lines.append("Allowed write globs: \(project.config.allowedWriteGlobs.joined(separator: ", "))")
 
@@ -203,6 +209,14 @@ enum AgentPromptBuilder {
             4. Stage path fixes with apply_patch. Prefer correcting references to existing files over inventing new assets.
             5. If an asset is missing but a figure source exists under figures/, note it as an unresolved issue rather than guessing output paths.
             """)
+        case .custom:
+            if !project.hasValidationCommand {
+                lines.append("""
+                Instructions:
+                - If this task mentions validating the book, use scan_broken_links instead of run_build.
+                - Do not run mkdocs or other external build tools unless a validation command is configured in book Settings.
+                """)
+            }
         default:
             break
         }
@@ -236,7 +250,15 @@ enum AgentPromptBuilder {
 }
 
 enum AgentToolRegistry {
-    static var definitions: [OpenAIToolDefinition] {
+    static func definitions(for project: BookProject) -> [OpenAIToolDefinition] {
+        var tools = coreDefinitions
+        if project.hasValidationCommand {
+            tools.append(runBuildTool)
+        }
+        return tools
+    }
+
+    private static var coreDefinitions: [OpenAIToolDefinition] {
         [
             tool(name: "list_files", description: "List project-relative file paths matching a glob.", properties: [
                 "glob": prop("string", "Glob pattern such as docs/**/*.md")
@@ -270,10 +292,18 @@ enum AgentToolRegistry {
                 "new_text": prop("string", "Replacement text")
             ], required: ["path", "old_text", "new_text"]),
             tool(name: "scan_broken_links", description: "Scan chapter markdown for missing figure files, broken local asset links, stale figures, and external asset URLs.", properties: [:], required: []),
-            tool(name: "run_build", description: "Run the configured validation/build command.", properties: [:], required: []),
             tool(name: "get_git_status", description: "Return git status --porcelain.", properties: [:], required: []),
             tool(name: "get_git_diff", description: "Return git diff for the project.", properties: [:], required: [])
         ]
+    }
+
+    private static var runBuildTool: OpenAIToolDefinition {
+        tool(
+            name: "run_build",
+            description: "Run this book's optional validation shell command from Settings. Not used for Swift preview rendering.",
+            properties: [:],
+            required: []
+        )
     }
 
     static func execute(name: String, argumentsJSON: String, context: inout AgentToolContext) async throws -> String {
@@ -324,6 +354,9 @@ enum AgentToolRegistry {
         case "scan_broken_links":
             return encode(try AgentTools.scanBrokenLinks(context: context))
         case "run_build":
+            guard context.project.hasValidationCommand else {
+                throw AgentToolError.validationCommandNotConfigured
+            }
             return encode(try AgentTools.runBuild(context: context))
         case "get_git_status":
             return try AgentTools.gitStatus(context: context)

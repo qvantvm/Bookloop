@@ -23,6 +23,10 @@ struct BookProject: Equatable {
     func withSecurityScoped<T>(_ work: () throws -> T) rethrows -> T {
         try book.withSecurityScopedProjectRoot(work)
     }
+
+    var hasValidationCommand: Bool {
+        !config.buildCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 @MainActor

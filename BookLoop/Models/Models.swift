@@ -459,7 +459,7 @@ enum RevisionTaskMode: String, Codable, CaseIterable, Identifiable {
         case .fixReviews:
             return "Address selected review items by proposing a unified diff."
         case .validateBook:
-            return "Run the configured validation command and report issues without modifying files."
+            return "Scan for broken links and asset issues (or run an optional shell command if configured)."
         }
     }
 

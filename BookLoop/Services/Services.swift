@@ -1300,7 +1300,7 @@ final class TaskGenerator {
             title,
             "",
             "## Mode",
-            modeInstruction(mode),
+            modeInstruction(mode, book: book),
             "",
             "## Book",
             "- Name: \(book.displayName)",
@@ -1343,22 +1343,24 @@ final class TaskGenerator {
         }
 
         if mode == .proposeFigure {
-            lines.append(contentsOf: figureRequirements(chapterID: chapterID, reviewItems: reviewItems))
+            lines.append(contentsOf: figureRequirements(chapterID: chapterID, reviewItems: reviewItems, book: book))
         }
 
         if mode == .validateBook {
-            lines.append(contentsOf: validationRequirements())
+            lines.append(contentsOf: validationRequirements(book: book))
         }
 
-        lines.append(contentsOf: [
-            "",
-            "## Constraints",
+        var constraints: [String] = [
             "- Preserve chapter voice.",
             "- Add concrete examples where useful.",
             "- Do not introduce unsupported benchmark claims.",
             "- Do not rewrite the whole chapter unless necessary.",
             "- Return a unified diff.",
-            "- Run the configured validation command if possible.",
+        ]
+        if let validationLine = validationConstraintLine(book: book) {
+            constraints.append(validationLine)
+        }
+        constraints.append(contentsOf: [
             "- If a figure is needed, generate a script-based figure rather than only a static image.",
             "- Do not directly apply changes; BookLoop must review the patch first.",
             "",
@@ -1366,15 +1368,17 @@ final class TaskGenerator {
             "- Revision summary",
             "- Files changed",
             "- Unified patch",
-            "- Validation result",
+            "- Link scan / validation result",
             "- Review items addressed",
             "- Review items not addressed and why"
         ])
 
+        lines.append(contentsOf: [""] + ["## Constraints"] + constraints)
+
         return lines.joined(separator: "\n") + "\n"
     }
 
-    private func modeInstruction(_ mode: RevisionTaskMode) -> String {
+    private func modeInstruction(_ mode: RevisionTaskMode, book: BookConfig) -> String {
         switch mode {
         case .proposePatchOnly:
             return "Propose patch only. Do not directly apply changes."
@@ -1385,12 +1389,15 @@ final class TaskGenerator {
         case .fixReviews:
             return "Fix selected reviews by proposing a unified diff. Do not directly apply changes."
         case .validateBook:
-            return "Run the configured validation command and report issues. Do not directly modify files."
+            if book.validationCommand?.nilIfBlank != nil {
+                return "Run the configured validation command and report issues. Do not directly modify files."
+            }
+            return "Use scan_broken_links and review checks to validate the book. Do not run mkdocs or other external build tools. Do not directly modify files."
         }
     }
 
-    private func figureRequirements(chapterID: String?, reviewItems: [ReviewItem]) -> [String] {
-        [
+    private func figureRequirements(chapterID: String?, reviewItems: [ReviewItem], book: BookConfig) -> [String] {
+        var lines = [
             "",
             "## Figure Requirements",
             "- Use a reproducible source script.",
@@ -1400,21 +1407,39 @@ final class TaskGenerator {
             "- Save final asset under `docs/assets/figures/`.",
             "- Add alt text and caption.",
             "- Insert figure into the chapter only through a visible patch.",
-            "- Run the configured validation command if possible."
         ]
+        if let validationLine = validationConstraintLine(book: book) {
+            lines.append(validationLine)
+        }
+        return lines
     }
 
-    private func validationRequirements() -> [String] {
-        [
+    private func validationRequirements(book: BookConfig) -> [String] {
+        var lines = [
             "",
             "## Validation Checklist",
-            "- Run the configured validation command if possible.",
+        ]
+        if book.validationCommand?.nilIfBlank != nil {
+            lines.append("- Run the configured validation command if possible.")
+        } else {
+            lines.append("- Use scan_broken_links to find missing figures and broken local asset links.")
+            lines.append("- Do not run mkdocs or assume an external site generator is installed.")
+        }
+        lines.append(contentsOf: [
             "- Check image references.",
             "- Check broken internal links.",
             "- Check stale figures.",
             "- Check missing captions or alt text.",
             "- Summarize open review items by severity."
-        ]
+        ])
+        return lines
+    }
+
+    private func validationConstraintLine(book: BookConfig) -> String? {
+        if book.validationCommand?.nilIfBlank != nil {
+            return "- Run the configured validation command if possible."
+        }
+        return "- Use scan_broken_links for link and asset validation; BookLoop preview does not require mkdocs."
     }
 }
 
