@@ -219,16 +219,71 @@ enum AgentTools {
 
     static func gitStatus(context: AgentToolContext) throws -> String {
         guard context.project.hasGit else { return "" }
+        let timeout = gitTimeoutSeconds(for: context)
         return try context.project.withSecurityScoped {
-            try ProcessRunner().runGit(["status", "--porcelain"], workingDirectory: context.project.rootURL).combinedOutput
+            let result = try ProcessRunner().runGit(
+                ["status", "--porcelain"],
+                workingDirectory: context.project.rootURL,
+                timeoutSeconds: timeout
+            )
+            return GitToolOutput.formatStatus(result, timeoutSeconds: timeout)
         }
     }
 
     static func gitDiff(context: AgentToolContext) throws -> String {
         guard context.project.hasGit else { return "" }
+        let timeout = gitTimeoutSeconds(for: context)
         return try context.project.withSecurityScoped {
-            try ProcessRunner().runGit(["diff", "--", "."], workingDirectory: context.project.rootURL).combinedOutput
+            let stat = try ProcessRunner().runGit(
+                [
+                    "diff", "--stat", "--no-ext-diff", "--",
+                    ".",
+                    ":(exclude).bookloop",
+                    ":(exclude).bookloop/**"
+                ],
+                workingDirectory: context.project.rootURL,
+                timeoutSeconds: timeout
+            )
+            if stat.timedOut {
+                return GitToolOutput.formatDiff(stat, timeoutSeconds: timeout)
+            }
+
+            let patch = try ProcessRunner().runGit(
+                [
+                    "diff", "--no-ext-diff", "--",
+                    ".",
+                    ":(exclude).bookloop",
+                    ":(exclude).bookloop/**"
+                ],
+                workingDirectory: context.project.rootURL,
+                timeoutSeconds: timeout
+            )
+
+            var sections: [String] = []
+            let statText = stat.combinedOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !statText.isEmpty {
+                sections.append("Summary:\n\(statText)")
+            }
+            let patchText = patch.combinedOutput.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !patchText.isEmpty {
+                sections.append("Patch:\n\(patchText)")
+            } else if statText.isEmpty {
+                sections.append("No uncommitted changes (excluding .bookloop/).")
+            }
+
+            let combined = BuildResult(
+                command: patch.command,
+                exitCode: patch.exitCode,
+                stdout: sections.joined(separator: "\n\n"),
+                stderr: [stat.stderr, patch.stderr].filter { !$0.isEmpty }.joined(separator: "\n"),
+                timedOut: patch.timedOut
+            )
+            return GitToolOutput.formatDiff(combined, timeoutSeconds: timeout)
         }
+    }
+
+    private static func gitTimeoutSeconds(for context: AgentToolContext) -> TimeInterval {
+        min(45, max(15, context.buildTimeoutSeconds))
     }
 
     static func fetchURL(url: String, context: AgentToolContext) async throws -> AgentURLFetchResult {

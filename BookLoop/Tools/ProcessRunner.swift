@@ -29,6 +29,11 @@ enum ProcessRunnerError: LocalizedError {
 }
 
 final class ProcessRunner {
+    private static let gitEnvironment: [String: String] = [
+        "GIT_PAGER": "cat",
+        "PAGER": "cat"
+    ]
+
     func run(command: String, workingDirectory: URL, timeoutSeconds: TimeInterval) throws -> BuildResult {
         let parts = command.split(whereSeparator: \.isWhitespace).map(String.init)
         guard let executable = parts.first, !executable.isEmpty else { throw ProcessRunnerError.emptyCommand }
@@ -44,6 +49,24 @@ final class ProcessRunner {
         }
         process.currentDirectoryURL = workingDirectory
 
+        return try runProcess(process, commandLabel: command, timeoutSeconds: timeoutSeconds)
+    }
+
+    func runGit(_ arguments: [String], workingDirectory: URL, timeoutSeconds: TimeInterval = 45) throws -> BuildResult {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = arguments
+        process.currentDirectoryURL = workingDirectory
+        var environment = ProcessInfo.processInfo.environment
+        for (key, value) in Self.gitEnvironment {
+            environment[key] = value
+        }
+        process.environment = environment
+
+        return try runProcess(process, commandLabel: "git " + arguments.joined(separator: " "), timeoutSeconds: timeoutSeconds)
+    }
+
+    private func runProcess(_ process: Process, commandLabel: String, timeoutSeconds: TimeInterval) throws -> BuildResult {
         let stdout = Pipe()
         let stderr = Pipe()
         process.standardOutput = stdout
@@ -66,33 +89,37 @@ final class ProcessRunner {
         group.wait()
 
         return BuildResult(
-            command: command,
+            command: commandLabel,
             exitCode: process.terminationStatus,
             stdout: String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
             stderr: String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
             timedOut: timedOut
         )
     }
+}
 
-    func runGit(_ arguments: [String], workingDirectory: URL, timeoutSeconds: TimeInterval = 30) throws -> BuildResult {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = arguments
-        process.currentDirectoryURL = workingDirectory
+enum GitToolOutput {
+    static let maxDiffCharacters = 120_000
 
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        try process.run()
-        process.waitUntilExit()
+    static func formatDiff(_ result: BuildResult, timeoutSeconds: TimeInterval) -> String {
+        if result.timedOut {
+            return "git diff timed out after \(Int(timeoutSeconds))s. Try again after closing other git tools, or reduce uncommitted changes.\n\(truncate(result.combinedOutput))"
+        }
+        if result.exitCode != 0, result.combinedOutput.isEmpty {
+            return "git diff failed with exit code \(result.exitCode)."
+        }
+        return truncate(result.combinedOutput)
+    }
 
-        return BuildResult(
-            command: "git " + arguments.joined(separator: " "),
-            exitCode: process.terminationStatus,
-            stdout: String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
-            stderr: String(data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? "",
-            timedOut: false
-        )
+    static func formatStatus(_ result: BuildResult, timeoutSeconds: TimeInterval) -> String {
+        if result.timedOut {
+            return "git status timed out after \(Int(timeoutSeconds))s.\n\(truncate(result.combinedOutput))"
+        }
+        return truncate(result.combinedOutput)
+    }
+
+    private static func truncate(_ text: String) -> String {
+        guard text.count > maxDiffCharacters else { return text }
+        return String(text.prefix(maxDiffCharacters)) + "\n\n… output truncated (\(text.count) characters total)"
     }
 }

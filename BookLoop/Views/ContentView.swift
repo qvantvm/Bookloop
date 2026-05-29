@@ -287,16 +287,10 @@ struct ContentView: View {
                 showAnnotationsPanel = savedReadingLayout.isAnnotationsPanelVisible
                 isChatVisible = !savedReadingLayout.isAnnotationsPanelVisible
             case .tool(let tab):
-                switch tab.sidePanelPolicy {
-                case .showBoth:
-                    isSidebarVisible = true
-                    isChatVisible = true
-                    if tab == .reviews {
-                        reviewStore.showsSubmitReviewForm = false
-                    }
-                case .hideBoth:
-                    isSidebarVisible = false
-                    isChatVisible = false
+                isSidebarVisible = false
+                isChatVisible = false
+                if tab == .reviews {
+                    reviewStore.showsSubmitReviewForm = false
                 }
             }
         }

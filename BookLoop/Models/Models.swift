@@ -717,9 +717,7 @@ extension WorkspaceTab {
 
     var sidePanelPolicy: SidePanelPolicy {
         switch self {
-        case .reviews:
-            return .showBoth
-        case .preview, .search, .figures, .tasks, .agent, .patches, .settings:
+        case .preview, .search, .reviews, .figures, .tasks, .agent, .patches, .settings:
             return .hideBoth
         }
     }

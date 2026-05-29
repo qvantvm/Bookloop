@@ -355,7 +355,7 @@ enum AgentToolRegistry {
             ], required: ["path", "old_text", "new_text"]),
             tool(name: "scan_broken_links", description: "Scan chapter markdown for missing figure files, broken local asset links, stale figures, and external asset URLs.", properties: [:], required: []),
             tool(name: "get_git_status", description: "Return git status --porcelain.", properties: [:], required: []),
-            tool(name: "get_git_diff", description: "Return git diff for the project.", properties: [:], required: [])
+            tool(name: "get_git_diff", description: "Return a summary and patch for uncommitted changes (excludes .bookloop/ logs; capped output, ~45s timeout).", properties: [:], required: [])
         ]
     }
 
