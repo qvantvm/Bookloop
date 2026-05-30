@@ -107,6 +107,35 @@ struct AgentToolLogEntry: Codable, Equatable, Identifiable {
     var timestamp: Date
 }
 
+/// Ephemeral assistant message shown in the Agent activity column (not persisted to session logs).
+struct AgentAssistantReplyEntry: Equatable, Identifiable {
+    var id: UUID
+    var content: String
+    var iteration: Int
+    var timestamp: Date
+    /// Tool names the model chose on this turn, when any.
+    var plannedToolNames: [String]
+}
+
+enum AgentActivityItem: Equatable, Identifiable {
+    case assistant(AgentAssistantReplyEntry)
+    case tool(AgentToolLogEntry)
+
+    var id: UUID {
+        switch self {
+        case .assistant(let entry): return entry.id
+        case .tool(let entry): return entry.id
+        }
+    }
+
+    var timestamp: Date {
+        switch self {
+        case .assistant(let entry): return entry.timestamp
+        case .tool(let entry): return entry.timestamp
+        }
+    }
+}
+
 enum AgentRunPhase: Equatable {
     case idle
     case preparing
@@ -177,6 +206,8 @@ struct AgentResult: Equatable {
     var proposalPatch: String?
     var buildResult: BuildResult?
     var toolLog: [AgentToolLogEntry]
+    /// Full run timeline for the activity column (assistant replies + tools); not written to session logs.
+    var activity: [AgentActivityItem]
     var unresolvedIssues: [String]
     var sessionDirectory: URL
 }

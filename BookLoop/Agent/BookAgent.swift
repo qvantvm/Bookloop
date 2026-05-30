@@ -57,7 +57,7 @@ final class BookAgent {
         fetchURLMaxBytes: Int,
         allowReviewEdits: Bool,
         isCancelled: @escaping () -> Bool,
-        onToolLogUpdate: (([AgentToolLogEntry]) -> Void)? = nil,
+        onActivityUpdate: (([AgentActivityItem]) -> Void)? = nil,
         onStatusUpdate: ((AgentRunStatus) -> Void)? = nil
     ) async throws -> AgentResult {
         func report(_ status: AgentRunStatus) {
@@ -88,6 +88,23 @@ final class BookAgent {
         ]
 
         var toolLog: [AgentToolLogEntry] = []
+        var activity: [AgentActivityItem] = []
+
+        func appendAssistantReply(from response: OpenAIAssistantMessage, iteration: Int) {
+            let content = response.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let plannedToolNames = response.tool_calls?.map(\.function.name) ?? []
+            guard !content.isEmpty || !plannedToolNames.isEmpty else { return }
+            let entry = AgentAssistantReplyEntry(
+                id: UUID(),
+                content: content,
+                iteration: iteration,
+                timestamp: Date(),
+                plannedToolNames: plannedToolNames
+            )
+            activity.append(.assistant(entry))
+            onActivityUpdate?(activity)
+        }
+
         var finalSummary = ""
         let model = project.config.resolvedModel(appDefault: appModel)
         let startedAt = Date()
@@ -120,6 +137,7 @@ final class BookAgent {
             )
 
             if let toolCalls = response.tool_calls, !toolCalls.isEmpty {
+                appendAssistantReply(from: response, iteration: iteration)
                 messages.append(response)
                 for call in toolCalls {
                     try checkCancelled()
@@ -139,15 +157,17 @@ final class BookAgent {
                             argumentsJSON: call.function.arguments,
                             context: &context
                         )
-                        toolLog.append(AgentToolLogEntry(
+                        let entry = AgentToolLogEntry(
                             id: UUID(),
                             toolName: call.function.name,
                             arguments: call.function.arguments,
                             resultSummary: result,
                             succeeded: true,
                             timestamp: entryStart
-                        ))
-                        onToolLogUpdate?(toolLog)
+                        )
+                        toolLog.append(entry)
+                        activity.append(.tool(entry))
+                        onActivityUpdate?(activity)
                         messages.append(OpenAIAssistantMessage(
                             role: "tool",
                             content: result,
@@ -155,15 +175,17 @@ final class BookAgent {
                             tool_call_id: call.id
                         ))
                     } catch {
-                        toolLog.append(AgentToolLogEntry(
+                        let entry = AgentToolLogEntry(
                             id: UUID(),
                             toolName: call.function.name,
                             arguments: call.function.arguments,
                             resultSummary: error.localizedDescription,
                             succeeded: false,
                             timestamp: entryStart
-                        ))
-                        onToolLogUpdate?(toolLog)
+                        )
+                        toolLog.append(entry)
+                        activity.append(.tool(entry))
+                        onActivityUpdate?(activity)
                         messages.append(OpenAIAssistantMessage(
                             role: "tool",
                             content: "Error: \(error.localizedDescription)",
@@ -176,6 +198,7 @@ final class BookAgent {
             }
 
             finalSummary = response.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            appendAssistantReply(from: response, iteration: iteration)
 
             if task.type == .applyReviewFeedback,
                context.stagedChanges.isEmpty,
@@ -272,6 +295,7 @@ final class BookAgent {
             proposalPatch: proposalPatch.nilIfBlank,
             buildResult: nil,
             toolLog: toolLog,
+            activity: activity,
             unresolvedIssues: [],
             sessionDirectory: sessionDir
         )
