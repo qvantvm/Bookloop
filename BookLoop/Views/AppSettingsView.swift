@@ -3,6 +3,7 @@ import SwiftUI
 struct AppSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var settingsStore: AppSettingsStore
+    @EnvironmentObject private var usageStore: AIUsageCostStore
 
     @State private var draftModel = "gpt-4.1"
     @State private var draftAPIKey = ""
@@ -66,6 +67,7 @@ struct AppSettingsView: View {
                 if settingsStore.hasAPIKey {
                     Button("Remove Key") {
                         settingsStore.clearAPIKey()
+                        usageStore.clearCreditBalance()
                         draftAPIKey = ""
                         saveMessage = "API key removed."
                         saveIsError = false
@@ -90,6 +92,7 @@ struct AppSettingsView: View {
             try settingsStore.save(openAIModel: draftModel, apiKey: draftAPIKey)
             settingsStore.saveAgentSettings()
             draftAPIKey = ""
+            usageStore.scheduleBalanceRefresh(apiKey: settingsStore.apiKey)
             saveMessage = "Settings saved. Your API key is stored locally for this Mac user account."
             saveIsError = false
         } catch {

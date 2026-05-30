@@ -119,7 +119,7 @@ final class OpenAIClient {
         model: String,
         messages: [OpenAIAssistantMessage],
         tools: [OpenAIToolDefinition]
-    ) async throws -> OpenAIAssistantMessage {
+    ) async throws -> OpenAIToolCompletionResult {
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw OpenAIError.missingAPIKey
         }
@@ -142,6 +142,6 @@ final class OpenAIClient {
 
         let decoded = try JSONDecoder().decode(OpenAIChatResponseWithTools.self, from: data)
         guard let message = decoded.choices.first?.message else { throw OpenAIError.invalidResponse }
-        return message
+        return OpenAIToolCompletionResult(message: message, usage: decoded.usage)
     }
 }

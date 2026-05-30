@@ -75,7 +75,12 @@ final class ChatPanelModel: ObservableObject {
         contextTokenCountIsEstimate = true
     }
 
-    func sendMessage(webView: WKWebView?, settingsStore: AppSettingsStore, book: BookConfig?) async {
+    func sendMessage(
+        webView: WKWebView?,
+        settingsStore: AppSettingsStore,
+        book: BookConfig?,
+        usageStore: AIUsageCostStore
+    ) async {
         let text = draftMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
@@ -119,6 +124,7 @@ final class ChatPanelModel: ObservableObject {
                 )
             }
             appendMessage(ChatMessage(role: .assistant, content: result.content))
+            usageStore.record(usage: result.usage, model: settingsStore.openAIModel, source: "Chapter Chat")
             if let promptTokens = result.usage?.promptTokenCount {
                 contextTokenCount = promptTokens
                 contextTokenCountIsEstimate = false
@@ -333,6 +339,7 @@ final class ChatPanelModel: ObservableObject {
 }
 
 struct ChatPanelView: View {
+    @EnvironmentObject private var usageStore: AIUsageCostStore
     @EnvironmentObject private var library: BookLibraryStore
     @EnvironmentObject private var settingsStore: AppSettingsStore
     @EnvironmentObject private var projectStore: ProjectContentStore
@@ -474,7 +481,8 @@ struct ChatPanelView: View {
                     await model.sendMessage(
                         webView: previewModel.webView,
                         settingsStore: settingsStore,
-                        book: library.selectedBook
+                        book: library.selectedBook,
+                        usageStore: usageStore
                     )
                 }
             }

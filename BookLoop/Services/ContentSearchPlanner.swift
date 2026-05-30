@@ -9,10 +9,10 @@ final class ContentSearchPlanner {
         scope: SearchScope,
         apiKey: String,
         model: String
-    ) async throws -> SearchPlan {
+    ) async throws -> (plan: SearchPlan, usage: OpenAIUsage?) {
         let trimmed = naturalLanguageQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            return fallbackPlan(query: trimmed, scope: scope)
+            return (fallbackPlan(query: trimmed, scope: scope), nil)
         }
 
         let system = """
@@ -62,9 +62,9 @@ final class ContentSearchPlanner {
         )
 
         if let parsed = parsePlan(from: result.content) {
-            return parsed
+            return (parsed, result.usage)
         }
-        return fallbackPlan(query: trimmed, scope: scope)
+        return (fallbackPlan(query: trimmed, scope: scope), result.usage)
     }
 
     func fallbackPlan(query: String, scope: SearchScope) -> SearchPlan {

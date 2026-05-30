@@ -4,12 +4,14 @@ import SwiftUI
 struct BookLoopApp: App {
     @StateObject private var library = BookLibraryStore()
     @StateObject private var settingsStore = AppSettingsStore()
+    @StateObject private var usageCostStore = AIUsageCostStore()
 
     var body: some Scene {
         WindowGroup("BookLoop") {
             ContentView()
                 .environmentObject(library)
                 .environmentObject(settingsStore)
+                .environmentObject(usageCostStore)
                 .frame(minWidth: 1200, minHeight: 760)
         }
         .windowStyle(.titleBar)

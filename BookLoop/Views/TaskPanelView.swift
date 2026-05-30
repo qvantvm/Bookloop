@@ -8,6 +8,7 @@ struct TaskPanelView: View {
     @EnvironmentObject private var bookProjectStore: BookProjectStore
     @EnvironmentObject private var settingsStore: AppSettingsStore
     @EnvironmentObject private var patchStore: PatchStore
+    @EnvironmentObject private var usageCostStore: AIUsageCostStore
 
     let book: BookConfig
     @Binding var workspaceMode: WorkspaceMode
@@ -363,7 +364,8 @@ struct TaskPanelView: View {
             instruction: taskText,
             projectStore: bookProjectStore,
             patchStore: patchStore,
-            settingsStore: settingsStore
+            settingsStore: settingsStore,
+            usageStore: usageCostStore
         )
     }
 

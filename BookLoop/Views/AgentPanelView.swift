@@ -42,7 +42,8 @@ final class AgentPanelModel: ObservableObject {
         type: AgentTaskType,
         projectStore: BookProjectStore,
         patchStore: PatchStore,
-        settingsStore: AppSettingsStore
+        settingsStore: AppSettingsStore,
+        usageStore: AIUsageCostStore
     ) {
         activeRunTask?.cancel()
         activeRunTask = Task { [weak self] in
@@ -50,7 +51,8 @@ final class AgentPanelModel: ObservableObject {
                 type: type,
                 projectStore: projectStore,
                 patchStore: patchStore,
-                settingsStore: settingsStore
+                settingsStore: settingsStore,
+                usageStore: usageStore
             )
         }
     }
@@ -59,7 +61,8 @@ final class AgentPanelModel: ObservableObject {
         type: AgentTaskType,
         projectStore: BookProjectStore,
         patchStore: PatchStore,
-        settingsStore: AppSettingsStore
+        settingsStore: AppSettingsStore,
+        usageStore: AIUsageCostStore
     ) async {
         guard let project = projectStore.project else {
             errorMessage = "Select a book first."
@@ -122,6 +125,9 @@ final class AgentPanelModel: ObservableObject {
                     Task { @MainActor in
                         self?.runStatus = status
                     }
+                },
+                onUsageRecorded: { usage, model in
+                    usageStore.record(usage: usage, model: model, source: "Agent")
                 }
             )
             result = agentResult
@@ -150,14 +156,20 @@ final class AgentPanelModel: ObservableObject {
         isRunning = false
         isStopping = false
         runStatus = AgentRunStatus()
-        await drainTaskQueue(projectStore: projectStore, patchStore: patchStore, settingsStore: settingsStore)
+        await drainTaskQueue(
+            projectStore: projectStore,
+            patchStore: patchStore,
+            settingsStore: settingsStore,
+            usageStore: usageStore
+        )
     }
 
     func enqueueCustomTask(
         instruction: String,
         projectStore: BookProjectStore,
         patchStore: PatchStore,
-        settingsStore: AppSettingsStore
+        settingsStore: AppSettingsStore,
+        usageStore: AIUsageCostStore
     ) async {
         let text = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -170,20 +182,33 @@ final class AgentPanelModel: ObservableObject {
         }
 
         customInstruction = text
-        startRun(type: .custom, projectStore: projectStore, patchStore: patchStore, settingsStore: settingsStore)
+        startRun(
+            type: .custom,
+            projectStore: projectStore,
+            patchStore: patchStore,
+            settingsStore: settingsStore,
+            usageStore: usageStore
+        )
     }
 
     private func drainTaskQueue(
         projectStore: BookProjectStore,
         patchStore: PatchStore,
-        settingsStore: AppSettingsStore
+        settingsStore: AppSettingsStore,
+        usageStore: AIUsageCostStore
     ) async {
         guard !shouldCancel else { return }
         while !taskInstructionQueue.isEmpty {
             let next = taskInstructionQueue.removeFirst()
             queuedTaskCount = taskInstructionQueue.count
             customInstruction = next
-            await run(type: .custom, projectStore: projectStore, patchStore: patchStore, settingsStore: settingsStore)
+            await run(
+                type: .custom,
+                projectStore: projectStore,
+                patchStore: patchStore,
+                settingsStore: settingsStore,
+                usageStore: usageStore
+            )
             if shouldCancel { break }
         }
         queuedTaskCount = taskInstructionQueue.count
@@ -238,6 +263,7 @@ final class AgentPanelModel: ObservableObject {
 }
 
 struct AgentPanelView: View {
+    @EnvironmentObject private var usageStore: AIUsageCostStore
     @EnvironmentObject private var library: BookLibraryStore
     @EnvironmentObject private var patchStore: PatchStore
     @ObservedObject var projectStore: BookProjectStore
@@ -567,7 +593,8 @@ struct AgentPanelView: View {
                                         type: taskType,
                                         projectStore: projectStore,
                                         patchStore: patchStore,
-                                        settingsStore: settingsStore
+                                        settingsStore: settingsStore,
+                                        usageStore: usageStore
                                     )
                                 }
                             )
@@ -600,7 +627,8 @@ struct AgentPanelView: View {
                         type: .custom,
                         projectStore: projectStore,
                         patchStore: patchStore,
-                        settingsStore: settingsStore
+                        settingsStore: settingsStore,
+                        usageStore: usageStore
                     )
                 }
                 .disabled(!canRunCustomTask)
