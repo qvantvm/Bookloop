@@ -2,6 +2,8 @@ import SwiftUI
 
 struct WorkspaceToolbarView: View {
     @EnvironmentObject private var patchStore: PatchStore
+    @EnvironmentObject private var settingsStore: AppSettingsStore
+    @EnvironmentObject private var usageStore: AIUsageCostStore
 
     @Binding var workspaceMode: WorkspaceMode
     @Binding var showingAppSettings: Bool
@@ -32,6 +34,9 @@ struct WorkspaceToolbarView: View {
             }
 
             Spacer(minLength: 0)
+
+            AIBalanceWidgetView()
+                .padding(.bottom, 4)
 
             toolbarButton(
                 icon: "slider.horizontal.3",

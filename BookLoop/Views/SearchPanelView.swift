@@ -28,7 +28,11 @@ final class SearchPanelModel: ObservableObject {
         }
     }
 
-    func search(projectStore: BookProjectStore, settingsStore: AppSettingsStore) async {
+    func search(
+        projectStore: BookProjectStore,
+        settingsStore: AppSettingsStore,
+        usageStore: AIUsageCostStore
+    ) async {
         guard let project = projectStore.project else {
             errorMessage = "Select a book first."
             return
@@ -50,13 +54,15 @@ final class SearchPanelModel: ObservableObject {
         do {
             let resolvedPlan: SearchPlan
             if settingsStore.hasAPIKey {
-                resolvedPlan = try await planner.plan(
+                let planned = try await planner.plan(
                     naturalLanguageQuery: trimmed,
                     project: project,
                     scope: scope,
                     apiKey: settingsStore.apiKey,
                     model: settingsStore.openAIModel
                 )
+                resolvedPlan = planned.plan
+                usageStore.record(usage: planned.usage, model: settingsStore.openAIModel, source: "Search")
             } else {
                 resolvedPlan = planner.fallbackPlan(query: trimmed, scope: scope)
                 usedFallbackPlanning = true
@@ -79,6 +85,7 @@ final class SearchPanelModel: ObservableObject {
 }
 
 struct SearchPanelView: View {
+    @EnvironmentObject private var usageStore: AIUsageCostStore
     @ObservedObject var projectStore: BookProjectStore
     @ObservedObject var settingsStore: AppSettingsStore
     @ObservedObject var model: SearchPanelModel
@@ -184,7 +191,11 @@ struct SearchPanelView: View {
 
             Button {
                 Task {
-                    await model.search(projectStore: projectStore, settingsStore: settingsStore)
+                    await model.search(
+                        projectStore: projectStore,
+                        settingsStore: settingsStore,
+                        usageStore: usageStore
+                    )
                 }
             } label: {
                 if model.isSearching {

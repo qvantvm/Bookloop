@@ -54,12 +54,18 @@ struct OpenAIChatRequestWithTools: Codable {
     let tools: [OpenAIToolDefinition]?
 }
 
+struct OpenAIToolCompletionResult {
+    let message: OpenAIAssistantMessage
+    let usage: OpenAIUsage?
+}
+
 struct OpenAIChatResponseWithTools: Codable {
     struct Choice: Codable {
         let message: OpenAIAssistantMessage
         let finish_reason: String?
     }
     let choices: [Choice]
+    let usage: OpenAIUsage?
 }
 
 struct AnyCodable: Codable, Equatable {

@@ -58,7 +58,8 @@ final class BookAgent {
         allowReviewEdits: Bool,
         isCancelled: @escaping () -> Bool,
         onActivityUpdate: (([AgentActivityItem]) -> Void)? = nil,
-        onStatusUpdate: ((AgentRunStatus) -> Void)? = nil
+        onStatusUpdate: ((AgentRunStatus) -> Void)? = nil,
+        onUsageRecorded: ((OpenAIUsage, String) -> Void)? = nil
     ) async throws -> AgentResult {
         func report(_ status: AgentRunStatus) {
             onStatusUpdate?(status)
@@ -129,12 +130,16 @@ final class BookAgent {
                 toolsCompleted: toolLog.count
             ))
 
-            let response = try await client.sendChatWithTools(
+            let completion = try await client.sendChatWithTools(
                 apiKey: apiKey,
                 model: model,
                 messages: messages,
                 tools: AgentToolRegistry.definitions(for: project)
             )
+            let response = completion.message
+            if let usage = completion.usage {
+                onUsageRecorded?(usage, model)
+            }
 
             if let toolCalls = response.tool_calls, !toolCalls.isEmpty {
                 appendAssistantReply(from: response, iteration: iteration)

@@ -4,6 +4,7 @@ import WebKit
 struct ContentView: View {
     @EnvironmentObject private var library: BookLibraryStore
     @EnvironmentObject private var settingsStore: AppSettingsStore
+    @EnvironmentObject private var usageCostStore: AIUsageCostStore
 
     @StateObject private var projectStore = ProjectContentStore()
     @StateObject private var bookProjectStore = BookProjectStore()
@@ -61,6 +62,7 @@ struct ContentView: View {
         .sheet(isPresented: $showingAppSettings) {
             AppSettingsView()
                 .environmentObject(settingsStore)
+                .environmentObject(usageCostStore)
                 .frame(width: 520)
         }
         .onAppear {
@@ -68,6 +70,14 @@ struct ContentView: View {
             refreshProjectState()
             SystemBadgeNotifier.requestAuthorizationIfNeeded()
             SystemBadgeNotifier.updatePendingPatchBadge(count: patchStore.pendingAttentionCount)
+            usageCostStore.scheduleBalanceRefresh(apiKey: settingsStore.apiKey)
+        }
+        .onChange(of: settingsStore.hasAPIKey) { _, hasKey in
+            if hasKey {
+                usageCostStore.scheduleBalanceRefresh(apiKey: settingsStore.apiKey)
+            } else {
+                usageCostStore.clearCreditBalance()
+            }
         }
         .onChange(of: patchStore.proposals) { _, proposals in
             SystemBadgeNotifier.updatePendingPatchBadge(count: proposals.count)
@@ -100,7 +110,8 @@ struct ContentView: View {
                     instruction: pending.text,
                     projectStore: bookProjectStore,
                     patchStore: patchStore,
-                    settingsStore: settingsStore
+                    settingsStore: settingsStore,
+                    usageStore: usageCostStore
                 )
                 taskStore.pendingAgentRun = nil
             }
