@@ -11,6 +11,9 @@ final class ChatPanelModel: ObservableObject {
     @Published var chatError: String?
     @Published var isSending = false
     @Published var isSubmittingFeedback = false
+    @Published private(set) var contextTokenCount: Int?
+    @Published private(set) var contextTokenCountIsEstimate = true
+    @Published private(set) var lastCompletionTokenCount: Int?
 
     private var sessions: [String: [ChatMessage]] = [:]
     private let openAIClient = OpenAIClient()
@@ -33,6 +36,9 @@ final class ChatPanelModel: ObservableObject {
         submissionIsError = false
         chatError = nil
         sessions = [:]
+        contextTokenCount = nil
+        contextTokenCountIsEstimate = true
+        lastCompletionTokenCount = nil
     }
 
     func updatePageContext(chapterID: String?, pageTitle: String?, pageURL: URL?) {
@@ -50,6 +56,23 @@ final class ChatPanelModel: ObservableObject {
             pageTitle: pageTitle,
             pageURL: pageURL?.absoluteString
         )
+    }
+
+    func refreshContextTokenCount(
+        webView: WKWebView?,
+        settingsStore: AppSettingsStore,
+        book: BookConfig?
+    ) async {
+        let draft = draftMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pageContent = await WebView.extractPageContent(in: webView)
+        let count = estimatedContextTokens(
+            pageContent: pageContent,
+            latestUserMessage: draft,
+            book: book,
+            webSearchEnabled: settingsStore.enableChatWebSearch
+        )
+        contextTokenCount = count
+        contextTokenCountIsEstimate = true
     }
 
     func sendMessage(webView: WKWebView?, settingsStore: AppSettingsStore, book: BookConfig?) async {
@@ -70,14 +93,14 @@ final class ChatPanelModel: ObservableObject {
 
         do {
             let pageContent = await WebView.extractPageContent(in: webView)
-            let reply: String
+            let result: OpenAIChatCompletionResult
             if settingsStore.enableChatWebSearch {
                 let request = buildWebSearchRequest(
                     pageContent: pageContent,
                     latestUserMessage: text,
                     book: book
                 )
-                reply = try await openAIClient.sendChatWithWebSearch(
+                result = try await openAIClient.sendChatWithWebSearch(
                     apiKey: settingsStore.apiKey,
                     model: settingsStore.openAIModel,
                     instructions: request.instructions,
@@ -89,13 +112,26 @@ final class ChatPanelModel: ObservableObject {
                     latestUserMessage: text,
                     book: book
                 )
-                reply = try await openAIClient.sendChat(
+                result = try await openAIClient.sendChat(
                     apiKey: settingsStore.apiKey,
                     model: settingsStore.openAIModel,
                     messages: openAIMessages
                 )
             }
-            appendMessage(ChatMessage(role: .assistant, content: reply))
+            appendMessage(ChatMessage(role: .assistant, content: result.content))
+            if let promptTokens = result.usage?.promptTokenCount {
+                contextTokenCount = promptTokens
+                contextTokenCountIsEstimate = false
+            } else {
+                contextTokenCount = estimatedContextTokens(
+                    pageContent: pageContent,
+                    latestUserMessage: text,
+                    book: book,
+                    webSearchEnabled: settingsStore.enableChatWebSearch
+                )
+                contextTokenCountIsEstimate = true
+            }
+            lastCompletionTokenCount = result.usage?.completionTokenCount
         } catch {
             chatError = error.localizedDescription
         }
@@ -152,6 +188,7 @@ final class ChatPanelModel: ObservableObject {
         chatError = nil
         submissionMessage = nil
         submissionIsError = false
+        lastCompletionTokenCount = nil
     }
 
     private func appendMessage(_ message: ChatMessage) {
@@ -240,6 +277,38 @@ final class ChatPanelModel: ObservableObject {
         return result
     }
 
+    private func estimatedContextTokens(
+        pageContent: String,
+        latestUserMessage: String,
+        book: BookConfig?,
+        webSearchEnabled: Bool
+    ) -> Int {
+        let includeDraft = !latestUserMessage.isEmpty
+
+        if webSearchEnabled {
+            let instructions = chapterChatInstructions(book: book, webSearchEnabled: true)
+            var input = chapterChatInputMessages(
+                pageContent: pageContent,
+                latestUserMessage: latestUserMessage,
+                includeLatestUserMessage: false
+            )
+            if includeDraft {
+                input.append(OpenAIChatMessage(role: "user", content: latestUserMessage))
+            }
+            return TokenEstimator.estimateTokens(instructions: instructions, input: input)
+        }
+
+        var result: [OpenAIChatMessage] = [
+            OpenAIChatMessage(role: "system", content: chapterChatInstructions(book: book, webSearchEnabled: false))
+        ]
+        result.append(contentsOf: chapterChatInputMessages(
+            pageContent: pageContent,
+            latestUserMessage: latestUserMessage,
+            includeLatestUserMessage: includeDraft
+        ))
+        return TokenEstimator.estimateTokens(for: result)
+    }
+
     private func formatFeedbackBody(resolvedChapter: String) -> String {
         var lines = [
             "# Chat Feedback",
@@ -309,8 +378,52 @@ struct ChatPanelView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            if settingsStore.hasAPIKey {
+                contextTokenLabel
+            }
         }
         .padding()
+        .task(id: contextTokenRefreshKey) {
+            await model.refreshContextTokenCount(
+                webView: previewModel.webView,
+                settingsStore: settingsStore,
+                book: library.selectedBook
+            )
+        }
+    }
+
+    private var contextTokenRefreshKey: String {
+        [
+            model.pageContext.pageKey,
+            String(model.messages.count),
+            model.draftMessage,
+            settingsStore.enableChatWebSearch ? "web" : "chat",
+            library.selectedBook?.id.uuidString ?? "none"
+        ].joined(separator: "|")
+    }
+
+    private var contextTokenLabel: some View {
+        Group {
+            if let count = model.contextTokenCount {
+                HStack(spacing: 4) {
+                    Text("Context: \(count.formatted()) token\(count == 1 ? "" : "s")")
+                    if model.contextTokenCountIsEstimate {
+                        Text("(est.)")
+                    }
+                    if let completionCount = model.lastCompletionTokenCount {
+                        Text("· reply: \(completionCount.formatted())")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            } else if model.isSending {
+                Text("Context: calculating...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 
     private var messageList: some View {

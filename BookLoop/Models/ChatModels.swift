@@ -49,6 +49,27 @@ struct OpenAIResponsesRequest: Encodable {
     let store: Bool
 }
 
+struct OpenAIUsage: Codable, Equatable {
+    let prompt_tokens: Int?
+    let completion_tokens: Int?
+    let total_tokens: Int?
+    let input_tokens: Int?
+    let output_tokens: Int?
+
+    var promptTokenCount: Int? {
+        prompt_tokens ?? input_tokens
+    }
+
+    var completionTokenCount: Int? {
+        completion_tokens ?? output_tokens
+    }
+}
+
+struct OpenAIChatCompletionResult {
+    let content: String
+    let usage: OpenAIUsage?
+}
+
 struct OpenAIResponsesResponse: Decodable {
     struct OutputItem: Decodable {
         struct ContentBlock: Decodable {
@@ -61,6 +82,7 @@ struct OpenAIResponsesResponse: Decodable {
     }
 
     let output: [OutputItem]?
+    let usage: OpenAIUsage?
 
     var outputText: String {
         guard let output else { return "" }
@@ -85,6 +107,7 @@ struct OpenAIChatResponse: Codable {
         let message: Message
     }
     let choices: [Choice]
+    let usage: OpenAIUsage?
 }
 
 enum OpenAIError: LocalizedError {

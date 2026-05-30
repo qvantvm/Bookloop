@@ -7,7 +7,7 @@ final class OpenAIClient {
         self.session = session
     }
 
-    func sendChat(apiKey: String, model: String, messages: [OpenAIChatMessage]) async throws -> String {
+    func sendChat(apiKey: String, model: String, messages: [OpenAIChatMessage]) async throws -> OpenAIChatCompletionResult {
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw OpenAIError.missingAPIKey
         }
@@ -46,7 +46,7 @@ final class OpenAIClient {
                   !content.isEmpty else {
                 throw OpenAIError.invalidResponse
             }
-            return content
+            return OpenAIChatCompletionResult(content: content, usage: decoded.usage)
         } catch let error as OpenAIError {
             throw error
         } catch {
@@ -59,7 +59,7 @@ final class OpenAIClient {
         model: String,
         instructions: String,
         input: [OpenAIChatMessage]
-    ) async throws -> String {
+    ) async throws -> OpenAIChatCompletionResult {
         guard !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw OpenAIError.missingAPIKey
         }
@@ -106,7 +106,7 @@ final class OpenAIClient {
             guard !content.isEmpty else {
                 throw OpenAIError.invalidResponse
             }
-            return content
+            return OpenAIChatCompletionResult(content: content, usage: decoded.usage)
         } catch let error as OpenAIError {
             throw error
         } catch {
