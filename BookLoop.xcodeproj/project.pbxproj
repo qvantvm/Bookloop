@@ -63,6 +63,7 @@
 		10100000000000000000003A /* TaskPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000003A /* TaskPanelView.swift */; };
 		10100000000000000000003B /* SystemBadgeNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000003B /* SystemBadgeNotifier.swift */; };
 		10100000000000000000003C /* GitBranchTreeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000003C /* GitBranchTreeView.swift */; };
+		10100000000000000000003F /* GitWorkspaceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000003F /* GitWorkspaceView.swift */; };
 		10100000000000000000003D /* FigurePatchServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000003D /* FigurePatchServices.swift */; };
 		10100000000000000000003E /* AddFigureSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000003E /* AddFigureSheet.swift */; };
 		101000000000000000000032 /* WorkspaceToolbarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000032 /* WorkspaceToolbarView.swift */; };
@@ -130,6 +131,7 @@
 		10200000000000000000003A /* TaskPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskPanelView.swift; sourceTree = "<group>"; };
 		10200000000000000000003B /* SystemBadgeNotifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemBadgeNotifier.swift; sourceTree = "<group>"; };
 		10200000000000000000003C /* GitBranchTreeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitBranchTreeView.swift; sourceTree = "<group>"; };
+		10200000000000000000003F /* GitWorkspaceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitWorkspaceView.swift; sourceTree = "<group>"; };
 		10200000000000000000003D /* FigurePatchServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FigurePatchServices.swift; sourceTree = "<group>"; };
 		10200000000000000000003E /* AddFigureSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddFigureSheet.swift; sourceTree = "<group>"; };
 		10200000000000000000003F /* TokenEstimator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenEstimator.swift; sourceTree = "<group>"; };
@@ -236,6 +238,7 @@
 				102000000000000000000005 /* Views.swift */,
 				102000000000000000000021 /* PatchActionPanel.swift */,
 				10200000000000000000003C /* GitBranchTreeView.swift */,
+				10200000000000000000003F /* GitWorkspaceView.swift */,
 				10200000000000000000003E /* AddFigureSheet.swift */,
 			);
 			path = Views;
@@ -458,6 +461,7 @@
 				10100000000000000000001F /* AgentPatchExporter.swift in Sources */,
 				101000000000000000000020 /* PatchActionPanel.swift in Sources */,
 				10100000000000000000003C /* GitBranchTreeView.swift in Sources */,
+				10100000000000000000003F /* GitWorkspaceView.swift in Sources */,
 				10100000000000000000003D /* FigurePatchServices.swift in Sources */,
 				10100000000000000000003E /* AddFigureSheet.swift in Sources */,
 				101000000000000000000021 /* NavConfigLoader.swift in Sources */,

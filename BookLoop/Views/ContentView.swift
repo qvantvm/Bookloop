@@ -414,6 +414,9 @@ struct ToolWorkspaceView: View {
                 .environmentObject(patchStore)
                 .environmentObject(library)
                 .environmentObject(figureStore)
+        case .git:
+            GitWorkspaceView(book: book)
+                .environmentObject(library)
         case .settings:
             BookSettingsTab(book: book)
                 .environmentObject(library)

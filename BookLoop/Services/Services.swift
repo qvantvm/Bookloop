@@ -3698,6 +3698,27 @@ final class PatchApplier {
         }.value
     }
 
+    func gitCheckout(ref: String, book: BookConfig) async throws -> ShellCommandResult {
+        guard book.allowsPatchGitCommands else {
+            throw PatchReviewError.shellCommandsDisabled
+        }
+        let trimmedRef = ref.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedRef.isEmpty else {
+            throw PatchReviewError.emptyCommitMessage
+        }
+        return try await ShellCommandRunner().runAsync(
+            command: "git checkout \(shellQuoted(trimmedRef))",
+            book: book
+        )
+    }
+
+    func gitStageAll(book: BookConfig) async throws -> ShellCommandResult {
+        guard book.allowsPatchGitCommands else {
+            throw PatchReviewError.shellCommandsDisabled
+        }
+        return try await ShellCommandRunner().runAsync(command: "git add -A", book: book)
+    }
+
     func gitCommit(message: String, changedPaths: [String], book: BookConfig) async throws -> ShellCommandResult {
         guard book.allowsPatchGitCommands else {
             throw PatchReviewError.shellCommandsDisabled
@@ -3771,6 +3792,7 @@ enum GitHistoryLoader {
             workingDirectory: root
         )
         let refsByCommit = parseRefs(refsResult.combinedOutput)
+        let branches = branchList(from: refsResult.combinedOutput)
 
         let logResult = try runner.runGit(
             [
@@ -3783,6 +3805,7 @@ enum GitHistoryLoader {
         guard logResult.succeeded else {
             return GitHistorySnapshot(
                 currentBranch: currentBranch,
+                branches: branches,
                 errorMessage: logResult.combinedOutput.nilIfBlank ?? "Could not read git history."
             )
         }
@@ -3792,14 +3815,42 @@ enum GitHistoryLoader {
         if rows.isEmpty {
             return GitHistorySnapshot(
                 currentBranch: currentBranch,
+                branches: branches,
                 errorMessage: "No commits found in this repository."
             )
         }
-        return GitHistorySnapshot(currentBranch: currentBranch, rows: rows)
+        return GitHistorySnapshot(currentBranch: currentBranch, branches: branches, rows: rows)
     }
 
     fileprivate static func isGitRepository(root: URL, runner: ProcessRunner) -> Bool {
         (try? runner.runGit(["rev-parse", "--git-dir"], workingDirectory: root))?.succeeded == true
+    }
+
+    private static func branchList(from output: String) -> [GitRefLabel] {
+        var branches: [GitRefLabel] = []
+        var seen = Set<String>()
+        for line in output.components(separatedBy: .newlines) where !line.isEmpty {
+            let parts = line.split(separator: "\u{1F}", omittingEmptySubsequences: false).map(String.init)
+            guard parts.count >= 3 else { continue }
+            let shortName = parts[1]
+            let fullName = parts[2]
+            let kind: GitRefKind
+            if fullName.hasPrefix("refs/heads/") {
+                kind = .branch
+            } else if fullName.hasPrefix("refs/remotes/") {
+                kind = .remote
+            } else {
+                continue
+            }
+            guard seen.insert(fullName).inserted else { continue }
+            branches.append(GitRefLabel(name: shortName, fullName: fullName, kind: kind))
+        }
+        return branches.sorted { lhs, rhs in
+            if lhs.kind != rhs.kind {
+                return lhs.kind == .branch && rhs.kind != .branch
+            }
+            return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+        }
     }
 
     private static func parseRefs(_ output: String) -> [String: [GitRefLabel]] {

@@ -7,8 +7,6 @@ struct PatchActionPanel: View {
     let blocks: [RenderedPatchBlock]
     @Binding var decisions: [String: PatchBlockDecision]
     let workflowPhase: PatchWorkflowPhase
-    let gitHistory: GitHistorySnapshot
-    let gitChanges: GitChangesSnapshot
     let activityLog: [PatchActivityEntry]
     let patchApplicabilityStatus: PatchApplicabilityStatus
     let isRunningPatchCommand: Bool
@@ -143,7 +141,26 @@ struct PatchActionPanel: View {
                     }
                 }
 
-                gitPanel
+                if !activityLog.isEmpty {
+                    GroupBox {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(activityLog.prefix(6)) { entry in
+                                HStack(alignment: .top, spacing: 6) {
+                                    Text(DateFormatting.display.string(from: entry.timestamp))
+                                        .font(.caption2.monospaced())
+                                        .foregroundStyle(.tertiary)
+                                        .frame(width: 72, alignment: .leading)
+                                    Text(entry.message)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    } label: {
+                        Label("Activity", systemImage: "clock.arrow.circlepath")
+                    }
+                }
 
                 if let statusMessage {
                     Text(statusMessage)
@@ -221,38 +238,6 @@ struct PatchActionPanel: View {
                 .padding(.vertical, 4)
         } label: {
             Label("Step \(number): \(title)", systemImage: isActive ? "largecircle.fill.circle" : "circle")
-        }
-    }
-
-    private var gitPanel: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                GitWorkingChangesView(snapshot: gitChanges)
-
-                Divider()
-
-                GitBranchTreeView(snapshot: gitHistory)
-
-                if !activityLog.isEmpty {
-                    Divider()
-                    Text("Activity")
-                        .font(.caption.weight(.semibold))
-                    ForEach(activityLog.prefix(6)) { entry in
-                        HStack(alignment: .top, spacing: 6) {
-                            Text(DateFormatting.display.string(from: entry.timestamp))
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(.tertiary)
-                                .frame(width: 72, alignment: .leading)
-                            Text(entry.message)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
-            .padding(.vertical, 4)
-        } label: {
-            Label("Git", systemImage: "arrow.triangle.branch")
         }
     }
 

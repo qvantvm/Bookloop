@@ -99,7 +99,7 @@ struct WorkspaceToolbarView: View {
 
 extension WorkspaceTab {
     static var toolTabs: [WorkspaceTab] {
-        [.search, .reviews, .tasks, .agent, .patches, .figures, .settings]
+        [.search, .reviews, .tasks, .agent, .patches, .git, .figures, .settings]
     }
 
     var toolbarIcon: String {
@@ -111,6 +111,7 @@ extension WorkspaceTab {
         case .figures: return "photo"
         case .tasks: return "checklist"
         case .patches: return "doc.text.magnifyingglass"
+        case .git: return "arrow.triangle.branch"
         case .settings: return "gearshape"
         }
     }
