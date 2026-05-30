@@ -479,7 +479,9 @@ The native Agent **does not modify book files on disk**. Each `apply_patch` call
 
 **Why not `reviews/`?** The `reviews/` folder holds editor feedback (input). Agent session logs are machine-generated tooling output (like build cache). Keeping them under hidden `.bookloop/` avoids cluttering editorial folders.
 
-Agent settings (max iterations, build timeout, review edits) are in app settings under **Native Agent**.
+Agent settings (max iterations, build timeout, fetch URL size, review edits) are in [App settings](#20-app-settings-openai--native-agent).
+
+After an audit run, the results area shows the **Audit report** path, finding count, and any review IDs created.
 
 ---
 
