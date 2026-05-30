@@ -407,6 +407,7 @@ enum TaskCategory: String, CaseIterable {
     case reviews
     case figures
     case validate
+    case bookQuality
 
     var sectionTitle: String {
         switch self {
@@ -414,6 +415,7 @@ enum TaskCategory: String, CaseIterable {
         case .reviews: return "Reviews"
         case .figures: return "Figures"
         case .validate: return "Validate"
+        case .bookQuality: return "Book quality"
         }
     }
 }
@@ -424,6 +426,8 @@ enum RevisionTaskMode: String, Codable, CaseIterable, Identifiable {
     case proposeFigure = "propose_figure"
     case fixReviews = "fix_reviews"
     case validateBook = "validate_book"
+    case checkConsistency = "check_consistency"
+    case checkLogicalFlow = "check_logical_flow"
 
     var id: String { rawValue }
 
@@ -434,6 +438,8 @@ enum RevisionTaskMode: String, Codable, CaseIterable, Identifiable {
         case .proposeFigure: return "Propose Figure"
         case .fixReviews: return "Fix Reviews"
         case .validateBook: return "Validate Book"
+        case .checkConsistency: return "Check Consistency"
+        case .checkLogicalFlow: return "Check Logical Flow"
         }
     }
 
@@ -447,6 +453,7 @@ enum RevisionTaskMode: String, Codable, CaseIterable, Identifiable {
         case .fixReviews: return .reviews
         case .proposeFigure: return .figures
         case .validateBook: return .validate
+        case .checkConsistency, .checkLogicalFlow: return .bookQuality
         }
     }
 
@@ -457,6 +464,8 @@ enum RevisionTaskMode: String, Codable, CaseIterable, Identifiable {
         case .proposeFigure: return "photo"
         case .fixReviews: return "text.bubble"
         case .validateBook: return "checkmark.shield"
+        case .checkConsistency: return "arrow.triangle.branch"
+        case .checkLogicalFlow: return "arrow.right.arrow.left"
         }
     }
 
@@ -472,6 +481,10 @@ enum RevisionTaskMode: String, Codable, CaseIterable, Identifiable {
             return "Address selected review items by proposing a unified diff."
         case .validateBook:
             return "Scan for broken links and asset issues (or run an optional shell command if configured)."
+        case .checkConsistency:
+            return "Audit terminology, definitions, and cross-chapter consistency using grep/search across the book."
+        case .checkLogicalFlow:
+            return "Audit narrative order, prerequisites, and chapter transitions across the book."
         }
     }
 

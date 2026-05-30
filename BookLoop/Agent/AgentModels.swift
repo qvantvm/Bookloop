@@ -2,12 +2,14 @@ import Foundation
 
 enum AgentTaskCategory: String, CaseIterable {
     case reviewsAndContent
+    case bookQuality
     case assetsAndLinks
     case explore
 
     var sectionTitle: String {
         switch self {
         case .reviewsAndContent: return "Reviews & content"
+        case .bookQuality: return "Book quality"
         case .assetsAndLinks: return "Assets & links"
         case .explore: return "Explore"
         }
@@ -18,6 +20,8 @@ enum AgentTaskType: String, Codable, CaseIterable, Identifiable {
     case summarizeProject
     case applyReviewFeedback
     case improveCurrentChapter
+    case checkConsistency
+    case checkLogicalFlow
     case fixBrokenLinks
     case custom
 
@@ -45,6 +49,8 @@ enum AgentTaskType: String, Codable, CaseIterable, Identifiable {
         case .summarizeProject: return "Summarize Project"
         case .applyReviewFeedback: return "Apply Review Feedback"
         case .improveCurrentChapter: return "Improve Current Chapter"
+        case .checkConsistency: return "Check Consistency"
+        case .checkLogicalFlow: return "Check Logical Flow"
         case .fixBrokenLinks: return "Fix Broken Links"
         case .custom: return "Custom Task"
         }
@@ -53,6 +59,7 @@ enum AgentTaskType: String, Codable, CaseIterable, Identifiable {
     var category: AgentTaskCategory? {
         switch self {
         case .applyReviewFeedback, .improveCurrentChapter: return .reviewsAndContent
+        case .checkConsistency, .checkLogicalFlow: return .bookQuality
         case .fixBrokenLinks: return .assetsAndLinks
         case .summarizeProject: return .explore
         case .custom: return nil
@@ -64,6 +71,8 @@ enum AgentTaskType: String, Codable, CaseIterable, Identifiable {
         case .summarizeProject: return "doc.text.magnifyingglass"
         case .applyReviewFeedback: return "text.bubble"
         case .improveCurrentChapter: return "text.page"
+        case .checkConsistency: return "arrow.triangle.branch"
+        case .checkLogicalFlow: return "arrow.right.arrow.left"
         case .fixBrokenLinks: return "link.badge.plus"
         case .custom: return "square.and.pencil"
         }
@@ -77,10 +86,29 @@ enum AgentTaskType: String, Codable, CaseIterable, Identifiable {
             return "Read open review items and propose chapter edits as a patch."
         case .improveCurrentChapter:
             return "Improve the chapter open in Reading mode using the current chapter ID."
+        case .checkConsistency:
+            return "Multiturn audit: table of contents, grep/search across chapters, terminology and factual consistency report."
+        case .checkLogicalFlow:
+            return "Multiturn audit: narrative order, prerequisites, transitions, and structural flow across the book."
         case .fixBrokenLinks:
             return "Find broken figure paths, missing local assets, and bad external asset URLs, then propose fixes."
         case .custom:
             return "Run with your own instruction using the agent tools."
+        }
+    }
+
+    var isBookAuditTask: Bool {
+        switch self {
+        case .checkConsistency, .checkLogicalFlow: return true
+        default: return false
+        }
+    }
+
+    var auditKind: BookAuditKind? {
+        switch self {
+        case .checkConsistency: return .consistency
+        case .checkLogicalFlow: return .logicalFlow
+        default: return nil
         }
     }
 
@@ -96,6 +124,8 @@ enum AgentTaskType: String, Codable, CaseIterable, Identifiable {
 struct AgentTask: Equatable {
     var type: AgentTaskType
     var instruction: String
+    /// When true, audit tasks may stage apply_patch fixes after reporting findings.
+    var proposeFixesAfterAudit: Bool = false
 }
 
 struct AgentToolLogEntry: Codable, Equatable, Identifiable {
@@ -210,6 +240,10 @@ struct AgentResult: Equatable {
     var activity: [AgentActivityItem]
     var unresolvedIssues: [String]
     var sessionDirectory: URL
+    var auditReportPath: String?
+    var auditReportAbsolutePath: String?
+    var auditFindingCount: Int
+    var auditReviewItemIDs: [String]
 }
 
 enum AgentPromptBuilder {
@@ -227,6 +261,8 @@ enum AgentPromptBuilder {
     - If information is missing, leave a TODO or report an unresolved issue.
     - Use grep for regex or exact substring search with line numbers across project files.
     - Use search_text for quick indexed lookup when regex is not needed.
+    - Use get_table_of_contents for the book outline before large cross-chapter audits.
+    - Use record_audit_finding to capture structured issues during consistency or flow audits.
     - Prefer precise replacements using apply_patch to stage edits.
     - apply_patch stages changes only; book files are not modified on disk until a human applies the patch in Tools → Patches.
     - Open review items often contain actionable guidance in the body or Conversation section even when suggested_fix is empty or says TODO.
@@ -269,7 +305,21 @@ enum AgentPromptBuilder {
             lines.append("Validation: use scan_broken_links — no external build command is configured for this book.")
         }
         lines.append("Patch output directory: \(project.book.patchDirectoryPath)")
+        lines.append("Audit reports directory: \(BookAuditReportWriter.auditReportsDirectory(for: project.book))")
         lines.append("Allowed write globs: \(project.config.allowedWriteGlobs.joined(separator: ", "))")
+
+        if task.type.isBookAuditTask {
+            let toc = BookTableOfContentsBuilder.build(book: project.book, projectMap: project.projectMap)
+            lines.append("")
+            lines.append("--- table of contents (summary) ---")
+            lines.append("Source: \(toc.navSource), \(toc.chapterCount) chapters")
+            lines.append(String(toc.outline.prefix(12_000)))
+            if task.proposeFixesAfterAudit {
+                lines.append("After reporting findings, you may stage small apply_patch fixes for clear issues.")
+            } else {
+                lines.append("Report only — do not use apply_patch unless the user instruction explicitly asks for fixes.")
+            }
+        }
 
         switch task.type {
         case .applyReviewFeedback:
@@ -302,6 +352,10 @@ enum AgentPromptBuilder {
             4. Stage path fixes with apply_patch. Prefer correcting references to existing files over inventing new assets.
             5. If an asset is missing but a figure source exists under figures/, note it as an unresolved issue rather than guessing output paths.
             """)
+        case .checkConsistency:
+            lines.append(bookAuditInstructions(focus: "consistency", task: task, project: project))
+        case .checkLogicalFlow:
+            lines.append(bookAuditInstructions(focus: "logical flow", task: task, project: project))
         case .custom:
             if !project.hasValidationCommand {
                 lines.append("""
@@ -315,6 +369,26 @@ enum AgentPromptBuilder {
         }
 
         return lines.joined(separator: "\n")
+    }
+
+    private static func bookAuditInstructions(focus: String, task: AgentTask, project: BookProject) -> String {
+        var styleGuideNote = ""
+        if let path = project.book.styleGuidePath,
+           FileManager.default.fileExists(atPath: path) {
+            styleGuideNote = "\n- Read bookloop/style_guide.md (or configured style guide) for terminology and voice rules."
+        }
+
+        return """
+        Instructions (\(focus) audit for a large book):
+        1. Call get_table_of_contents, then work through chapters systematically (not only the current chapter).
+        2. Use grep and search_text in multiple turns to find terminology variants, repeated definitions, contradictions, and cross-references.
+        3. read_file on chapters where grep/search shows conflicts or gaps; compare passages side by side.
+        4. read_review_items with status "open" and incorporate existing human feedback.\(styleGuideNote)
+        5. For each real issue, call record_audit_finding with category, severity (low|medium|major|critical), title, detail, chapter id, evidence_paths, and optional suggested_fix.
+        6. Finish with a concise executive summary listing the highest-impact issues first.
+        7. Do not invent problems — only record findings backed by evidence you read via tools.
+        \(task.proposeFixesAfterAudit ? "8. After recording findings, you may stage targeted apply_patch fixes for straightforward corrections." : "8. Do not use apply_patch in this run unless the user instruction explicitly requests fixes.")
+        """
     }
 
     private static func openReviewDigest(for project: BookProject) -> String {
@@ -386,7 +460,17 @@ enum AgentToolRegistry {
             ], required: ["path", "old_text", "new_text"]),
             tool(name: "scan_broken_links", description: "Scan chapter markdown for missing figure files, broken local asset links, stale figures, and external asset URLs.", properties: [:], required: []),
             tool(name: "get_git_status", description: "Return git status --porcelain.", properties: [:], required: []),
-            tool(name: "get_git_diff", description: "Return a summary and patch for uncommitted changes (excludes .bookloop/ logs; capped output, ~45s timeout).", properties: [:], required: [])
+            tool(name: "get_git_diff", description: "Return a summary and patch for uncommitted changes (excludes .bookloop/ logs; capped output, ~45s timeout).", properties: [:], required: []),
+            tool(name: "get_table_of_contents", description: "Return the book navigation order and per-chapter heading outline from bookloop.yml and the project scan.", properties: [:], required: []),
+            tool(name: "record_audit_finding", description: "Record a structured consistency or logical-flow finding during a book audit. Call once per distinct issue.", properties: [
+                "category": prop("string", "Issue category such as terminology, contradiction, prerequisite, transition"),
+                "severity": prop("string", "low, medium, major, or critical"),
+                "title": prop("string", "Short issue title"),
+                "detail": prop("string", "Detailed explanation with references to chapters or lines"),
+                "chapter": prop("string", "Primary chapter id if applicable"),
+                "evidence_paths": prop("string", "Comma-separated project-relative paths supporting the finding"),
+                "suggested_fix": prop("string", "Optional concrete fix suggestion")
+            ], required: ["category", "severity", "title", "detail"])
         ]
     }
 
@@ -455,6 +539,37 @@ enum AgentToolRegistry {
             return try AgentTools.gitStatus(context: context)
         case "get_git_diff":
             return try AgentTools.gitDiff(context: context)
+        case "get_table_of_contents":
+            return encode(AgentTools.getTableOfContents(context: context))
+        case "record_audit_finding":
+            let category = args["category"] as? String ?? "general"
+            let severity = args["severity"] as? String ?? "medium"
+            let title = args["title"] as? String ?? "Finding"
+            let detail = args["detail"] as? String ?? ""
+            let chapter = args["chapter"] as? String
+            let evidencePaths: [String]
+            if let paths = args["evidence_paths"] as? [String] {
+                evidencePaths = paths
+            } else if let raw = args["evidence_paths"] as? String {
+                evidencePaths = raw
+                    .split(separator: ",")
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+            } else {
+                evidencePaths = []
+            }
+            let suggestedFix = args["suggested_fix"] as? String
+            let finding = AgentTools.recordAuditFinding(
+                category: category,
+                severity: severity,
+                title: title,
+                detail: detail,
+                chapter: chapter,
+                evidencePaths: evidencePaths,
+                suggestedFix: suggestedFix,
+                context: &context
+            )
+            return encode(["recorded": true, "finding_id": finding.id.uuidString, "total_findings": context.auditFindings.count])
         default:
             throw AgentToolError.unknownTool(name)
         }

@@ -36,6 +36,7 @@
 		10100000000000000000001B /* OpenAIToolModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001C /* OpenAIToolModels.swift */; };
 		10100000000000000000001C /* AgentModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001D /* AgentModels.swift */; };
 		10100000000000000000001D /* BookAgent.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001E /* BookAgent.swift */; };
+		101000000000000000000040 /* BookAuditSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000040 /* BookAuditSupport.swift */; };
 		10100000000000000000001E /* AgentPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10200000000000000000001F /* AgentPanelView.swift */; };
 		10100000000000000000001F /* AgentPatchExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000020 /* AgentPatchExporter.swift */; };
 		101000000000000000000020 /* PatchActionPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 102000000000000000000021 /* PatchActionPanel.swift */; };
@@ -104,6 +105,7 @@
 		10200000000000000000001C /* OpenAIToolModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenAIToolModels.swift; sourceTree = "<group>"; };
 		10200000000000000000001D /* AgentModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentModels.swift; sourceTree = "<group>"; };
 		10200000000000000000001E /* BookAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookAgent.swift; sourceTree = "<group>"; };
+		102000000000000000000040 /* BookAuditSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookAuditSupport.swift; sourceTree = "<group>"; };
 		10200000000000000000001F /* AgentPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPanelView.swift; sourceTree = "<group>"; };
 		102000000000000000000020 /* AgentPatchExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentPatchExporter.swift; sourceTree = "<group>"; };
 		102000000000000000000021 /* PatchActionPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PatchActionPanel.swift; sourceTree = "<group>"; };
@@ -285,6 +287,7 @@
 			children = (
 				10200000000000000000001D /* AgentModels.swift */,
 				10200000000000000000001E /* BookAgent.swift */,
+				102000000000000000000040 /* BookAuditSupport.swift */,
 				102000000000000000000020 /* AgentPatchExporter.swift */,
 			);
 			path = Agent;
@@ -455,6 +458,7 @@
 				10100000000000000000001B /* OpenAIToolModels.swift in Sources */,
 				10100000000000000000001C /* AgentModels.swift in Sources */,
 				10100000000000000000001D /* BookAgent.swift in Sources */,
+				101000000000000000000040 /* BookAuditSupport.swift in Sources */,
 				10100000000000000000001E /* AgentPanelView.swift in Sources */,
 				101000000000000000000034 /* SearchPanelView.swift in Sources */,
 				10100000000000000000003A /* TaskPanelView.swift in Sources */,

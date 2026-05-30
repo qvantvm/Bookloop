@@ -1354,6 +1354,10 @@ final class TaskGenerator {
             title = "Create a script-generated figure for chapter `\(chapterID ?? "current")`."
         case .validateBook:
             title = "Validate the book and report issues."
+        case .checkConsistency:
+            title = "Check terminology and cross-chapter consistency across the book."
+        case .checkLogicalFlow:
+            title = "Check narrative order, prerequisites, and logical flow across the book."
         case .planOnly:
             title = "Plan revisions for the selected book context."
         case .proposePatchOnly, .fixReviews:
@@ -1423,6 +1427,10 @@ final class TaskGenerator {
             lines.append(contentsOf: validationRequirements(book: book))
         }
 
+        if mode == .checkConsistency || mode == .checkLogicalFlow {
+            lines.append(contentsOf: bookAuditTaskRequirements(mode: mode, book: book))
+        }
+
         var constraints: [String] = [
             "- Preserve chapter voice.",
             "- Add concrete examples where useful.",
@@ -1466,7 +1474,31 @@ final class TaskGenerator {
                 return "Run the configured validation command and report issues. Do not directly modify files."
             }
             return "Use scan_broken_links and review checks to validate the book. Do not run mkdocs or other external build tools. Do not directly modify files."
+        case .checkConsistency:
+            return "Multiturn consistency audit: read table of contents, grep/search across chapters, report contradictions. Propose a patch only if asked. Do not directly modify files."
+        case .checkLogicalFlow:
+            return "Multiturn flow audit: verify prerequisites, ordering, and transitions between chapters. Propose a patch only if asked. Do not directly modify files."
         }
+    }
+
+    private func bookAuditTaskRequirements(mode: RevisionTaskMode, book: BookConfig) -> [String] {
+        let focus = mode == .checkConsistency ? "consistency" : "logical flow"
+        var lines = [
+            "",
+            "## Book audit checklist (\(focus))",
+            "- Start from bookloop.yml / nav order and chapter headings.",
+            "- Use grep and search across docs/**/*.md in multiple turns.",
+            "- Read conflicting passages before claiming an issue.",
+            "- Record findings with file paths and line references.",
+            "- Save a structured report; use BookLoop Agent → Check Consistency / Check Logical Flow for in-app multiturn audits.",
+        ]
+        if let path = book.styleGuidePath, FileManager.default.fileExists(atPath: path) {
+            lines.append("- Apply rules from \(URL(fileURLWithPath: path).lastPathComponent).")
+        }
+        if let llms = BookLLMsContext.relativePath(for: book) {
+            lines.append("- Use \(llms) for book-wide context.")
+        }
+        return lines
     }
 
     private func figureRequirements(chapterID: String?, reviewItems: [ReviewItem], book: BookConfig) -> [String] {
