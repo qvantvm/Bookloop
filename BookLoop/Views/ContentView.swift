@@ -392,9 +392,10 @@ struct ToolWorkspaceView: View {
                 .environmentObject(projectStore)
                 .environmentObject(previewModel)
         case .figures:
-            FigureBrowserView(book: book)
+            FigureBrowserView(workspaceMode: $workspaceMode, book: book)
                 .environmentObject(figureStore)
                 .environmentObject(taskStore)
+                .environmentObject(patchStore)
         case .tasks:
             TaskPanelView(
                 book: book,
@@ -412,6 +413,7 @@ struct ToolWorkspaceView: View {
             PatchReviewView(book: book)
                 .environmentObject(patchStore)
                 .environmentObject(library)
+                .environmentObject(figureStore)
         case .settings:
             BookSettingsTab(book: book)
                 .environmentObject(library)

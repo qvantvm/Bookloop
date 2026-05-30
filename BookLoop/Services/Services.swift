@@ -1480,6 +1480,8 @@ final class TaskGenerator {
             "- Save final asset under `docs/assets/figures/`.",
             "- Add alt text and caption.",
             "- Insert figure into the chapter only through a visible patch.",
+            "- Export all book changes to `bookloop/patches/figure-*.patch` (never write directly to the book tree).",
+            "- Merge registry metadata into `bookloop/figures.json` inside the patch.",
         ]
         if let validationLine = validationConstraintLine(book: book) {
             lines.append(validationLine)
@@ -1541,7 +1543,10 @@ final class FigureScanner {
                 caption: reference.altText.nilIfBlank,
                 generationCommand: nil,
                 lastGeneratedAt: FileHelpers.modificationDate(path: outputPath),
-                isStale: stale
+                isStale: stale,
+                sourceKind: nil,
+                sourceURL: nil,
+                attribution: nil
             )
         }
 
@@ -1559,7 +1564,10 @@ final class FigureScanner {
                 caption: nil,
                 generationCommand: nil,
                 lastGeneratedAt: FileHelpers.modificationDate(path: output),
-                isStale: isStale(sourcePath: findSource(for: output, book: book), outputPath: output)
+                isStale: isStale(sourcePath: findSource(for: output, book: book), outputPath: output),
+                sourceKind: nil,
+                sourceURL: nil,
+                attribution: nil
             )
         }
 
@@ -1624,7 +1632,10 @@ final class FigureScanner {
                 caption: stringValue(dictionary, keys: ["caption", "alt", "altText", "alt_text"]),
                 generationCommand: stringValue(dictionary, keys: ["generationCommand", "generation_command", "command"]),
                 lastGeneratedAt: FileHelpers.modificationDate(path: outputPath),
-                isStale: stale
+                isStale: stale,
+                sourceKind: sourceKindValue(dictionary),
+                sourceURL: stringValue(dictionary, keys: ["sourceURL", "source_url"]),
+                attribution: stringValue(dictionary, keys: ["attribution"])
             )
         }
     }
@@ -1653,6 +1664,11 @@ final class FigureScanner {
             }
         }
         return nil
+    }
+
+    private func sourceKindValue(_ dictionary: [String: Any]) -> FigureSourceKind? {
+        guard let raw = stringValue(dictionary, keys: ["sourceKind", "source_kind"]) else { return nil }
+        return FigureSourceKind(rawValue: raw)
     }
 
     private func resolveRegistryPath(_ value: String, book: BookConfig) -> String {
@@ -3304,6 +3320,7 @@ final class PatchParser {
         var currentHunk: DiffHunk?
         var oldPath = ""
         var newPath = ""
+        var sectionLines: [String] = []
 
         func flushHunk() {
             guard let hunk = currentHunk else { return }
@@ -3313,19 +3330,25 @@ final class PatchParser {
 
         func flushFile() {
             flushHunk()
-            guard let file = currentFile else { return }
+            guard var file = currentFile else { return }
+            file.rawSection = sectionLines.joined(separator: "\n")
+            file.isBinary = file.rawSection.contains("GIT binary patch")
+                || file.rawSection.contains("Binary files ")
             files.append(file)
             currentFile = nil
+            sectionLines = []
         }
 
         for line in lines {
             if line.hasPrefix("diff --git ") {
                 flushFile()
+                sectionLines = [line]
                 let parts = line.split(separator: " ").map(String.init)
                 oldPath = parts.count > 2 ? parts[2].dropGitPrefix() : ""
                 newPath = parts.count > 3 ? parts[3].dropGitPrefix() : oldPath
                 currentFile = DiffFile(id: "\(oldPath)->\(newPath)", oldPath: oldPath, newPath: newPath, hunks: [])
             } else if line.hasPrefix("--- ") {
+                sectionLines.append(line)
                 oldPath = String(line.dropFirst(4)).dropGitPrefix()
                 if currentFile == nil {
                     currentFile = DiffFile(id: oldPath, oldPath: oldPath, newPath: newPath, hunks: [])
@@ -3333,10 +3356,12 @@ final class PatchParser {
                     currentFile?.oldPath = oldPath
                 }
             } else if line.hasPrefix("+++ ") {
+                sectionLines.append(line)
                 newPath = String(line.dropFirst(4)).dropGitPrefix()
                 currentFile?.newPath = newPath
                 currentFile?.id = "\(oldPath)->\(newPath)"
             } else if line.hasPrefix("@@") {
+                sectionLines.append(line)
                 flushHunk()
                 let parsed = parseHunkHeader(line)
                 currentHunk = DiffHunk(
@@ -3348,6 +3373,7 @@ final class PatchParser {
                     lines: [DiffLine(id: UUID(), kind: .header, content: line)]
                 )
             } else if currentHunk != nil {
+                sectionLines.append(line)
                 let kind: DiffLineKind
                 if line.hasPrefix("+") {
                     kind = .addition
@@ -3357,6 +3383,8 @@ final class PatchParser {
                     kind = .context
                 }
                 currentHunk?.lines.append(DiffLine(id: UUID(), kind: kind, content: line))
+            } else if currentFile != nil {
+                sectionLines.append(line)
             }
         }
 
@@ -3366,8 +3394,39 @@ final class PatchParser {
 
     func renderedBlocks(from proposal: PatchProposal) -> [RenderedPatchBlock] {
         let renderer = MarkdownHTMLRenderer()
-        return parseDiff(proposal.rawPatch).flatMap { file in
-            file.hunks.enumerated().map { index, hunk in
+        let previewDir = URL(fileURLWithPath: proposal.filePath).deletingLastPathComponent()
+        let patchStem = URL(fileURLWithPath: proposal.filePath).deletingPathExtension().lastPathComponent
+        return parseDiff(proposal.rawPatch).flatMap { file -> [RenderedPatchBlock] in
+            if file.isBinary {
+                let path = file.newPath.isEmpty ? file.oldPath : file.newPath
+                let assetExt = URL(fileURLWithPath: path).pathExtension.nilIfBlank ?? "png"
+                let sidecarPreview = previewDir.appendingPathComponent("\(patchStem).\(assetExt)").path
+                let previewPath = FileManager.default.fileExists(atPath: sidecarPreview)
+                    ? sidecarPreview
+                    : BinaryPatchPreviewExtractor.writePreview(from: file.rawSection, to: previewDir)
+                return [
+                    RenderedPatchBlock(
+                        id: "\(file.id)::binary",
+                        fileID: file.id,
+                        oldPath: file.oldPath,
+                        newPath: file.newPath,
+                        title: "\(path) • binary asset",
+                        hunkHeader: "Binary file",
+                        oldStart: 0,
+                        newStart: 0,
+                        beforeMarkdown: file.oldPath == "/dev/null" ? "" : "(existing file)",
+                        afterMarkdown: "(new or updated binary asset)",
+                        beforeHTML: "<p><em>Binary file</em></p>",
+                        afterHTML: "<p><em>Binary asset will be added or replaced on apply.</em></p>",
+                        rawHunkLines: [],
+                        isBinary: true,
+                        rawFileSection: file.rawSection,
+                        previewImagePath: previewPath
+                    )
+                ]
+            }
+
+            return file.hunks.enumerated().map { index, hunk in
                 let markdown = markdownPair(for: hunk)
                 let hunkHeader = hunk.lines.first(where: { $0.kind == .header })?.content ?? "@@ -\(hunk.oldStart) +\(hunk.newStart) @@"
                 let title = "\(file.newPath.isEmpty ? file.oldPath : file.newPath) • block \(index + 1)"
@@ -3395,8 +3454,26 @@ final class PatchParser {
         guard !acceptedBlocks.isEmpty else { return "" }
 
         var lines: [String] = []
+        if let header = proposal.rawPatch.components(separatedBy: .newlines)
+            .prefix(while: { !$0.hasPrefix("diff --git ") })
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfBlank {
+            lines.append(header)
+            lines.append("")
+        }
+
+        var emittedBinaryFiles = Set<String>()
         var currentFileID: String?
+
         for block in acceptedBlocks {
+            if block.isBinary {
+                guard !block.rawFileSection.isEmpty, emittedBinaryFiles.insert(block.fileID).inserted else { continue }
+                if !lines.isEmpty { lines.append("") }
+                lines.append(block.rawFileSection)
+                continue
+            }
+
             if block.fileID != currentFileID {
                 if !lines.isEmpty { lines.append("") }
                 let oldDiffPath = diffGitPath(block.oldPath, fallbackPath: block.newPath, prefix: "a")
@@ -3556,13 +3633,13 @@ final class PatchApplier {
     }
 
     func checkPatchFile(path: String, book: BookConfig) throws -> ShellCommandResult {
-        try ShellCommandRunner().run(command: "git apply --check \(shellQuoted(path))", book: book)
+        try ShellCommandRunner().run(command: "\(gitApplyPrefix(for: path)) --check \(shellQuoted(path))", book: book)
     }
 
     func applyPatchFile(path: String, book: BookConfig) throws -> ShellCommandResult {
         let checkResult = try checkPatchFile(path: path, book: book)
         guard checkResult.exitCode == 0 else { return checkResult }
-        return try ShellCommandRunner().run(command: "git apply \(shellQuoted(path))", book: book)
+        return try ShellCommandRunner().run(command: "\(gitApplyPrefix(for: path)) \(shellQuoted(path))", book: book)
     }
 
     func checkAsync(patch: PatchProposal, book: BookConfig) async throws -> ShellCommandResult {
@@ -3574,13 +3651,13 @@ final class PatchApplier {
     }
 
     func checkPatchFileAsync(path: String, book: BookConfig) async throws -> ShellCommandResult {
-        try await ShellCommandRunner().runAsync(command: "git apply --check \(shellQuoted(path))", book: book)
+        try await ShellCommandRunner().runAsync(command: "\(gitApplyPrefix(for: path)) --check \(shellQuoted(path))", book: book)
     }
 
     func applyPatchFileAsync(path: String, book: BookConfig) async throws -> ShellCommandResult {
         let checkResult = try await checkPatchFileAsync(path: path, book: book)
         guard checkResult.exitCode == 0 else { return checkResult }
-        return try await ShellCommandRunner().runAsync(command: "git apply \(shellQuoted(path))", book: book)
+        return try await ShellCommandRunner().runAsync(command: "\(gitApplyPrefix(for: path)) \(shellQuoted(path))", book: book)
     }
 
     func gitStatus(book: BookConfig) async throws -> ShellCommandResult {
@@ -3663,6 +3740,14 @@ final class PatchApplier {
 
     private func shellQuoted(_ path: String) -> String {
         "'\(path.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+
+    private func gitApplyPrefix(for patchPath: String) -> String {
+        guard let raw = try? String(contentsOf: URL(fileURLWithPath: patchPath), encoding: .utf8),
+              raw.contains("GIT binary patch") || raw.contains("Binary files ") else {
+            return "git apply"
+        }
+        return "git apply --binary"
     }
 }
 

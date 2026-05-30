@@ -352,6 +352,7 @@ final class ReviewStore: ObservableObject {
 final class FigureStore: ObservableObject {
     @Published var figures: [FigureItem] = []
     @Published var errorMessage: String?
+    @Published var lastBuiltPatchURL: URL?
 
     var okCount: Int { figures.filter { $0.status == .ok }.count }
     var staleCount: Int { figures.filter { $0.status == .stale || $0.isStale }.count }
@@ -425,6 +426,19 @@ final class PatchStore: ObservableObject {
 
     var pendingAttentionCount: Int {
         proposals.count
+    }
+
+    func selectProposal(_ proposal: PatchProposal) {
+        selectedProposalID = proposal.id
+    }
+
+    func selectProposal(at url: URL, book: BookConfig) {
+        refresh(book: book)
+        if let match = proposals.first(where: { $0.filePath == url.path }) {
+            selectedProposalID = match.id
+        } else if let last = proposals.first {
+            selectedProposalID = last.id
+        }
     }
 
     func refresh(book: BookConfig?) {

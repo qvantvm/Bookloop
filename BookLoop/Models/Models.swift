@@ -550,6 +550,75 @@ struct PendingAgentTaskRun: Equatable {
     let mode: RevisionTaskMode
 }
 
+enum FigureSourceKind: String, Codable, CaseIterable, Identifiable {
+    case upload
+    case urlImport = "url_import"
+    case jsScript = "js_script"
+    case pythonScript = "python_script"
+    case mermaid
+    case agentScript = "agent_script"
+    case aiGenerated = "ai_generated"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .upload: return "Upload"
+        case .urlImport: return "From URL"
+        case .jsScript: return "JavaScript"
+        case .pythonScript: return "Python"
+        case .mermaid: return "Mermaid"
+        case .agentScript: return "Agent Script"
+        case .aiGenerated: return "AI Generated"
+        }
+    }
+}
+
+struct FigureStagedFile: Equatable {
+    var relativePath: String
+    var oldText: String?
+    var newText: String?
+    var newData: Data?
+}
+
+struct FigureProposalDraft: Equatable {
+    var id: String
+    var chapterID: String?
+    var caption: String
+    var altText: String
+    var targetMarkdownPath: String?
+    var insertMarkdown: Bool
+    var sourceKind: FigureSourceKind
+    var sourceURL: String?
+    var attribution: String?
+    var generationCommand: String?
+    var scriptBody: String?
+    var stagedFiles: [FigureStagedFile]
+
+    static func empty(book: BookConfig) -> FigureProposalDraft {
+        FigureProposalDraft(
+            id: "figure-\(DateFormatting.taskFilename.string(from: Date()))",
+            chapterID: nil,
+            caption: "",
+            altText: "",
+            targetMarkdownPath: nil,
+            insertMarkdown: true,
+            sourceKind: .upload,
+            sourceURL: nil,
+            attribution: nil,
+            generationCommand: nil,
+            scriptBody: nil,
+            stagedFiles: []
+        )
+    }
+
+    func outputRelativePath(book: BookConfig, fileExtension: String) -> String {
+        let outputRoot = (book.figuresOutputPath ?? book.suggestedPath("docs/assets/figures"))
+            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return "\(outputRoot)/\(id).\(fileExtension)"
+    }
+}
+
 struct FigureItem: Identifiable, Codable, Equatable {
     var id: String
     var title: String?
@@ -564,6 +633,9 @@ struct FigureItem: Identifiable, Codable, Equatable {
     var generationCommand: String?
     var lastGeneratedAt: Date?
     var isStale: Bool
+    var sourceKind: FigureSourceKind?
+    var sourceURL: String?
+    var attribution: String?
 }
 
 enum FigureType: String, Codable, CaseIterable {
@@ -599,7 +671,13 @@ struct PatchProposal: Identifiable, Codable, Equatable {
     var rootStem: String { PatchFileHelpers.rootPatchStem(from: title) }
     var isReviewedCopy: Bool { PatchFileHelpers.isReviewedCopy(filename: title) }
     var displayTitle: String { rootStem }
-    var kindLabel: String { isReviewedCopy ? "Reviewed copy" : "Agent proposal" }
+    var kindLabel: String {
+        if isReviewedCopy { return "Reviewed copy" }
+        if isFigurePatch { return "Figure proposal" }
+        return "Agent proposal"
+    }
+
+    var isFigurePatch: Bool { rootStem.hasPrefix("figure-") }
 }
 
 enum PatchWorkflowPhase: Equatable {
@@ -782,6 +860,24 @@ struct DiffFile: Identifiable, Equatable {
     var oldPath: String
     var newPath: String
     var hunks: [DiffHunk]
+    var isBinary: Bool
+    var rawSection: String
+
+    init(
+        id: String,
+        oldPath: String,
+        newPath: String,
+        hunks: [DiffHunk],
+        isBinary: Bool = false,
+        rawSection: String = ""
+    ) {
+        self.id = id
+        self.oldPath = oldPath
+        self.newPath = newPath
+        self.hunks = hunks
+        self.isBinary = isBinary
+        self.rawSection = rawSection
+    }
 }
 
 struct DiffHunk: Identifiable, Equatable {
@@ -836,6 +932,45 @@ struct RenderedPatchBlock: Identifiable, Equatable {
     var beforeHTML: String
     var afterHTML: String
     var rawHunkLines: [String]
+    var isBinary: Bool
+    var rawFileSection: String
+    var previewImagePath: String?
+
+    init(
+        id: String,
+        fileID: String,
+        oldPath: String,
+        newPath: String,
+        title: String,
+        hunkHeader: String,
+        oldStart: Int,
+        newStart: Int,
+        beforeMarkdown: String,
+        afterMarkdown: String,
+        beforeHTML: String,
+        afterHTML: String,
+        rawHunkLines: [String],
+        isBinary: Bool = false,
+        rawFileSection: String = "",
+        previewImagePath: String? = nil
+    ) {
+        self.id = id
+        self.fileID = fileID
+        self.oldPath = oldPath
+        self.newPath = newPath
+        self.title = title
+        self.hunkHeader = hunkHeader
+        self.oldStart = oldStart
+        self.newStart = newStart
+        self.beforeMarkdown = beforeMarkdown
+        self.afterMarkdown = afterMarkdown
+        self.beforeHTML = beforeHTML
+        self.afterHTML = afterHTML
+        self.rawHunkLines = rawHunkLines
+        self.isBinary = isBinary
+        self.rawFileSection = rawFileSection
+        self.previewImagePath = previewImagePath
+    }
 }
 
 enum WorkspaceTab: String, CaseIterable, Identifiable {

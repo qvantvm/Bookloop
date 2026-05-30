@@ -1033,15 +1033,23 @@ private struct FigureRow: View {
 struct FigureBrowserView: View {
     @EnvironmentObject private var figureStore: FigureStore
     @EnvironmentObject private var taskStore: TaskStore
+    @EnvironmentObject private var patchStore: PatchStore
+    @Binding var workspaceMode: WorkspaceMode
     let book: BookConfig
     @State private var selectedID: String?
+    @State private var showingAddFigure = false
+    @State private var addFigurePrefill = AddFigurePrefill()
 
     var body: some View {
         HSplitView {
             figureListPane
                 .frame(minWidth: 300)
 
-            FigureDetailView(book: book, figure: selectedFigure)
+            FigureDetailView(
+                book: book,
+                figure: selectedFigure,
+                onAddFigureForSelection: { openAddFigure(prefill: prefill(for: selectedFigure)) }
+            )
                 .frame(minWidth: 440)
         }
         .onAppear {
@@ -1054,12 +1062,40 @@ struct FigureBrowserView: View {
                 selectedID = figureStore.figures.first?.id
             }
         }
+        .sheet(isPresented: $showingAddFigure) {
+            AddFigureSheet(book: book, prefill: addFigurePrefill) { patchURL in
+                figureStore.lastBuiltPatchURL = patchURL
+                patchStore.selectProposal(at: patchURL, book: book)
+                workspaceMode = .tool(.patches)
+            }
+        }
+    }
+
+    private func openAddFigure(prefill: AddFigurePrefill = AddFigurePrefill()) {
+        addFigurePrefill = prefill
+        showingAddFigure = true
+    }
+
+    private func prefill(for figure: FigureItem?) -> AddFigurePrefill {
+        guard let figure else { return AddFigurePrefill() }
+        return AddFigurePrefill(
+            figureID: figure.id,
+            chapterID: figure.chapterID,
+            caption: figure.caption,
+            altText: figure.caption,
+            targetMarkdownPath: figure.referencedFrom.first,
+            sourceKind: figure.status == .missingOutput || figure.status == .stale ? .upload : nil
+        )
     }
 
     @ViewBuilder
     private var figureListPane: some View {
         VStack {
             HStack {
+                Button("Add Figure") {
+                    openAddFigure(prefill: prefill(for: selectedFigure))
+                }
+                .buttonStyle(.borderedProminent)
                 Button("Refresh Figures") {
                     figureStore.refresh(book: book)
                 }
@@ -1092,6 +1128,7 @@ struct FigureBrowserView: View {
 struct FigureDetailView: View {
     let book: BookConfig
     let figure: FigureItem?
+    var onAddFigureForSelection: (() -> Void)? = nil
     @State private var confirmingRegeneration = false
     @State private var regenerationOutput: String?
     @State private var isRegenerating = false
@@ -1116,6 +1153,9 @@ struct FigureDetailView: View {
                             .foregroundStyle(.secondary)
                     }
                     HStack {
+                        if figure.status == .missingOutput || figure.status == .stale || figure.status == .referencedButUnregistered {
+                            Button("Add Figure…") { onAddFigureForSelection?() }
+                        }
                         Button("Open Output") { FileHelpers.openInFinder(path: figure.outputPath) }
                         if let sourcePath = figure.sourcePath {
                             Button("Open Source") { FileHelpers.openInFinder(path: sourcePath) }
@@ -1127,6 +1167,15 @@ struct FigureDetailView: View {
                             confirmingRegeneration = true
                         }
                         .disabled(isRegenerating || !book.allowShellCommands || !book.allowFigureRegeneration || regenerationCommand(for: figure) == nil)
+                    }
+                    if let sourceKind = figure.sourceKind {
+                        LabeledContent("Source Kind", value: sourceKind.displayName)
+                    }
+                    if let sourceURL = figure.sourceURL?.nilIfBlank {
+                        LabeledContent("Source URL", value: sourceURL)
+                    }
+                    if let attribution = figure.attribution?.nilIfBlank {
+                        LabeledContent("Attribution", value: attribution)
                     }
                     if let regenerationOutput {
                         Text("Regeneration Output")
@@ -1235,6 +1284,7 @@ struct PatchReviewView: View {
     @EnvironmentObject private var patchStore: PatchStore
     @EnvironmentObject private var library: BookLibraryStore
     @EnvironmentObject private var reviewStore: ReviewStore
+    @EnvironmentObject private var figureStore: FigureStore
     let book: BookConfig
 
     private var activeBook: BookConfig {
@@ -1377,7 +1427,12 @@ struct PatchReviewView: View {
         if evidence.allPaths.isEmpty {
             return "Patch applied to \(fileCount) book file(s). Ready to commit."
         }
-        return "Patch applied to \(fileCount) book file(s). Commit will also include \(evidence.reviewFiles.count) review(s) and \(evidence.taskFiles.count) task(s) as evidence."
+        var parts: [String] = []
+        if evidence.reviewFiles.count > 0 { parts.append("\(evidence.reviewFiles.count) review(s)") }
+        if evidence.taskFiles.count > 0 { parts.append("\(evidence.taskFiles.count) task(s)") }
+        if evidence.figureFiles.count > 0 { parts.append("\(evidence.figureFiles.count) figure file(s)") }
+        let evidenceLabel = parts.joined(separator: ", ")
+        return "Patch applied to \(fileCount) book file(s). Commit will also include \(evidenceLabel) as evidence."
     }
 
     private func appendActivity(_ message: String) {
@@ -1625,6 +1680,9 @@ struct PatchReviewView: View {
             }
             await refreshGitPanel()
             await checkSelectedPatchApplicability()
+            if result.exitCode == 0 {
+                figureStore.refresh(book: activeBook)
+            }
         } catch {
             statusMessage = error.localizedDescription
             appendActivity("Apply error: \(error.localizedDescription)")
@@ -1667,6 +1725,9 @@ struct PatchReviewView: View {
             }
             await refreshGitPanel()
             await checkSelectedPatchApplicability()
+            if result.exitCode == 0 {
+                figureStore.refresh(book: activeBook)
+            }
         } catch {
             statusMessage = error.localizedDescription
             appendActivity("Apply error: \(error.localizedDescription)")
@@ -1855,22 +1916,26 @@ struct RenderedPatchBlockCard: View {
                     .clipShape(Capsule())
             }
 
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("Before", systemImage: "minus.circle")
-                        .foregroundStyle(.red)
-                    HTMLStringView(html: block.beforeHTML)
-                        .frame(minHeight: 220)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.red.opacity(0.22)))
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    Label("After", systemImage: "plus.circle")
-                        .foregroundStyle(.green)
-                    HTMLStringView(html: block.afterHTML)
-                        .frame(minHeight: 220)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.green.opacity(0.22)))
+            if block.isBinary {
+                binaryPreview
+            } else {
+                HStack(alignment: .top, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Before", systemImage: "minus.circle")
+                            .foregroundStyle(.red)
+                        HTMLStringView(html: block.beforeHTML)
+                            .frame(minHeight: 220)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.red.opacity(0.22)))
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("After", systemImage: "plus.circle")
+                            .foregroundStyle(.green)
+                        HTMLStringView(html: block.afterHTML)
+                            .frame(minHeight: 220)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.green.opacity(0.22)))
+                    }
                 }
             }
 
@@ -1880,7 +1945,9 @@ struct RenderedPatchBlockCard: View {
                 Button("Reject Block") { setDecision(.rejected) }
                 Button("Reset") { setDecision(.pending) }
                 Spacer()
-                Text("Review decisions apply to this rendered block as a unit, not to individual diff lines.")
+                Text(block.isBinary
+                    ? "Binary assets are applied as a whole file on accept."
+                    : "Review decisions apply to this rendered block as a unit, not to individual diff lines.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1889,6 +1956,36 @@ struct RenderedPatchBlockCard: View {
         .background(statusColor.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(statusColor.opacity(0.2)))
+    }
+
+    @ViewBuilder
+    private var binaryPreview: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Binary asset", systemImage: "photo")
+            if let previewPath = block.previewImagePath, let image = NSImage(contentsOfFile: previewPath) {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, minHeight: 180, maxHeight: 320)
+                    .background(Color.secondary.opacity(0.08))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "doc.zipper")
+                        .font(.largeTitle)
+                    Text(block.newPath.isEmpty ? block.oldPath : block.newPath)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text("Preview unavailable — binary patch will add or replace this file on apply.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, minHeight: 180)
+                .background(Color.secondary.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+        }
     }
 
     private var statusColor: Color {
@@ -2055,6 +2152,9 @@ struct BookSettingsForm: View {
 
             Section("Commands") {
                 OptionalTextField("Figure generation command", text: $draft.figureGenerationCommand)
+                Text("Optional shell command template for script figures. Use <figure-id>, <output-path>, and <source-path>. Examples: node figures/<figure-id>/render.js • npx -y @mermaid-js/mermaid-cli -i figures/<figure-id>/diagram.mmd -o docs/assets/figures/<figure-id>.png")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 OptionalTextField("Validation command", text: $draft.validationCommand)
                 Text("Optional shell command for manual validation. BookLoop preview renders in Swift — leave blank to validate with scan_broken_links. Mkdocs commands are ignored.")
                     .font(.caption)

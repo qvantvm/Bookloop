@@ -3,10 +3,11 @@ import Foundation
 struct PatchEvidence: Equatable {
     var reviewFiles: [String]
     var taskFiles: [String]
+    var figureFiles: [String]
 
     var allPaths: [String] {
         var seen = Set<String>()
-        return (reviewFiles + taskFiles).filter { seen.insert($0).inserted }
+        return (reviewFiles + taskFiles + figureFiles).filter { seen.insert($0).inserted }
     }
 }
 
@@ -32,7 +33,24 @@ enum PatchEvidenceResolver {
             book: book
         )
 
-        return PatchEvidence(reviewFiles: reviewFiles, taskFiles: taskFiles)
+        let figureFiles = figureEvidenceFiles(for: proposal, book: book)
+
+        return PatchEvidence(reviewFiles: reviewFiles, taskFiles: taskFiles, figureFiles: figureFiles)
+    }
+
+    private static func figureEvidenceFiles(for proposal: PatchProposal, book: BookConfig) -> [String] {
+        guard proposal.isFigurePatch else { return [] }
+        let registry = book.figuresRegistryPath ?? book.suggestedPath("bookloop/figures.json")
+        var paths = proposal.changedFiles.filter { path in
+            path.hasPrefix("docs/assets/figures/")
+                || path.hasPrefix("figures/")
+                || path == registry
+                || path.hasSuffix("figures.json")
+        }
+        if !paths.contains(registry) {
+            paths.append(registry)
+        }
+        return uniqueExistingRelativePaths(paths, book: book)
     }
 
     private static func sessionInstruction(for proposal: PatchProposal, book: BookConfig) -> String {
