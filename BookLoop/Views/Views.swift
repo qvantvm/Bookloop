@@ -1298,15 +1298,12 @@ struct PatchReviewView: View {
     @State private var workflowPhase: PatchWorkflowPhase = .reviewing
     @State private var pendingCommitContext: PendingPatchCommitContext?
     @State private var patchApplicabilityStatus: PatchApplicabilityStatus = .unknown
-    @State private var gitHistory = GitHistorySnapshot.loading
-    @State private var gitChanges = GitChangesSnapshot.loading
     @State private var activityLog: [PatchActivityEntry] = []
     @State private var statusMessage: String?
     @State private var showAdvanced = false
     @State private var isPatchListVisible = true
     @State private var isActionPanelVisible = true
     @State private var blockDecisions: [String: PatchBlockDecision] = [:]
-    @State private var gitRefreshGeneration = 0
 
     private var renderedBlocks: [RenderedPatchBlock] {
         guard let proposal = patchStore.selectedProposal else { return [] }
@@ -1338,8 +1335,6 @@ struct PatchReviewView: View {
                         blocks: renderedBlocks,
                         decisions: $blockDecisions,
                         workflowPhase: workflowPhase,
-                        gitHistory: gitHistory,
-                        gitChanges: gitChanges,
                         activityLog: activityLog,
                         patchApplicabilityStatus: patchApplicabilityStatus,
                         isRunningPatchCommand: isRunningPatchCommand,
@@ -1362,14 +1357,8 @@ struct PatchReviewView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .task(id: activeBook.projectRootPath) {
-            await refreshGitPanel()
-        }
         .onChange(of: patchStore.selectedProposalID) {
             resetForSelectedPatch()
-        }
-        .onChange(of: blockDecisions) {
-            scheduleGitPanelRefresh()
         }
         .onAppear {
             activityLog = PatchActivityLogger.load(book: activeBook)
@@ -1444,28 +1433,6 @@ struct PatchReviewView: View {
         PatchActivityLogger.append(entry, book: activeBook)
     }
 
-    private func scheduleGitPanelRefresh() {
-        gitRefreshGeneration += 1
-        let generation = gitRefreshGeneration
-        Task {
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard generation == gitRefreshGeneration else { return }
-            await refreshGitPanel()
-        }
-    }
-
-    @MainActor
-    private func refreshGitPanel() async {
-        async let history = PatchApplier().gitHistory(book: activeBook)
-        async let changes = PatchApplier().gitChanges(book: activeBook)
-        gitHistory = await history
-        gitChanges = await changes
-
-        if workflowPhase == .reviewing, case .alreadyApplied = patchApplicabilityStatus {
-            workflowPhase = .alreadyApplied
-        }
-    }
-
     private var patchLayoutToolbar: some View {
         HStack(spacing: 12) {
             Button {
@@ -1484,7 +1451,7 @@ struct PatchReviewView: View {
 
             Spacer()
 
-            Text("Tip: use Hide Panel / Hide Chat in the bar above to give the diff more horizontal space.")
+            Text("Tip: use the Git tab for branches, history, and working tree. Hide Panel / Hide Chat above for more diff space.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -1640,7 +1607,6 @@ struct PatchReviewView: View {
             let check = try await PatchApplier().checkPatchFileAsync(path: path, book: activeBook)
             statusMessage = "\(label): git apply --check exit \(check.exitCode)\n\(check.combinedOutput)"
             appendActivity("\(label) preflight exit \(check.exitCode)")
-            await refreshGitPanel()
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -1678,7 +1644,6 @@ struct PatchReviewView: View {
                 statusMessage = "Apply failed (exit \(result.exitCode)).\n\(result.combinedOutput)"
                 appendActivity("Apply failed for \(proposal.rootStem)")
             }
-            await refreshGitPanel()
             await checkSelectedPatchApplicability()
             if result.exitCode == 0 {
                 figureStore.refresh(book: activeBook)
@@ -1723,7 +1688,6 @@ struct PatchReviewView: View {
                 statusMessage = "Apply failed (exit \(result.exitCode)).\n\(result.combinedOutput)"
                 appendActivity("Apply failed for \(sourceProposal.rootStem)")
             }
-            await refreshGitPanel()
             await checkSelectedPatchApplicability()
             if result.exitCode == 0 {
                 figureStore.refresh(book: activeBook)
@@ -1774,7 +1738,6 @@ struct PatchReviewView: View {
             patchStore.refresh(book: activeBook)
             statusMessage = "Archived to \(URL(fileURLWithPath: destination).lastPathComponent)."
             appendActivity("Archived without applying: \(proposal.rootStem)")
-            await refreshGitPanel()
         } catch {
             statusMessage = error.localizedDescription
             appendActivity("Archive failed: \(error.localizedDescription)")
@@ -1861,7 +1824,6 @@ struct PatchReviewView: View {
                 statusMessage = "Commit failed (exit \(result.exitCode)).\n\(result.combinedOutput)"
                 appendActivity("Commit failed for \(context.rootStem)")
             }
-            await refreshGitPanel()
         } catch {
             statusMessage = error.localizedDescription
             appendActivity("Commit error: \(error.localizedDescription)")

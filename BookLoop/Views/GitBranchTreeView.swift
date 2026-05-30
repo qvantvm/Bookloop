@@ -1,7 +1,118 @@
 import SwiftUI
 
+struct GitBranchListView: View {
+    let snapshot: GitHistorySnapshot
+    let selectedBranchName: String?
+    let onSelectBranch: (GitRefLabel) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.triangle.branch")
+                    .foregroundStyle(Color.accentColor)
+                Text("Branches")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            if snapshot.isLoading {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Loading branches…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(12)
+                Spacer(minLength: 0)
+            } else if let error = snapshot.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+                Spacer(minLength: 0)
+            } else if snapshot.branches.isEmpty {
+                Text("No branches found.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+                Spacer(minLength: 0)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(snapshot.branches) { branch in
+                            branchRow(branch)
+                        }
+                    }
+                    .padding(8)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.35))
+    }
+
+    @ViewBuilder
+    private func branchRow(_ branch: GitRefLabel) -> some View {
+        let isCurrent = isCurrentBranch(branch)
+        let isSelected = selectedBranchName == branch.name || selectedBranchName == branch.displayName
+
+        Button {
+            onSelectBranch(branch)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: branch.kind == .remote ? "icloud" : "arrow.branch")
+                    .font(.caption)
+                    .foregroundStyle(isCurrent ? Color.accentColor : .secondary)
+                    .frame(width: 16)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(branch.displayName)
+                        .font(.caption.weight(isCurrent || isSelected ? .semibold : .regular))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    if branch.kind == .remote {
+                        Text("remote")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                Spacer(minLength: 0)
+
+                if isCurrent {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                (isSelected ? Color.accentColor : Color.secondary).opacity(isSelected ? 0.14 : 0.06),
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func isCurrentBranch(_ branch: GitRefLabel) -> Bool {
+        guard let current = snapshot.currentBranch else { return false }
+        if current == "HEAD" { return false }
+        return branch.name == current
+            || branch.displayName == current
+            || branch.fullName == "refs/heads/\(current)"
+    }
+}
+
 struct GitWorkingChangesView: View {
     let snapshot: GitChangesSnapshot
+    var expandsToFillHeight: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -35,7 +146,7 @@ struct GitWorkingChangesView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             } else {
-                VStack(alignment: .leading, spacing: 8) {
+                let changesContent = VStack(alignment: .leading, spacing: 8) {
                     if !snapshot.staged.isEmpty {
                         changeSection(title: "Staged", systemImage: "tray.and.arrow.down.fill", changes: snapshot.staged)
                     }
@@ -43,8 +154,19 @@ struct GitWorkingChangesView: View {
                         changeSection(title: "Modified", systemImage: "pencil", changes: snapshot.unstaged)
                     }
                 }
+
+                if expandsToFillHeight {
+                    ScrollView {
+                        changesContent
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                } else {
+                    changesContent
+                }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: expandsToFillHeight ? .infinity : nil, alignment: .topLeading)
     }
 
     private var summaryLabel: String {
@@ -122,6 +244,7 @@ private struct GitFileChangeRow: View {
 
 struct GitBranchTreeView: View {
     let snapshot: GitHistorySnapshot
+    var expandsToFillHeight: Bool = false
 
     private static let laneWidth: CGFloat = 14
     private static let rowHeight: CGFloat = 58
@@ -169,9 +292,10 @@ struct GitBranchTreeView: View {
                     }
                     .padding(.vertical, 4)
                 }
-                .frame(maxHeight: 320)
+                .frame(maxWidth: .infinity, maxHeight: expandsToFillHeight ? .infinity : 320)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: expandsToFillHeight ? .infinity : nil, alignment: .topLeading)
     }
 
     @ViewBuilder

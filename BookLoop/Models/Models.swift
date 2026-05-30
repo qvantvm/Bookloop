@@ -755,17 +755,20 @@ struct GitGraphRow: Identifiable, Equatable {
 
 struct GitHistorySnapshot: Equatable {
     var currentBranch: String?
+    var branches: [GitRefLabel]
     var rows: [GitGraphRow]
     var errorMessage: String?
     var isLoading: Bool
 
     init(
         currentBranch: String? = nil,
+        branches: [GitRefLabel] = [],
         rows: [GitGraphRow] = [],
         errorMessage: String? = nil,
         isLoading: Bool = false
     ) {
         self.currentBranch = currentBranch
+        self.branches = branches
         self.rows = rows
         self.errorMessage = errorMessage
         self.isLoading = isLoading
@@ -981,6 +984,7 @@ enum WorkspaceTab: String, CaseIterable, Identifiable {
     case figures = "Figures"
     case tasks = "Tasks"
     case patches = "Patches"
+    case git = "Git"
     case settings = "Settings"
 
     var id: String { rawValue }
@@ -994,7 +998,7 @@ extension WorkspaceTab {
 
     var sidePanelPolicy: SidePanelPolicy {
         switch self {
-        case .preview, .search, .reviews, .figures, .tasks, .agent, .patches, .settings:
+        case .preview, .search, .reviews, .figures, .tasks, .agent, .patches, .git, .settings:
             return .hideBoth
         }
     }
