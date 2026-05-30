@@ -7,7 +7,7 @@ final class AgentPanelModel: ObservableObject {
     @Published var isRunning = false
     @Published var isStopping = false
     @Published var runStatus = AgentRunStatus()
-    @Published var liveToolLog: [AgentToolLogEntry] = []
+    @Published var liveActivity: [AgentActivityItem] = []
     @Published var result: AgentResult?
     @Published var errorMessage: String?
     @Published var infoMessage: String?
@@ -80,7 +80,7 @@ final class AgentPanelModel: ObservableObject {
         isStopping = false
         errorMessage = nil
         infoMessage = nil
-        liveToolLog = []
+        liveActivity = []
         result = nil
 
         let task = AgentTask(type: type, instruction: instruction)
@@ -108,9 +108,9 @@ final class AgentPanelModel: ObservableObject {
                 fetchURLMaxBytes: settingsStore.fetchURLMaxBytes,
                 allowReviewEdits: settingsStore.allowAgentReviewEdits,
                 isCancelled: { self.shouldCancel },
-                onToolLogUpdate: { [weak self] log in
+                onActivityUpdate: { [weak self] activity in
                     Task { @MainActor in
-                        self?.liveToolLog = log
+                        self?.liveActivity = activity
                     }
                 },
                 onStatusUpdate: { [weak self] status in
@@ -120,7 +120,7 @@ final class AgentPanelModel: ObservableObject {
                 }
             )
             result = agentResult
-            liveToolLog = agentResult.toolLog
+            liveActivity = agentResult.activity
             projectStore.refresh(book: project.book, currentChapterID: project.currentChapterID)
             patchStore.refresh(book: project.book)
             SystemBadgeNotifier.updatePendingPatchBadge(count: patchStore.pendingAttentionCount)
@@ -287,7 +287,7 @@ struct AgentPanelView: View {
 
                         if let result = model.result {
                             resultCards(result)
-                        } else if !model.isRunning && !model.isStopping && model.liveToolLog.isEmpty {
+                        } else if !model.isRunning && !model.isStopping && model.liveActivity.isEmpty {
                             emptyStateCard
                         }
                     }
@@ -326,14 +326,14 @@ struct AgentPanelView: View {
 
             Divider()
 
-            if model.isRunning || model.isStopping || !model.liveToolLog.isEmpty {
+            if model.isRunning || model.isStopping || !model.liveActivity.isEmpty {
                 ScrollViewReader { proxy in
                     ScrollView {
                         activitySection
                             .padding(12)
                             .id("agent-activity")
                     }
-                    .onChange(of: model.liveToolLog.count) { _, _ in
+                    .onChange(of: model.liveActivity.count) { _, _ in
                         withAnimation(.easeOut(duration: 0.2)) {
                             proxy.scrollTo("agent-activity-bottom", anchor: .bottom)
                         }
@@ -347,7 +347,7 @@ struct AgentPanelView: View {
                 }
             } else {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Agent steps will appear here when a task runs.")
+                    Text("Assistant replies and tool calls will appear here when a task runs.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text("Start a preset task or custom instruction on the left.")
@@ -692,7 +692,7 @@ struct AgentPanelView: View {
                 }
             }
 
-            if model.liveToolLog.isEmpty && (model.isRunning || model.isStopping) {
+            if model.liveActivity.isEmpty && (model.isRunning || model.isStopping) {
                 HStack(spacing: 10) {
                     ProgressView()
                         .controlSize(.small)
@@ -705,8 +705,13 @@ struct AgentPanelView: View {
                 .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
 
-            ForEach(model.liveToolLog) { entry in
-                AgentToolLogCardView(entry: entry)
+            ForEach(model.liveActivity) { item in
+                switch item {
+                case .assistant(let entry):
+                    AgentAssistantReplyCardView(entry: entry)
+                case .tool(let entry):
+                    AgentToolLogCardView(entry: entry)
+                }
             }
 
             if model.runStatus.phase == .runningTool,
@@ -917,6 +922,93 @@ struct AgentTaskCardView: View {
         }
         .padding(12)
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+// MARK: - Assistant reply card
+
+struct AgentAssistantReplyCardView: View {
+    let entry: AgentAssistantReplyEntry
+    @State private var isExpanded = false
+
+    private var toolPlanLine: String? {
+        guard !entry.plannedToolNames.isEmpty else { return nil }
+        let names = entry.plannedToolNames.map { $0.replacingOccurrences(of: "_", with: " ") }
+        return "Calling: " + names.joined(separator: ", ")
+    }
+
+    private var collapsedPreview: String {
+        if !entry.content.isEmpty {
+            let trimmed = entry.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            let firstLine = trimmed.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true).first.map(String.init) ?? trimmed
+            if firstLine.count > 160 {
+                return String(firstLine.prefix(157)) + "…"
+            }
+            return firstLine
+        }
+        return toolPlanLine ?? "Assistant reply"
+    }
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $isExpanded) {
+            VStack(alignment: .leading, spacing: 10) {
+                if !entry.content.isEmpty {
+                    detailBlock(title: "Reply", text: entry.content)
+                }
+                if let toolPlanLine {
+                    Text(toolPlanLine)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(.top, 8)
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.purple)
+                    .font(.body)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Assistant")
+                            .font(.caption.weight(.semibold))
+                        Text("step \(entry.iteration)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                        Text(DateFormatting.display.string(from: entry.timestamp))
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Text(collapsedPreview)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(isExpanded ? nil : 3)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+        }
+        .padding(12)
+        .background(Color.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func detailBlock(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ScrollView {
+                Text(text)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 220)
+            .padding(8)
+            .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
     }
 }
 
