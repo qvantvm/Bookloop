@@ -52,7 +52,7 @@ final class ContentSearchPlanner {
         User request: \(trimmed)
         """
 
-        let reply = try await client.sendChat(
+        let result = try await client.sendChat(
             apiKey: apiKey,
             model: model,
             messages: [
@@ -61,7 +61,7 @@ final class ContentSearchPlanner {
             ]
         )
 
-        if let parsed = parsePlan(from: reply) {
+        if let parsed = parsePlan(from: result.content) {
             return parsed
         }
         return fallbackPlan(query: trimmed, scope: scope)
