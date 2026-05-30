@@ -15,6 +15,7 @@ final class AgentPanelModel: ObservableObject {
     @Published private(set) var currentTaskTitle = ""
     @Published private(set) var currentTaskDetail = ""
     @Published private(set) var currentTaskType: AgentTaskType?
+    @Published var proposeFixesAfterAudit = false
 
     private let agent = BookAgent()
     private var shouldCancel = false
@@ -83,7 +84,11 @@ final class AgentPanelModel: ObservableObject {
         liveActivity = []
         result = nil
 
-        let task = AgentTask(type: type, instruction: instruction)
+        let task = AgentTask(
+            type: type,
+            instruction: instruction,
+            proposeFixesAfterAudit: type.isBookAuditTask && proposeFixesAfterAudit
+        )
         let taskTitle = type == .custom ? "Custom task" : type.displayName
         currentTaskType = type
         currentTaskTitle = taskTitle
@@ -274,6 +279,7 @@ struct AgentPanelView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         workflowHint
+                        bookAuditOptionsSection
                         taskCatalogSection
                         customTaskSection
                         agentSetupSection
@@ -526,6 +532,18 @@ struct AgentPanelView: View {
         Text("Agent stages edits only → review in Patches → apply → commit.")
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+
+    private var bookAuditOptionsSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle("Propose fixes after consistency / flow audit", isOn: $model.proposeFixesAfterAudit)
+                .font(.caption)
+            Text("Audits use the table of contents plus multiturn grep and search across the whole book. Reports save under bookloop/audit-reports/; major findings also appear in Reviews.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+        .padding(12)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     // MARK: - Task catalog
@@ -785,6 +803,35 @@ struct AgentPanelView: View {
                             }
                             .frame(maxHeight: 160)
                         }
+                    }
+                }
+            }
+
+            if let auditPath = result.auditReportPath {
+                agentCard(title: "Audit report", systemImage: "checklist") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(auditPath)
+                            .font(.caption.monospaced())
+                            .textSelection(.enabled)
+                        Text("\(result.auditFindingCount) structured finding\(result.auditFindingCount == 1 ? "" : "s")")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !result.auditReviewItemIDs.isEmpty {
+                            Text("Reviews created: \(result.auditReviewItemIDs.joined(separator: ", "))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            if let absolute = result.auditReportAbsolutePath {
+                                Button("Reveal in Finder") {
+                                    FileHelpers.openInFinder(path: absolute)
+                                }
+                            }
+                            Button("Open Reviews Tab") {
+                                workspaceMode = .tools
+                            }
+                        }
+                        .font(.caption)
                     }
                 }
             }

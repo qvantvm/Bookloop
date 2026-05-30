@@ -9,6 +9,7 @@ struct AgentToolContext {
     var buildTimeoutSeconds: TimeInterval
     var fetchURLMaxBytes: Int
     var stagedChanges: [StagedFileChange]
+    var auditFindings: [BookAuditFinding] = []
 
     var changedFiles: [String] {
         stagedChanges.map(\.path)
@@ -288,6 +289,33 @@ enum AgentTools {
 
     static func fetchURL(url: String, context: AgentToolContext) async throws -> AgentURLFetchResult {
         try await AgentURLFetcher.fetch(urlString: url, maxBytes: context.fetchURLMaxBytes)
+    }
+
+    static func getTableOfContents(context: AgentToolContext) -> BookTableOfContents {
+        BookTableOfContentsBuilder.build(book: context.project.book, projectMap: context.project.projectMap)
+    }
+
+    static func recordAuditFinding(
+        category: String,
+        severity: String,
+        title: String,
+        detail: String,
+        chapter: String?,
+        evidencePaths: [String],
+        suggestedFix: String?,
+        context: inout AgentToolContext
+    ) -> BookAuditFinding {
+        let finding = BookAuditFinding(
+            category: category,
+            severity: severity,
+            title: title,
+            detail: detail,
+            chapter: chapter?.nilIfBlank,
+            evidencePaths: evidencePaths,
+            suggestedFix: suggestedFix?.nilIfBlank
+        )
+        context.auditFindings.append(finding)
+        return finding
     }
 
     private static func isReviewPath(_ path: String, reviewRoot: String) -> Bool {

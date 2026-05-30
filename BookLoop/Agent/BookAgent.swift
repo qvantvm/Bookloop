@@ -200,6 +200,23 @@ final class BookAgent {
             finalSummary = response.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             appendAssistantReply(from: response, iteration: iteration)
 
+            if task.type.isBookAuditTask,
+               context.auditFindings.isEmpty,
+               toolLog.filter({ $0.toolName == "grep" || $0.toolName == "search_text" }).count < 2,
+               messages.last?.role != "user" || !(messages.last?.content?.contains("use grep and search_text") ?? false) {
+                messages.append(response)
+                messages.append(OpenAIAssistantMessage(
+                    role: "user",
+                    content: """
+                    This is a large-book audit. Before finishing, use get_table_of_contents if you have not already, then run multiple grep or search_text calls across docs/**/*.md to investigate terminology and cross-chapter references.
+                    Record each real issue with record_audit_finding, or state clearly in your summary that the book passed with no issues found.
+                    """,
+                    tool_calls: nil,
+                    tool_call_id: nil
+                ))
+                continue
+            }
+
             if task.type == .applyReviewFeedback,
                context.stagedChanges.isEmpty,
                AgentTools.hasActionableOpenReviews(for: project),
@@ -274,6 +291,24 @@ final class BookAgent {
             maxIterations: maxIterations,
             toolsCompleted: toolLog.count
         ))
+        var auditReport: BookAuditReport?
+        if let kind = task.type.auditKind {
+            auditReport = try? BookAuditReportWriter.write(
+                kind: kind,
+                task: task,
+                sessionID: sessionID,
+                summary: finalSummary,
+                findings: context.auditFindings,
+                project: project
+            )
+            if let auditReport {
+                finalSummary += "\n\nAudit report: \(auditReport.relativePath)"
+                if !auditReport.reviewItemIDs.isEmpty {
+                    finalSummary += "\nReview items created: \(auditReport.reviewItemIDs.joined(separator: ", "))"
+                }
+            }
+        }
+
         try logger.writeSession(
             sessionID: sessionID,
             project: project,
@@ -297,7 +332,11 @@ final class BookAgent {
             toolLog: toolLog,
             activity: activity,
             unresolvedIssues: [],
-            sessionDirectory: sessionDir
+            sessionDirectory: sessionDir,
+            auditReportPath: auditReport?.relativePath,
+            auditReportAbsolutePath: auditReport?.absolutePath,
+            auditFindingCount: context.auditFindings.count,
+            auditReviewItemIDs: auditReport?.reviewItemIDs ?? []
         )
     }
 

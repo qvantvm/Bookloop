@@ -31,6 +31,7 @@ my-book/
     figures.json
     tasks/
     patches/
+    audit-reports/         ← agent consistency / flow audit reports
   .bookloop/
     config.json
     sessions/
@@ -76,8 +77,13 @@ No external feedback server is required.
 ## Native Agent (optional)
 
 BookLoop includes a built-in agent that uses OpenAI tool-calling from Swift. It
-can list and read project files, search text, read review items, stage guarded
-patches, run the configured build command, and inspect git status/diff.
+can list and read project files, search text, grep across chapters, read review items,
+run **Check Consistency** and **Check Logical Flow** audits (table of contents + multiturn
+search), stage guarded patches, run the configured build command, and inspect git status/diff.
+
+Large-book audits call `get_table_of_contents`, then iterate with `grep` / `search_text` and
+`read_file`, recording issues via `record_audit_finding`. Reports land in `bookloop/audit-reports/`;
+major findings are also written to `reviews/review_items/`.
 
 Edits are **propose-only**: `apply_patch` stages changes in memory and BookLoop
 writes a unified diff to `bookloop/patches/agent-*.patch` at the end of a run.
