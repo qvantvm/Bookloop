@@ -1,6 +1,6 @@
 # BookLoop User Manual
 
-BookLoop is a native macOS app for working on technical book projects. It helps you read chapters with built-in Markdown preview, ask questions about the current chapter (optional OpenAI chat), run a built-in native agent, capture structured feedback, browse review items, manage figures, generate Cursor-ready revision tasks, and review or apply agent-produced patches.
+BookLoop is a native macOS app for working on technical book projects. It helps you read chapters with built-in Markdown preview, highlight passages and save annotations, ask questions about the current chapter (optional OpenAI chat), search the manuscript with natural language, run a built-in native agent (including whole-book consistency and flow audits), capture structured feedback, browse review items, manage figures, generate Cursor-ready revision tasks, inspect git history, and review or apply agent-produced patches.
 
 This manual describes how to install BookLoop, set up a book project, and use each part of the interface.
 
@@ -13,21 +13,24 @@ This manual describes how to install BookLoop, set up a book project, and use ea
 3. [Understand the interface](#3-understand-the-interface)
 4. [Prepare your book project](#4-prepare-your-book-project)
 5. [Add and configure a book](#5-add-and-configure-a-book)
-6. [Start local services](#6-start-local-services)
+6. [Local services](#6-local-services)
 7. [The end-to-end workflow](#7-the-end-to-end-workflow)
 8. [Reading mode (preview)](#8-reading-mode-preview)
-9. [Chapter Chat (right column)](#9-chapter-chat-right-column)
-10. [Tools mode (Reviews, Figures, Tasks, Patches, Agent, Settings)](#10-tools-mode-reviews-figures-tasks-patches-agent-settings)
-11. [Reviews tool](#11-reviews-tool)
-12. [Figures tool](#12-figures-tool)
-13. [Tasks tool](#13-tasks-tool)
-14. [Agent tool](#14-agent-tool)
-15. [Patches tool](#15-patches-tool)
-16. [Settings tool](#16-settings-tool)
-17. [App settings (OpenAI & native agent)](#17-app-settings-openai--native-agent)
-18. [Safety and permissions](#18-safety-and-permissions)
-19. [Keyboard shortcuts](#19-keyboard-shortcuts)
-20. [Troubleshooting](#20-troubleshooting)
+9. [Preview annotations](#9-preview-annotations)
+10. [Chapter Chat (right column)](#10-chapter-chat-right-column)
+11. [Tools mode overview](#11-tools-mode-overview)
+12. [Reviews tool](#12-reviews-tool)
+13. [Figures tool](#13-figures-tool)
+14. [Tasks tool](#14-tasks-tool)
+15. [Search tool](#15-search-tool)
+16. [Agent tool](#16-agent-tool)
+17. [Patches tool](#17-patches-tool)
+18. [Git tool](#18-git-tool)
+19. [Settings tool](#19-settings-tool)
+20. [App settings (OpenAI & native agent)](#20-app-settings-openai--native-agent)
+21. [Safety and permissions](#21-safety-and-permissions)
+22. [Keyboard shortcuts](#22-keyboard-shortcuts)
+23. [Troubleshooting](#23-troubleshooting)
 
 ---
 
@@ -70,18 +73,19 @@ BookLoop uses a three-column layout optimized for reading:
 | Column | Purpose |
 |--------|---------|
 | **Library sidebar (left)** | Books, clickable chapter tree, compact status, Tools launcher, Add/Edit/Delete |
-| **Center** | **Reading mode** — native Markdown preview (default), or **Tools mode** — Reviews, Figures, Tasks, Patches, Agent, or Settings |
-| **Chapter Chat (right)** | OpenAI-powered chat about the current page; **Send as Feedback** saves the transcript to `reviews/review_items/` |
+| **Center** | **Reading mode** — native Markdown preview (default), or **Tools mode** — Search, Reviews, Figures, Tasks, Patches, Agent, Git, or Settings |
+| **Right** | **Chapter Chat** (OpenAI, optional) or, in Reading mode, an optional **Annotations** panel when chat is hidden |
 
 ### Reading vs Tools mode
 
-- **Reading mode** (default): the center column shows the book preview. Use the sidebar chapter tree or preview navigation to move between pages.
-- **Tools mode**: choose **Reviews**, **Figures**, **Tasks**, **Patches**, **Agent**, or **Settings** under **Tools** in the sidebar. The center column switches to that tool. Click **Back to Reading** to return to the preview at the same chapter.
+- **Reading mode** (default): the center column shows the book preview. Use the sidebar chapter tree or preview navigation to move between pages. Optionally show **Annotations** beside the preview (see [Preview annotations](#9-preview-annotations)).
+- **Tools mode**: choose **Search**, **Reviews**, **Figures**, **Tasks**, **Patches**, **Agent**, **Git**, or **Settings** under **Tools** in the sidebar. The center column switches to that tool. Click **Back to Reading** to return to the preview at the same chapter.
 
 ### Hide panels
 
-- Preview toolbar: **Hide Panel** / **Show Panel** (sidebar), **Hide Chat** / **Show Chat**
+- Preview toolbar: **Hide Panel** / **Show Panel** (sidebar), **Hide Chat** / **Show Chat**, **Annotations** toggle
 - Sidebar header: collapse icon to hide the library panel
+- Opening **Annotations** hides Chapter Chat for that layout; BookLoop restores your panel choice when you return to Reading mode
 
 The toolbar provides:
 
@@ -109,6 +113,7 @@ my-book/
   figures/                 ← figure source scripts (optional)
   .bookloop/
     config.json            ← optional native agent config
+    preview_annotations.json  ← optional in-preview highlights (mirrored in App Support)
     sessions/              ← native agent session logs
   bookloop/
     style_guide.md
@@ -116,6 +121,7 @@ my-book/
     tasks/                 ← generated Cursor tasks
     patches/               ← .patch / .diff files from agents
       archive/             ← rejected patches moved here
+    audit-reports/         ← consistency / logical-flow audit reports
 ```
 
 You do not need every folder on day one. BookLoop can infer or suggest paths when you configure a book. A `scripts/` folder is **not** required — reviews, tasks, and agent tools are built into BookLoop.
@@ -134,6 +140,8 @@ BookLoop writes **two different kinds of output**:
 | `bookloop/patches/agent-*.patch` | Patch proposals for the Patches tool | **No** until you apply; then commit **`docs/`** changes |
 | `.bookloop/sessions/` | Agent run logs (tool log, diff staging, snapshots) | **No** — ephemeral debug artifacts |
 | `bookloop/patches/archive/` | Applied/rejected patch copies | **No** |
+| `bookloop/audit-reports/` | Agent audit Markdown reports | Optional — commit if you want reports in the repo |
+| `.bookloop/preview_annotations.json` | In-preview highlights and notes | Optional — personal markup; often **no** |
 
 Click **Tools → Agent → Ensure Gitignore** (or **Initialize Config**) to append recommended ignores to your book’s `.gitignore`. After that, session folders disappear from git status.
 
@@ -239,45 +247,83 @@ Select text in the preview, then in **Tools → Reviews → Submit Review** clic
 - Use the preview toolbar reload button, or
 - **BookLoop menu → Reload Preview** (⌘R)
 
+### Preview theme
+
+In **App Settings → Preview**, choose **System**, **Light**, or **Dark** for the chapter preview only (independent of macOS appearance).
+
 ---
 
-## 9. Chapter Chat (right column)
+## 9. Preview annotations
 
-Chapter Chat lets you ask questions about the page you are reading. It is optional and requires an OpenAI API key (see [App settings](#16-app-settings-openai)).
+While reading, you can highlight passages and attach notes directly in the preview.
+
+### Create a highlight
+
+1. Select text in the preview.
+2. Click **Highlight & Note** in the preview toolbar.
+3. Edit the quote and optional note, then **Save Highlight**.
+
+Highlights appear in the preview and in the **Annotations** panel (toolbar toggle). Click a highlight badge in the preview to open or edit it.
+
+### Annotations panel
+
+When **Annotations** is on, a panel lists highlights for the current chapter. For each annotation you can:
+
+- Open the editor, jump to the passage in the preview, or delete the highlight
+- **Save as Review** — writes a review item under `reviews/review_items/` (same workflow as structured feedback)
+- **Save All as Reviews** — batch-save every unsaved highlight on the chapter
+
+Annotations persist in Application Support and are mirrored to `.bookloop/preview_annotations.json` in the book project when BookLoop has folder access.
+
+---
+
+## 10. Chapter Chat (right column)
+
+Chapter Chat lets you ask questions about the page you are reading. It is optional and requires an OpenAI API key (see [App settings](#20-app-settings-openai--native-agent)).
 
 ### Setup
 
 1. Click the **gear** icon in the sidebar header.
 2. Enter your OpenAI API key and preferred model (default `gpt-4.1`).
-3. Click **Save**.
+3. Optionally enable **OpenAI web search** for external facts (see App settings).
+4. Click **Save**.
 
 ### Using chat
 
 - Each page keeps its own in-memory chat session. Switch chapters and return later — your messages for that page are restored.
-- **Send** — asks OpenAI using the current page text plus chat history.
+- **Send** — asks OpenAI using the current page text, optional `llms.txt` context, and chat history.
 - **Send as Feedback** — saves the full conversation as a review Markdown file under `reviews/review_items/`.
 - **Clear Chat** — clears the current page’s messages.
 
-The chat header shows the page title and detected chapter ID when available.
+The chat header shows the page title, detected chapter ID, and (when an API key is set) a **context token** line:
+
+- **Context: N tokens (est.)** — estimated prompt size before you send (page content, history, draft message, book context).
+- After a reply, **reply: N** shows completion tokens when the API returns usage.
+
+With **OpenAI web search** enabled, the model may look up external projects or current facts; page content is still included every time.
 
 ---
 
-## 10. Tools mode (Reviews, Figures, Tasks, Patches, Agent, Settings)
+## 11. Tools mode overview
 
-Open a tool from **Tools** in the sidebar. The center column switches from preview to that tool. Click **Back to Reading** to restore the preview at the same URL.
+Open a tool from **Tools** in the sidebar. The center column switches from preview to that tool. Click **Back to Reading** to restore the preview at the same chapter.
 
 | Tool | Purpose |
 |------|---------|
+| **Search** | Natural-language search across the book (AI-planned or literal fallback) |
 | **Reviews** | Browse review items; submit structured feedback |
-| **Figures** | Scan and manage figures |
+| **Figures** | Scan, add, and manage figures |
 | **Tasks** | Generate and view Cursor task files |
-| **Agent** | Built-in OpenAI tool-calling agent with native file/build/git tools |
 | **Patches** | Review and apply agent patches |
+| **Agent** | Built-in OpenAI tool-calling agent with audits and native tools |
+| **Git** | Branch list, commit graph, working tree, stage, and commit |
 | **Settings** | Per-book configuration |
+
+The **Agent** tool uses a two-column layout: task controls on the left, live **activity** on the right (assistant messages and tool steps interleaved).
 
 ---
 
-## 11. Reviews tool
+## 12. Reviews tool
 
 Browse structured review items scanned from `reviews/review_items/`.
 
@@ -322,9 +368,19 @@ Select items in the list to include them in task generation. The detail pane sho
 
 ---
 
-## 12. Figures tool
+## 13. Figures tool
 
 BookLoop scans Markdown image references, output assets under `docs/assets/figures/`, source scripts, and `bookloop/figures.json`.
+
+### Add a figure
+
+Use **Add Figure** in the Figures toolbar (or **Add Figure…** on a missing/stale figure) to open the figure proposal sheet. You can:
+
+- **Upload** an image file into `docs/assets/figures/`
+- **URL** — reference an external image URL
+- **Script** — Mermaid, Graphviz, or a custom command that writes the output asset
+
+Fill in figure ID, caption, target Markdown chapter, then build a patch proposal. BookLoop opens **Patches** when the patch file is ready.
 
 ### Figure list
 
@@ -346,7 +402,7 @@ Click a figure in the left list to inspect it. Status values include **ok**, **m
 
 ---
 
-## 13. Tasks tool
+## 14. Tasks tool
 
 Shows Markdown task files in `bookloop/tasks/`.
 
@@ -366,7 +422,22 @@ If a **validation command** is configured and **Allow shell commands** is enable
 
 ---
 
-## 14. Agent tool
+## 15. Search tool
+
+Search helps you find concepts, terms, or topics across the manuscript.
+
+1. Open **Tools → Search**.
+2. Describe what you want in plain language (for example, “mentions of LoRA fine-tuning”).
+3. Choose **Scope** — whole project, current chapter only, or reviews.
+4. Click **Search**.
+
+With an OpenAI API key, BookLoop plans one or more grep/text searches and shows the **Search plan** before results. Without a key, it uses a **Literal** fallback plan (keyword-style) and suggests adding a key for smarter planning.
+
+Results are grouped by file with line numbers. Click a result to jump to that chapter in Reading mode when possible.
+
+---
+
+## 16. Agent tool
 
 The **Native Agent** runs inside BookLoop using OpenAI tool-calling and Swift file/build/git tools. It does not require an external Cursor CLI harness.
 
@@ -378,15 +449,21 @@ The **Native Agent** runs inside BookLoop using OpenAI tool-calling and Swift fi
 
 ### Built-in tasks
 
-| Button | Purpose |
-|--------|---------|
-| **Summarize Project** | Scan chapters, reviews, and config; produce a project summary |
-| **Apply Review Feedback** | Read open review items and propose edits |
-| **Improve Current Chapter** | Improve the chapter detected in Reading mode |
-| **Fix Build Errors** | Run the configured build and attempt fixes |
-| **Run Custom Task** | Run with your optional instruction text |
+Tasks are grouped in the left column:
 
-While a task runs, BookLoop shows a live **Tool Log** (list files, read file, search, stage patch, build, git status/diff). When finished, you see a summary, staged files, and a **patch proposal** written to `bookloop/patches/agent-*.patch`.
+| Category | Task | Purpose |
+|----------|------|---------|
+| Reviews & content | **Apply Review Feedback** | Read open review items and propose edits as a patch |
+| Reviews & content | **Improve Current Chapter** | Improve the chapter open in Reading mode |
+| Book quality | **Check Consistency** | Multiturn audit: table of contents, grep/search, terminology and cross-chapter consistency |
+| Book quality | **Check Logical Flow** | Multiturn audit: narrative order, prerequisites, and transitions |
+| Assets & links | **Fix Broken Links** | Find broken figure paths, missing assets, bad URLs; propose fixes |
+| Explore | **Summarize Project** | Scan chapters, reviews, and config; produce a summary |
+| — | **Run Custom Task** | Your instruction in the custom task field |
+
+For **Check Consistency** and **Check Logical Flow**, enable **Propose fixes after consistency / flow audit** to let the agent stage patch fixes after reporting. Audit reports are saved under `bookloop/audit-reports/`; major findings can also create items in `reviews/review_items/`.
+
+While a task runs, the **activity** column shows assistant replies and tool steps in order (list files, read file, grep, search, record audit finding, stage patch, build, git status/diff, fetch URL, and more). When finished, you see a summary, staged files, and often a **patch proposal** at `bookloop/patches/agent-*.patch`.
 
 ### Propose-only workflow
 
@@ -406,7 +483,7 @@ Agent settings (max iterations, build timeout, review edits) are in app settings
 
 ---
 
-## 15. Patches tool
+## 17. Patches tool
 
 Review and apply unified-diff patches from `bookloop/patches/*.patch` and `*.diff`.
 
@@ -456,11 +533,29 @@ Power-user actions: open patch file, copy commit command, archive without applyi
 2. **Patches** → Step 1: accept blocks → Step 2: Apply Accepted Changes → Step 3: Commit to Git.
 3. Applied patches move to `bookloop/patches/archive/` and leave the pending list.
 
-For very long reviews, increase **Max tool iterations** in app settings or run the agent again after committing the first batch.
+For very long reviews, increase **Max tool iterations** in app settings (default 20, up to 40) or run the agent again after committing the first batch.
 
 ---
 
-## 16. Settings tool
+## 18. Git tool
+
+**Tools → Git** provides a three-panel git workspace for the selected book:
+
+| Panel | Content |
+|-------|---------|
+| **Branches** | Local branches; select another branch to checkout (with confirmation) |
+| **Commit History** | Graph-style commit timeline |
+| **Working Tree** | Staged and unstaged file lists |
+
+The bottom bar supports **Refresh**, **Stage All**, a commit message field, and **Commit**.
+
+Git commands run only when **Allow patch apply** or **Allow shell commands** is enabled in book Settings (same guard as Patches Step 3). If disabled, use **Copy Commit Command** to run git manually in Terminal.
+
+This tab is for day-to-day git hygiene. The **Patches** tool remains the place for block-by-block review of agent `.patch` files.
+
+---
+
+## 19. Settings tool
 
 Full book configuration in one form. Sections:
 
@@ -495,16 +590,19 @@ Free-form notes stored with the book configuration.
 
 ---
 
-## 17. App settings (OpenAI & native agent)
+## 20. App settings (OpenAI & native agent)
 
 Global app settings (not per-book) are opened from the **gear** icon in the sidebar header.
 
 | Setting | Description |
 |---------|-------------|
-| **OpenAI Model** | Model slug for Chapter Chat and the Native Agent (default `gpt-4.1`) |
-| **OpenAI API Key** | Stored locally for your Mac user account; required for Chapter Chat and Agent |
-| **Max tool iterations** | Limit on agent tool-calling loop (1–24) |
-| **Build timeout** | Seconds allowed for agent `run_build` (30–600) |
+| **OpenAI Model** | Model slug for Chapter Chat, Search planning, and the Native Agent (default `gpt-4.1`) |
+| **OpenAI API Key** | Stored in the macOS Keychain; required for Chapter Chat, Search planning, and Agent |
+| **Chapter preview theme** | System / Light / Dark for in-app preview only |
+| **Enable OpenAI web search** | Chapter Chat uses the Responses API with hosted web search for external facts |
+| **Max tool iterations** | Agent tool-calling limit (1–40, default 20) |
+| **Build timeout** | Seconds for agent `run_build` (30–600) |
+| **Fetch URL max size** | Max bytes for agent `fetch_url` (public HTTPS pages) |
 | **Allow agent to edit review items** | Lets the agent stage writes under `reviews/` when allowed by config |
 | **Auto-run build after patch apply** | Reserved for future use when applying patches from the Patches tab |
 
@@ -514,11 +612,11 @@ Per-book agent path rules live in `.bookloop/config.json` (initialize from **Too
 
 ---
 
-## 18. Safety and permissions
+## 21. Safety and permissions
 
 BookLoop is built around explicit, human-visible actions:
 
-- **Chapter Chat** and the **Native Agent** call OpenAI only when you run them and an API key is configured
+- **Chapter Chat**, **Search** planning, and the **Native Agent** call OpenAI only when you use them and an API key is configured (Search falls back to literal matching without a key)
 - Agent file writes are path-guarded and exported as patch proposals for Patches-tab review before apply
 - Feedback is written directly to `reviews/review_items/` as Markdown review files
 - No automatic shell execution unless toggles are on and you confirm
@@ -529,7 +627,7 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 
 ---
 
-## 19. Keyboard shortcuts
+## 22. Keyboard shortcuts
 
 | Shortcut | Action |
 |----------|--------|
@@ -540,7 +638,7 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 
 ---
 
-## 20. Troubleshooting
+## 23. Troubleshooting
 
 ### Preview shows blank or error
 
@@ -586,7 +684,23 @@ When in doubt, leave safety toggles off and omit your OpenAI key if you only wan
 
 - Open app settings and confirm your OpenAI API key is saved.
 - Select a book and click **Initialize Config** if `.bookloop/config.json` is missing.
-- Check the tool log and error message in **Tools → Agent**.
+- Check the activity column and error message in **Tools → Agent**.
+
+### Search returns no results
+
+- Try a shorter or more specific query.
+- Confirm the book is selected and `docs/` is readable.
+- Without an API key, only literal keyword planning is used — add a key for AI-planned searches.
+
+### Git tab commands are disabled
+
+- Enable **Allow patch apply** or **Allow shell commands** in book Settings.
+- Confirm the project root is a git repository.
+
+### Annotations do not persist
+
+- Re-save the book in **Edit** if BookLoop lost security-scoped access to the project folder.
+- Check `.bookloop/preview_annotations.json` or Application Support under `BookLoop/annotations/`.
 
 ### `.bookloop/sessions/` files show as uncommitted in git
 
@@ -611,6 +725,8 @@ These files (`changed_files.json`, `diff.patch`, `project_snapshot.json`, `diff-
 |------|---------|
 | Navigation config | `bookloop.yml` |
 | Review items folder | `reviews/review_items/` |
+| Preview annotations (project mirror) | `.bookloop/preview_annotations.json` |
+| Agent audit reports | `bookloop/audit-reports/` |
 
 ---
 
