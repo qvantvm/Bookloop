@@ -41,11 +41,79 @@ struct OpenAIFunctionCall: Codable, Equatable {
     let arguments: String
 }
 
+enum OpenAIMessageContent: Codable, Equatable {
+    case text(String)
+    case parts([OpenAIMessageContentPart])
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if let string = try? container.decode(String.self) {
+            self = .text(string)
+        } else {
+            self = .parts(try container.decode([OpenAIMessageContentPart].self))
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .text(let string):
+            try container.encode(string)
+        case .parts(let parts):
+            try container.encode(parts)
+        }
+    }
+
+    var textValue: String? {
+        switch self {
+        case .text(let string): return string
+        case .parts(let parts): return parts.compactMap(\.text).joined(separator: "\n")
+        }
+    }
+
+    func contains(_ substring: String) -> Bool {
+        textValue?.contains(substring) ?? false
+    }
+}
+
+struct OpenAIMessageContentPart: Codable, Equatable {
+    let type: String
+    var text: String?
+    var image_url: OpenAIImageURLPayload?
+
+    static func text(_ value: String) -> OpenAIMessageContentPart {
+        OpenAIMessageContentPart(type: "text", text: value, image_url: nil)
+    }
+
+    static func imageDataURL(_ url: String, detail: String = "high") -> OpenAIMessageContentPart {
+        OpenAIMessageContentPart(type: "image_url", text: nil, image_url: OpenAIImageURLPayload(url: url, detail: detail))
+    }
+}
+
+struct OpenAIImageURLPayload: Codable, Equatable {
+    let url: String
+    let detail: String?
+}
+
 struct OpenAIAssistantMessage: Codable, Equatable {
     let role: String
-    let content: String?
+    let content: OpenAIMessageContent?
     let tool_calls: [OpenAIToolCall]?
     let tool_call_id: String?
+
+    init(role: String, content: String?, tool_calls: [OpenAIToolCall]?, tool_call_id: String?) {
+        self.role = role
+        self.content = content.map { .text($0) }
+        self.tool_calls = tool_calls
+        self.tool_call_id = tool_call_id
+    }
+
+    init(role: String, contentParts: [OpenAIMessageContentPart], tool_calls: [OpenAIToolCall]?, tool_call_id: String?) {
+        self.role = role
+        self.content = .parts(contentParts)
+        self.tool_calls = tool_calls
+        self.tool_call_id = tool_call_id
+    }
 }
 
 struct OpenAIChatRequestWithTools: Codable {

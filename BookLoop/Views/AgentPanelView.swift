@@ -856,7 +856,7 @@ struct AgentPanelView: View {
                                 }
                             }
                             Button("Open Reviews Tab") {
-                                workspaceMode = .tools
+                                workspaceMode = .tool(.reviews)
                             }
                         }
                         .font(.caption)

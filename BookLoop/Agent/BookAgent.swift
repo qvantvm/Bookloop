@@ -92,7 +92,7 @@ final class BookAgent {
         var activity: [AgentActivityItem] = []
 
         func appendAssistantReply(from response: OpenAIAssistantMessage, iteration: Int) {
-            let content = response.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let content = response.content?.textValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let plannedToolNames = response.tool_calls?.map(\.function.name) ?? []
             guard !content.isEmpty || !plannedToolNames.isEmpty else { return }
             let entry = AgentAssistantReplyEntry(
@@ -202,7 +202,7 @@ final class BookAgent {
                 continue
             }
 
-            finalSummary = response.content?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            finalSummary = response.content?.textValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             appendAssistantReply(from: response, iteration: iteration)
 
             if task.type.isBookAuditTask,

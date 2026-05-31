@@ -397,9 +397,19 @@ final class FigurePatchBuilder {
                     assetRelativePath: outputRelative,
                     markdownRelativePath: markdownRelative
                 )
-                let newMarkdown = oldMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? imageRef + "\n"
-                    : oldMarkdown.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + imageRef + "\n"
+                let imageBlock = markdownImageBlock(imageRef: imageRef, caption: draft.caption.nilIfBlank)
+                let newMarkdown: String
+                if let placement = draft.aiPlacement {
+                    newMarkdown = try applyPlacement(
+                        to: oldMarkdown,
+                        placement: placement,
+                        imageBlock: imageBlock
+                    )
+                } else {
+                    newMarkdown = oldMarkdown.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? imageBlock + "\n"
+                        : oldMarkdown.trimmingCharacters(in: .whitespacesAndNewlines) + "\n\n" + imageBlock + "\n"
+                }
                 patchParts.append("")
                 patchParts.append(try PatchDiffGenerator.diffText(
                     relativePath: markdownRelative,
@@ -445,6 +455,9 @@ final class FigurePatchBuilder {
     }
 
     private func resolveMarkdownPath(draft: FigureProposalDraft, book: BookConfig) -> String? {
+        if let aiPath = draft.aiPlacement?.markdownPath.nilIfBlank {
+            return aiPath.replacingOccurrences(of: "\\", with: "/")
+        }
         if let explicit = draft.targetMarkdownPath?.nilIfBlank {
             return explicit.replacingOccurrences(of: "\\", with: "/")
         }
@@ -471,6 +484,38 @@ final class FigurePatchBuilder {
         let assetPath = assetRelativePath.split(separator: "/").joined(separator: "/")
         let relative = prefix.isEmpty ? assetPath : "\(prefix)/\(assetPath)"
         return "![\(alt)](\(relative))"
+    }
+
+    private func markdownImageBlock(imageRef: String, caption: String?) -> String {
+        guard let caption = caption?.nilIfBlank else { return imageRef }
+        return imageRef + "\n\n*\(caption)*"
+    }
+
+    private func applyPlacement(
+        to content: String,
+        placement: FigureMarkdownPlacement,
+        imageBlock: String
+    ) throws -> String {
+        let occurrences = content.components(separatedBy: placement.anchorText).count - 1
+        guard occurrences == 1 else {
+            throw FigurePatchError.patchExportFailed(
+                "Placement anchor must occur exactly once in \(placement.markdownPath) (found \(occurrences))."
+            )
+        }
+        switch placement.insertMode {
+        case .after:
+            return content.replacingOccurrences(
+                of: placement.anchorText,
+                with: placement.anchorText + "\n\n" + imageBlock
+            )
+        case .before:
+            return content.replacingOccurrences(
+                of: placement.anchorText,
+                with: imageBlock + "\n\n" + placement.anchorText
+            )
+        case .replace:
+            return content.replacingOccurrences(of: placement.anchorText, with: imageBlock)
+        }
     }
 
     private func relativePath(_ absolute: String, root: String) -> String {

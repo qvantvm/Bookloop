@@ -407,6 +407,9 @@ struct ToolWorkspaceView: View {
                 .environmentObject(figureStore)
                 .environmentObject(taskStore)
                 .environmentObject(patchStore)
+                .environmentObject(bookProjectStore)
+                .environmentObject(settingsStore)
+                .environmentObject(projectStore)
         case .tasks:
             TaskPanelView(
                 book: book,

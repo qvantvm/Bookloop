@@ -594,6 +594,22 @@ struct FigureStagedFile: Equatable {
     var newData: Data?
 }
 
+enum FigureInsertMode: String, Codable, Equatable, CaseIterable {
+    case after
+    case before
+    case replace
+}
+
+struct FigureMarkdownPlacement: Equatable, Codable {
+    var markdownPath: String
+    var anchorText: String
+    var insertMode: FigureInsertMode
+    var sectionHeading: String?
+    var rationale: String?
+    var suggestedCaption: String?
+    var suggestedAltText: String?
+}
+
 struct FigureProposalDraft: Equatable {
     var id: String
     var chapterID: String?
@@ -601,6 +617,8 @@ struct FigureProposalDraft: Equatable {
     var altText: String
     var targetMarkdownPath: String?
     var insertMarkdown: Bool
+    var placementSuggestion: String?
+    var aiPlacement: FigureMarkdownPlacement?
     var sourceKind: FigureSourceKind
     var sourceURL: String?
     var attribution: String?
@@ -616,6 +634,8 @@ struct FigureProposalDraft: Equatable {
             altText: "",
             targetMarkdownPath: nil,
             insertMarkdown: true,
+            placementSuggestion: nil,
+            aiPlacement: nil,
             sourceKind: .upload,
             sourceURL: nil,
             attribution: nil,

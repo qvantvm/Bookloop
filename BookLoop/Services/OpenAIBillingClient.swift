@@ -16,7 +16,7 @@ final class OpenAIBillingClient {
         async let grants = fetchCreditGrants(apiKey: trimmed)
         async let pending = fetchPendingUsage(apiKey: trimmed)
 
-        guard let grants else { return nil }
+        guard let grants = await grants else { return nil }
         let pendingUsage = await pending ?? 0
         return OpenAICreditBalance(availableUSD: grants, pendingUsageUSD: pendingUsage)
     }

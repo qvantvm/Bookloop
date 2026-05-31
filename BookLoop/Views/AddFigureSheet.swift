@@ -15,6 +15,9 @@ struct AddFigureSheet: View {
     var prefill: AddFigurePrefill = AddFigurePrefill()
     var onPatchBuilt: (URL) -> Void
 
+    @EnvironmentObject private var bookProjectStore: BookProjectStore
+    @EnvironmentObject private var settingsStore: AppSettingsStore
+    @EnvironmentObject private var projectStore: ProjectContentStore
     @Environment(\.dismiss) private var dismiss
 
     @State private var tab: FigureSourceKind = .upload
@@ -27,6 +30,9 @@ struct AddFigureSheet: View {
     @State private var scriptCommand = ""
     @State private var scriptPreviewPath: String?
     @State private var scriptSourceFiles: [FigureStagedFile] = []
+    @State private var placementSuggestionText = ""
+    @State private var placementToolLog: [AgentToolLogEntry] = []
+    @State private var showPlacementToolLog = false
     @State private var statusMessage: String?
     @State private var isWorking = false
 
@@ -110,7 +116,91 @@ struct AddFigureSheet: View {
             TextField("Alt text", text: $draft.altText)
             TextField("Target markdown path (optional)", text: Binding(get: { draft.targetMarkdownPath ?? "" }, set: { draft.targetMarkdownPath = $0.nilIfBlank }))
             Toggle("Insert markdown image reference in chapter", isOn: $draft.insertMarkdown)
+            if draft.insertMarkdown {
+                placementSection
+            }
         }
+    }
+
+    @ViewBuilder
+    private var placementSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("AI placement")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+            Text("Describe where the figure should go. AI will inspect chapters with read/grep tools and propose the best anchor.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Placement suggestion", text: $placementSuggestionText, axis: .vertical)
+                .lineLimit(3...6)
+                .onChange(of: placementSuggestionText) { _, newValue in
+                    draft.placementSuggestion = newValue.nilIfBlank
+                }
+            HStack {
+                Button(isWorking ? "Placing…" : "Ask AI to place") {
+                    Task { await askAIPlacement() }
+                }
+                .disabled(isWorking || !canAskAIPlacement)
+                if draft.aiPlacement != nil {
+                    Button("Clear AI placement") {
+                        clearAIPlacement()
+                    }
+                }
+            }
+            if !settingsStore.hasAPIKey {
+                Text("Add an OpenAI API key in App Settings to use AI placement.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+            if let placement = draft.aiPlacement {
+                GroupBox("Proposed placement") {
+                    VStack(alignment: .leading, spacing: 6) {
+                        LabeledContent("File", value: placement.markdownPath)
+                        if let section = placement.sectionHeading?.nilIfBlank {
+                            LabeledContent("Section", value: section)
+                        }
+                        if let rationale = placement.rationale?.nilIfBlank {
+                            Text(rationale)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                        Text("Insert mode: \(placement.insertMode.rawValue)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if !placementToolLog.isEmpty {
+                DisclosureGroup(isExpanded: $showPlacementToolLog) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(placementToolLog) { entry in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(entry.toolName) • \(entry.succeeded ? "ok" : "failed")")
+                                    .font(.caption)
+                                    .fontWeight(.medium)
+                                Text(entry.resultSummary)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(4)
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                } label: {
+                    Text("Placement tool log (\(placementToolLog.count))")
+                        .font(.caption)
+                }
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private var canAskAIPlacement: Bool {
+        uploadData != nil
+            && placementSuggestionText.nilIfBlank != nil
+            && settingsStore.hasAPIKey
     }
 
     private var sourceTabs: some View {
@@ -308,6 +398,7 @@ struct AddFigureSheet: View {
         defer { isWorking = false }
         do {
             draft.sourceKind = tab
+            draft.placementSuggestion = placementSuggestionText.nilIfBlank
             if tab == .urlImport {
                 draft.sourceURL = urlString.nilIfBlank ?? draft.sourceURL
             }
@@ -347,6 +438,74 @@ struct AddFigureSheet: View {
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    private func askAIPlacement() async {
+        guard let assetData = uploadData else {
+            statusMessage = FigurePlacementError.missingAsset.localizedDescription
+            return
+        }
+        guard placementSuggestionText.nilIfBlank != nil else {
+            statusMessage = FigurePlacementError.missingSuggestion.localizedDescription
+            return
+        }
+        guard settingsStore.hasAPIKey else {
+            statusMessage = FigurePlacementError.missingAPIKey.localizedDescription
+            return
+        }
+
+        isWorking = true
+        defer { isWorking = false }
+
+        if bookProjectStore.project == nil {
+            bookProjectStore.refresh(book: book, currentChapterID: draft.chapterID)
+        }
+        guard let project = bookProjectStore.project else {
+            statusMessage = FigurePlacementError.missingProject.localizedDescription
+            return
+        }
+
+        draft.placementSuggestion = placementSuggestionText.nilIfBlank
+        placementToolLog = []
+        statusMessage = "Asking AI to find the best placement…"
+
+        do {
+            let result = try await FigurePlacementPlanner().plan(
+                book: book,
+                project: project,
+                searchIndex: bookProjectStore.searchIndex,
+                chapterNav: projectStore.chapterNav,
+                draft: draft,
+                imageData: assetData,
+                imageExtension: uploadExtension,
+                apiKey: settingsStore.apiKey,
+                model: settingsStore.openAIModel
+            )
+            draft.aiPlacement = result.placement
+            draft.targetMarkdownPath = result.placement.markdownPath
+            if let caption = result.placement.suggestedCaption?.nilIfBlank {
+                draft.caption = caption
+            }
+            if let alt = result.placement.suggestedAltText?.nilIfBlank {
+                draft.altText = alt
+            }
+            placementToolLog = result.toolLog
+            showPlacementToolLog = !result.toolLog.isEmpty
+            if let summary = result.summary?.nilIfBlank {
+                statusMessage = "AI placement ready.\n\(summary)"
+            } else {
+                statusMessage = "AI placement ready in \(result.placement.markdownPath)."
+            }
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    private func clearAIPlacement() {
+        draft.aiPlacement = nil
+        placementToolLog = []
+        showPlacementToolLog = false
+        statusMessage = "Cleared AI placement. Manual target path is used again."
     }
 
     private func writeTemporaryPreview(data: Data, ext: String) -> URL? {

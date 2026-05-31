@@ -416,6 +416,18 @@ enum AgentPromptBuilder {
     }
 }
 
+private struct AuditFindingRecordedResponse: Encodable {
+    let recorded: Bool
+    let findingID: String
+    let totalFindings: Int
+
+    enum CodingKeys: String, CodingKey {
+        case recorded
+        case findingID = "finding_id"
+        case totalFindings = "total_findings"
+    }
+}
+
 enum AgentToolRegistry {
     static func definitions(for project: BookProject) -> [OpenAIToolDefinition] {
         var tools = coreDefinitions
@@ -569,7 +581,11 @@ enum AgentToolRegistry {
                 suggestedFix: suggestedFix,
                 context: &context
             )
-            return encode(["recorded": true, "finding_id": finding.id.uuidString, "total_findings": context.auditFindings.count])
+            return encode(AuditFindingRecordedResponse(
+                recorded: true,
+                findingID: finding.id.uuidString,
+                totalFindings: context.auditFindings.count
+            ))
         default:
             throw AgentToolError.unknownTool(name)
         }
